@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Backend (port 18081)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "backend",
+            "args": ["--port", "18081", "--reload"],
+            "cwd": "${workspaceFolder}",
+            "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Run Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["-v", "tests"],
+            "cwd": "${workspaceFolder}",
+            "env": {"PYTHONPATH": "${workspaceFolder}/src"},
+            "preLaunchTask": "Install Dev Dependencies",
+            "console": "integratedTerminal"
+        }
+    ]
+}

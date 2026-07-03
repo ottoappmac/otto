@@ -1,0 +1,19 @@
+[flake8]
+# NOTE: ``E501`` (line too long) is intentionally ignored — the codebase has
+# ~420 pre-existing lines over 100 chars (string literals, URLs, long
+# constructor signatures).  If you want to start enforcing a limit on new
+# code, add a ``max-line-length`` here *and* drop ``E501`` from ``ignore``;
+# be ready to fix or ``# noqa: E501`` the pre-existing offenders first.
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    build,
+    dist,
+    *.egg-info,
+    chroma_data
+ignore =
+    E402,
+    E501,
+    W503

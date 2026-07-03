@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Lightweight checks that run on every PR.  This is intentionally narrower
+# than ``build-app.yml`` (which does full Tauri bundling across six OS
+# targets): we only want fast feedback (lint + frontend type check) here.
+#
+# The full ``pytest`` suite is NOT run here: the current ``[dev]`` dep
+# group pulls the full MLX stack, which is Apple-silicon oriented and
+# slow (or impossible) to resolve on Linux runners.  Follow-up: split
+# ``pyproject.toml`` into a ``test`` group with only the
+# FastAPI/LangChain/Chroma slice before wiring the full suite in.
+#
+# ``helper-tests`` is a narrow exception: it installs only
+# pytest/pytest-asyncio/httpx/mcp/langchain-core (no MLX, no PyObjC, no
+# full ``-e .``) and runs just the built-in MCPs' ``_helpers`` unit tests
+# (pure-Python, see backend/builtin_mcps/*/_helpers.py) plus the
+# cross-server tool-name dedup test for backend/mcp_manager.py, none of
+# which import the heavy deps.
+#
+# The flake8 scope is an explicit allow-list of directories that are
+# currently clean under our ``.flake8`` rules.  When a directory gets
+# cleaned up (typically: unused imports, trailing-newline noise,
+# continuation-indent drift), add it to the ``flake8`` step below.
+# Keeping the scope explicit means CI is green on day one and every
+# widening is a deliberate, reviewable change — not a giant one-off
+# fix-the-world PR. 
+
+jobs:
+  flake8:
+    name: Python lint (flake8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install flake8
+        run: pip install "flake8>=7.0.0"
+      - name: Run flake8
+        run: |
+          flake8 \
+            src/__init__.py \
+            src/callbacks \
+            src/chat_models \
+            src/deep_agent \
+            src/utilities
+
+  helper-tests:
+    name: Built-in MCP helper tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install minimal test deps
+        run: pip install pytest pytest-asyncio httpx "mcp>=1.0.0" langchain-core
+      - name: Run built-in MCP helper tests
+        run: |
+          pytest -v -m "not live" \
+            tests/test_macos_osascript_introspection.py \
+            tests/test_slack_helpers.py \
+            tests/test_discord_helpers.py \
+            tests/test_microsoft_teams_helpers.py \
+            tests/test_mcp_manager_tool_dedup.py
+
+  frontend:
+    name: Frontend build (tsc + vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install deps
+        working-directory: app
+        run: npm ci
+      - name: Type-check + build
+        working-directory: app
+        run: npm run build

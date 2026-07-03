@@ -1,0 +1,246 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Apple-like grouped UI: soft window chrome, white content wells, calm borders */
+    --font-scale: 1;
+    --color-bg: 245 245 247;
+    --color-bg-secondary: 255 255 255;
+    --color-bg-tertiary: 242 242 247;
+    --color-surface: 255 255 255;
+    --color-surface-hover: 245 245 247;
+    --color-border: 210 210 218;
+    --color-border-strong: 185 185 195;
+    --color-text-primary: 15 15 18;
+    --color-text-secondary: 48 48 54;
+    --color-text-tertiary: 72 72 80;
+    --color-text-muted: 95 95 106;
+    --color-text-faint: 128 128 140;
+    --color-sidebar-bg: 240 240 244;
+    --color-sidebar-active: 0 0 0 / 0.08;
+    --color-sidebar-active-text: 20 20 22;
+    --color-sidebar-border: 200 200 210;
+    --color-input-bg: 252 252 253;
+    --color-input-border: 190 190 200;
+    --color-card-bg: 255 255 255;
+    --color-card-border: 205 205 215;
+    --color-dropdown-bg: 255 255 255;
+    --color-code-bg: 242 242 247;
+    --color-inset-bg: 245 245 247;
+    --color-tab-active-bg: 29 29 31;
+    --color-tab-active-fg: 255 255 255;
+  }
+
+  /* Monochrome dark mode (black + dark grey) */
+  html[data-theme="dark"] {
+    --color-bg: 10 10 10;
+    --color-bg-secondary: 24 24 24;
+    --color-bg-tertiary: 32 32 32;
+    --color-surface: 28 28 28;
+    --color-surface-hover: 42 42 42;
+    --color-border: 38 38 38;
+    --color-border-strong: 64 64 64;
+    --color-text-primary: 245 245 245;
+    --color-text-secondary: 215 215 215;
+    --color-text-tertiary: 185 185 185;
+    --color-text-muted: 155 155 155;
+    --color-text-faint: 110 110 110;
+    --color-sidebar-bg: 0 0 0;
+    --color-sidebar-active: 255 255 255 / 0.08;
+    --color-sidebar-active-text: 245 245 245;
+    --color-sidebar-border: 30 30 30;
+    --color-input-bg: 20 20 20;
+    --color-input-border: 50 50 50;
+    --color-card-bg: 24 24 24;
+    --color-card-border: 40 40 40;
+    --color-dropdown-bg: 32 32 32;
+    --color-code-bg: 14 14 14;
+    --color-inset-bg: 20 20 20;
+    --color-tab-active-bg: 60 60 60;
+    --color-tab-active-fg: 255 255 255;
+  }
+
+  html {
+    font-size: calc(16px * var(--font-scale));
+  }
+
+  body {
+    @apply min-h-screen antialiased;
+    font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+    background-color: rgb(var(--color-bg));
+    color: rgb(var(--color-text-primary));
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    @apply bg-blue-100 text-blue-900;
+  }
+
+  html[data-theme="dark"] ::selection {
+    background-color: rgb(115 115 115 / 0.45);
+    color: rgb(248 250 252);
+  }
+
+  ::-webkit-scrollbar {
+    @apply w-1.5 h-1.5;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-neutral-300 rounded-full hover:bg-neutral-400;
+  }
+
+  html[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    @apply bg-neutral-700 rounded-full hover:bg-neutral-600;
+  }
+
+  select option {
+    background-color: rgb(var(--color-dropdown-bg));
+    color: rgb(var(--color-text-primary));
+  }
+
+  /* Darken green/emerald accent colours in light mode */
+  html:not([data-theme="dark"]) .text-emerald-400,
+  html:not([data-theme="dark"]) .hover\:text-emerald-300:hover,
+  html:not([data-theme="dark"]) .group-hover\:text-emerald-400 {
+    color: rgb(5 150 105); /* emerald-600 */
+  }
+  html:not([data-theme="dark"]) .text-emerald-300 {
+    color: rgb(16 185 129); /* emerald-500 */
+  }
+  html:not([data-theme="dark"]) .text-emerald-400\/60,
+  html:not([data-theme="dark"]) .text-emerald-400\/70,
+  html:not([data-theme="dark"]) .text-emerald-400\/80 {
+    color: rgb(5 150 105 / 0.8); /* emerald-600 at reduced opacity */
+  }
+  html:not([data-theme="dark"]) .bg-emerald-500\/5 {
+    background-color: rgb(16 185 129 / 0.08);
+  }
+  html:not([data-theme="dark"]) .bg-emerald-500\/10 {
+    background-color: rgb(16 185 129 / 0.12);
+  }
+  html:not([data-theme="dark"]) .bg-emerald-500\/15 {
+    background-color: rgb(16 185 129 / 0.15);
+  }
+  html:not([data-theme="dark"]) .border-emerald-500\/15 {
+    border-color: rgb(16 185 129 / 0.3);
+  }
+  html:not([data-theme="dark"]) .border-emerald-500\/20 {
+    border-color: rgb(16 185 129 / 0.35);
+  }
+  html:not([data-theme="dark"]) .border-emerald-500\/25 {
+    border-color: rgb(16 185 129 / 0.4);
+  }
+  html:not([data-theme="dark"]) .border-emerald-500\/30 {
+    border-color: rgb(16 185 129 / 0.45);
+  }
+  html:not([data-theme="dark"]) .hover\:bg-emerald-500\/20:hover {
+    background-color: rgb(16 185 129 / 0.2);
+  }
+
+  /* Darken blue accent colours in light mode — the 300/400 shades are too washed-out on white */
+  html:not([data-theme="dark"]) .text-blue-400,
+  html:not([data-theme="dark"]) .hover\:text-blue-300:hover {
+    color: rgb(37 99 235); /* blue-600 */
+  }
+  html:not([data-theme="dark"]) .text-blue-300 {
+    color: rgb(59 130 246); /* blue-500 */
+  }
+  html:not([data-theme="dark"]) .text-blue-400\/60,
+  html:not([data-theme="dark"]) .text-blue-400\/70,
+  html:not([data-theme="dark"]) .text-blue-400\/80 {
+    color: rgb(37 99 235 / 0.8); /* blue-600 at reduced opacity */
+  }
+  html:not([data-theme="dark"]) .bg-blue-500\/8 {
+    background-color: rgb(59 130 246 / 0.1);
+  }
+  html:not([data-theme="dark"]) .bg-blue-500\/10 {
+    background-color: rgb(59 130 246 / 0.12);
+  }
+  html:not([data-theme="dark"]) .bg-blue-500\/15 {
+    background-color: rgb(59 130 246 / 0.15);
+  }
+  html:not([data-theme="dark"]) .border-blue-500\/15 {
+    border-color: rgb(59 130 246 / 0.3);
+  }
+  html:not([data-theme="dark"]) .border-blue-500\/20 {
+    border-color: rgb(59 130 246 / 0.35);
+  }
+  html:not([data-theme="dark"]) .border-blue-500\/25 {
+    border-color: rgb(59 130 246 / 0.4);
+  }
+  html:not([data-theme="dark"]) .border-blue-500\/30 {
+    border-color: rgb(59 130 246 / 0.45);
+  }
+  html:not([data-theme="dark"]) .hover\:bg-blue-500\/20:hover,
+  html:not([data-theme="dark"]) .hover\:bg-blue-500\/25:hover {
+    background-color: rgb(59 130 246 / 0.2);
+  }
+
+  /* Darken zinc/neutral accent colours in light mode — 400-shade is too washed-out on white */
+  html:not([data-theme="dark"]) .text-zinc-400,
+  html:not([data-theme="dark"]) .text-neutral-400,
+  html:not([data-theme="dark"]) .text-gray-400,
+  html:not([data-theme="dark"]) .text-slate-400 {
+    color: rgb(100 100 110);
+  }
+  html:not([data-theme="dark"]) .text-zinc-300,
+  html:not([data-theme="dark"]) .text-neutral-300,
+  html:not([data-theme="dark"]) .text-gray-300,
+  html:not([data-theme="dark"]) .text-slate-300 {
+    color: rgb(120 120 130);
+  }
+
+  /* Keep prose colours in sync with the theme in both light and dark modes */
+  .prose {
+    --tw-prose-body: rgb(var(--color-text-primary));
+    --tw-prose-headings: rgb(var(--color-text-primary));
+    --tw-prose-bold: rgb(var(--color-text-primary));
+    --tw-prose-links: #2563eb; /* blue-600 — readable in both light and dark */
+    --tw-prose-code: rgb(var(--color-text-secondary));
+    --tw-prose-pre-code: rgb(var(--color-text-secondary));
+    --tw-prose-pre-bg: rgb(var(--color-code-bg));
+    --tw-prose-quotes: rgb(var(--color-text-secondary));
+    --tw-prose-quote-borders: rgb(var(--color-border-strong));
+    --tw-prose-hr: rgb(var(--color-border));
+    --tw-prose-th-borders: rgb(var(--color-border));
+    --tw-prose-td-borders: rgb(var(--color-border) / 0.5);
+    --tw-prose-counters: rgb(var(--color-text-muted));
+    --tw-prose-bullets: rgb(var(--color-text-muted));
+  }
+
+  /* Strip inline color styles that mammoth/docx converters inject, so text
+     is readable in dark mode */
+  html[data-theme="dark"] .docx-content * {
+    color: rgb(var(--color-text-primary)) !important;
+    background-color: transparent !important;
+  }
+  html[data-theme="dark"] .docx-content a {
+    color: #60a5fa !important;
+  }
+
+  /* Force prose text to be light in dark mode — higher specificity wins over
+     the typography plugin's default dark-text variable declarations */
+  html[data-theme="dark"] .prose {
+    color: rgb(var(--color-text-primary));
+    --tw-prose-body: rgb(var(--color-text-primary));
+    --tw-prose-headings: rgb(var(--color-text-primary));
+    --tw-prose-lead: rgb(var(--color-text-secondary));
+    --tw-prose-bold: rgb(var(--color-text-primary));
+    --tw-prose-links: #60a5fa;
+    --tw-prose-code: rgb(var(--color-text-secondary));
+    --tw-prose-pre-code: rgb(var(--color-text-secondary));
+    --tw-prose-pre-bg: rgb(var(--color-code-bg));
+    --tw-prose-quotes: rgb(var(--color-text-secondary));
+    --tw-prose-quote-borders: rgb(var(--color-border-strong));
+    --tw-prose-hr: rgb(var(--color-border));
+    --tw-prose-th-borders: rgb(var(--color-border));
+    --tw-prose-td-borders: rgb(var(--color-border) / 0.5);
+    --tw-prose-counters: rgb(var(--color-text-muted));
+    --tw-prose-bullets: rgb(var(--color-text-muted));
+    --tw-prose-captions: rgb(var(--color-text-muted));
+  }
+}

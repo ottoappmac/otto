@@ -1,0 +1,606 @@
+name: Build Desktop App
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "app/**"
+      - "src/**"
+      - "backend/**"
+      - "pyproject.toml"
+      - "scripts/build_backend.py"
+      - ".github/workflows/build-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    name: Build (macOS-arm64)
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          jq --arg v "$VERSION" '.version = $v' app/src-tauri/tauri.conf.json \
+            > /tmp/tauri.conf.json && mv /tmp/tauri.conf.json app/src-tauri/tauri.conf.json
+
+          jq --arg v "$VERSION" '.version = $v' app/package.json \
+            > /tmp/package.json && mv /tmp/package.json app/package.json
+
+          sed -i '' "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
+        shell: bash
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          printf 'numba; python_version < "0"\nllvmlite; python_version < "0"\n' > "$RUNNER_TEMP/uv-overrides.txt"
+          uv pip install --system -e ".[app]" --override "$RUNNER_TEMP/uv-overrides.txt"
+          uv pip install --system pyinstaller
+
+      - name: Build Python backend
+        run: python scripts/build_backend.py
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Set Rust compiler cache env
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Import Apple code-signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+        shell: bash
+
+      # NOTE: We deliberately do NOT pre-sign the PyInstaller backend in
+      # app/src-tauri/resources/backend/. Tauri's bundling step copies that
+          # tree into OTTO.app/Contents/Resources/backend/ and the copy
+      # subtly modifies Python.framework/Python (likely shutil.copytree
+      # dereferencing symlinks + cargo-bundle reprocessing), which
+      # silently invalidates pre-applied signatures. Apple's notariser
+      # then rejects them with "The signature of the binary is invalid".
+      # Instead, we let Tauri build/bundle without notarising, then sign
+      # everything in-place inside the final .app, and notarise ourselves
+      # with xcrun notarytool. That way the signed bytes are exactly what
+      # gets uploaded — nothing copies the binary again afterwards.
+
+      - name: Build Tauri app (unsigned)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Intentionally NO Apple credentials here. tauri-bundler can
+          # behave inconsistently (sometimes skipping the bundle step
+          # entirely) when it sees a partial set of Apple env vars, and
+          # if it does sign successfully the subsequent copy of nested
+          # binaries into the .app invalidates the Python.framework/Python
+          # signature anyway (Apple's notariser then rejects it as
+          # "signature is invalid"). The entire sign + notarise + staple
+          # flow runs in subsequent steps below, operating on the final
+          # on-disk bytes of the bundled .app.
+        with:
+          projectPath: app
+
+      - name: Locate built .app and .dmg
+        id: locate
+        run: |
+          set -e
+          # tauri-action may build at target/release/... or
+          # target/<triple>/release/... depending on whether a --target
+          # arg was passed. Discover the actual paths.
+          APP=$(find app/src-tauri/target -maxdepth 6 -type d -name "OTTO.app" -path "*/release/bundle/macos/*" -print -quit 2>/dev/null)
+          DMG_DIR=$(find app/src-tauri/target -maxdepth 5 -type d -name "dmg" -path "*/release/bundle/*" -print -quit 2>/dev/null)
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "==> OTTO.app not found. Diagnostic listing:"
+            echo
+            echo "--- app/src-tauri/target/ (top-level) ---"
+            ls -la app/src-tauri/target/ 2>/dev/null || true
+            echo
+            for d in app/src-tauri/target/release app/src-tauri/target/aarch64-apple-darwin/release app/src-tauri/target/x86_64-apple-darwin/release; do
+              if [ -d "$d" ]; then
+                echo "--- $d (excluding .fingerprint/deps/incremental) ---"
+                ls -la "$d" 2>/dev/null | grep -vE "\.fingerprint|/deps$|/incremental$|/build$" || true
+                echo
+                if [ -d "$d/bundle" ]; then
+                  echo "--- $d/bundle/ (recursive, depth 4) ---"
+                  find "$d/bundle" -maxdepth 4 -mindepth 1 2>/dev/null | head -100
+                  echo
+                fi
+              fi
+            done
+            exit 1
+          fi
+          echo "APP=$APP"
+          echo "DMG_DIR=$DMG_DIR"
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "dmg_dir=$DMG_DIR" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Sign nested backend binaries inside the bundled .app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APP: ${{ steps.locate.outputs.app }}
+        run: |
+          set -e
+          BACKEND="$APP/Contents/Resources/backend"
+          STAGING="$RUNNER_TEMP/sign-staging-final"
+          rm -rf "$STAGING" && mkdir -p "$STAGING"
+
+          if [ ! -d "$BACKEND" ]; then
+            echo "ERROR: backend resources directory not found at $BACKEND"
+            ls -la "$APP/Contents/Resources/" || true
+            exit 1
+          fi
+
+          # sign_one: copy binary to a flat staging dir, strip existing
+          # signature, re-sign with Developer ID + hardened runtime +
+          # timestamp, then write back. The flat staging path prevents
+          # codesign from detecting the parent directory as a bundle and
+          # refusing to sign with "bundle format is ambiguous".
+          sign_one() {
+            local target="$1"
+            local staged="$STAGING/$(basename "$target").$RANDOM"
+            cp "$target" "$staged"
+            codesign --remove-signature "$staged" 2>/dev/null || true
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+              --options runtime --timestamp \
+              "$staged"
+            # Write back in-place so hardlinks (if any) are also updated.
+            cat "$staged" > "$target"
+            rm -f "$staged"
+          }
+
+          # ── 1. Sign all Mach-O files OUTSIDE Python.framework ──────────
+          find "$BACKEND" -type f \
+            \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) \
+            ! -path "*/Python.framework/*" \
+          | while read -r f; do
+            file "$f" | grep -qE "Mach-O|shared library" && sign_one "$f"
+          done
+
+          # ── 2. Fix Python.framework structure and sign it properly ──────
+          #
+          # PyInstaller ships a non-standard Python.framework where
+          # Python.framework/Python is a real binary file (not a symlink)
+          # and Versions/Current may also be a real directory. codesign
+          # sees this as an ambiguous bundle (looks like both an app and a
+          # framework) and either refuses to sign or produces a corrupt
+          # signature that Apple's notariser then rejects.
+          #
+          # Fix: convert to the standard macOS framework symlink layout,
+          # add a minimal Info.plist so codesign can identify it as FMWK,
+          # then sign the versioned bundle and the framework in turn.
+          FW="$BACKEND/_internal/Python.framework"
+          VERS="$FW/Versions/3.12"
+
+          if [ -d "$FW" ]; then
+            # 2a. Ensure Versions/3.12 exists (sanity check)
+            if [ ! -d "$VERS" ]; then
+              echo "ERROR: expected $VERS to exist"
+              ls -la "$FW/Versions/" || true
+              exit 1
+            fi
+
+            # 2b. Add Info.plist to the versioned bundle so codesign can
+            #     identify this as an FMWK (not an ambiguous app bundle).
+            #     Content is base64-encoded to avoid YAML parsing issues
+            #     with XML special characters in the workflow file.
+            mkdir -p "$VERS/Resources"
+            echo "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIgogICJodHRwOi8vd3d3LmFwcGxlLmNvbS9EVERzL1Byb3BlcnR5TGlzdC0xLjAuZHRkIj4KPHBsaXN0IHZlcnNpb249IjEuMCI+CjxkaWN0PgogIDxrZXk+Q0ZCdW5kbGVJZGVudGlmaWVyPC9rZXk+ICAgPHN0cmluZz5vcmcucHl0aG9uLnB5dGhvbjwvc3RyaW5nPgogIDxrZXk+Q0ZCdW5kbGVOYW1lPC9rZXk+ICAgICAgICAgPHN0cmluZz5QeXRob248L3N0cmluZz4KICA8a2V5PkNGQnVuZGxlUGFja2FnZVR5cGU8L2tleT4gIDxzdHJpbmc+Rk1XSzwvc3RyaW5nPgogIDxrZXk+Q0ZCdW5kbGVWZXJzaW9uPC9rZXk+ICAgICAgPHN0cmluZz4zLjEyLjA8L3N0cmluZz4KICA8a2V5PkNGQnVuZGxlU2hvcnRWZXJzaW9uU3RyaW5nPC9rZXk+IDxzdHJpbmc+My4xMjwvc3RyaW5nPgo8L2RpY3Q+CjwvcGxpc3Q+" \
+              | base64 --decode > "$VERS/Resources/Info.plist"
+
+            # 2c. Ensure Versions/Current is a symlink (PyInstaller sometimes
+            #     makes it a real directory instead).
+            if [ -d "$FW/Versions/Current" ] && [ ! -L "$FW/Versions/Current" ]; then
+              echo "Converting Versions/Current from directory to symlink"
+              rm -rf "$FW/Versions/Current"
+            fi
+            [ -e "$FW/Versions/Current" ] || ln -s "3.12" "$FW/Versions/Current"
+
+            # 2d. For an embedded framework, codesign requires that the
+            #     framework root contains ONLY the Versions/ directory and
+            #     symlinks. Any real file or directory at the root (e.g.
+            #     Python binary, Resources/, Headers/, lib/ etc. that
+            #     PyInstaller copies rather than symlinks) causes:
+            #       "unsealed contents present in the root directory of an
+            #        embedded framework"
+            #     Fix: for every real (non-symlink) item at the root other
+            #     than Versions/, ensure the canonical copy lives in
+            #     Versions/3.12/ then replace the root item with a symlink.
+            echo "==> Python.framework root before cleanup:"
+            ls -la "$FW/"
+
+            for item in "$FW"/*; do
+              name=$(basename "$item")
+              [ "$name" = "Versions" ] && continue   # must stay real
+              [ -L "$item" ] && continue             # already a symlink
+
+              # Real file or directory at framework root — convert to symlink.
+              if [ -e "$FW/Versions/3.12/$name" ]; then
+                echo "  $name: exists in Versions/3.12/ — replacing root copy with symlink"
+                rm -rf "$item"
+              else
+                echo "  $name: not in Versions/3.12/ — moving there, adding symlink"
+                mv "$item" "$FW/Versions/3.12/$name"
+              fi
+              ln -s "Versions/Current/$name" "$FW/$name"
+            done
+
+            echo "==> Python.framework root after cleanup:"
+            ls -la "$FW/"
+
+            # 2f. Sign the canonical Python binary using the staging trick
+            #     (avoids "bundle format is ambiguous" for the individual file).
+            if [ -f "$VERS/Python" ]; then
+              sign_one "$VERS/Python"
+            fi
+
+            # 2g. Sign any other Mach-O files inside Versions/3.12
+            #     (e.g. dylib helpers bundled with the framework).
+            find "$VERS" -type f \( -name "*.dylib" -o -name "*.so" \) \
+            | while read -r f; do
+              file "$f" | grep -qE "Mach-O|shared library" && sign_one "$f"
+            done
+
+            # 2h. Sign the versioned bundle (Versions/3.12) as a framework
+            #     version — codesign creates _CodeSignature/CodeResources
+            #     inside it, sealing the Python binary and resources.
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+              --options runtime --timestamp \
+              --identifier "org.python.python" \
+              "$VERS"
+
+            # 2i. Sign the framework root — codesign now sees a proper
+            #     framework (symlinks + FMWK Info.plist) and seals it.
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+              --options runtime --timestamp \
+              --identifier "org.python.python" \
+              "$FW"
+
+            echo "Python.framework signed:"
+            codesign --verify --verbose=2 "$FW" || echo "(framework verify warning)"
+          fi
+
+          # ── 3. Sign main backend executable ────────────────────────────
+          if [ -f "$BACKEND/otto-backend" ]; then
+            sign_one "$BACKEND/otto-backend"
+          fi
+
+          # ── 4. Re-sign the .app bundle ──────────────────────────────────
+          # All nested code is now correctly signed. Sign the main Tauri
+          # binary and the outer bundle so CodeResources seals over them.
+          # Without --deep, codesign only updates the top-level bundle
+          # signature and records pre-signed nested code by identity.
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+            --options runtime --timestamp \
+            "$APP/Contents/MacOS/otto"
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+            --options runtime --timestamp \
+            "$APP"
+
+          codesign --verify --verbose=2 "$APP" || echo "(outer verify warning)"
+          codesign --display --verbose=2 "$APP" 2>&1 | grep -E "flags=|Timestamp=" || true
+        shell: bash
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Notarise and staple .app and .dmg
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP: ${{ steps.locate.outputs.app }}
+          DMG_DIR: ${{ steps.locate.outputs.dmg_dir }}
+        run: |
+          set -e
+
+          # 1. Notarise the .app
+          ZIP="$RUNNER_TEMP/OTTO.zip"
+          ditto -c -k --keepParent "$APP" "$ZIP"
+
+          NOTARY_OUT="$RUNNER_TEMP/notary-app.json"
+          xcrun notarytool submit "$ZIP" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --output-format json | tee "$NOTARY_OUT" || true
+
+          NOTARY_STATUS=$(python3 -c "import json,sys; d=json.load(open('$NOTARY_OUT')); print(d.get('status',''))" 2>/dev/null || echo "")
+          NOTARY_ID=$(python3 -c "import json,sys; d=json.load(open('$NOTARY_OUT')); print(d.get('id',''))" 2>/dev/null || echo "")
+
+          if [ "$NOTARY_STATUS" != "Accepted" ]; then
+            echo "==> Notarisation failed (status: $NOTARY_STATUS). Fetching Apple log..."
+            if [ -n "$NOTARY_ID" ]; then
+              xcrun notarytool log "$NOTARY_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+            fi
+            exit 1
+          fi
+
+          xcrun stapler staple "$APP"
+
+          # 2. The .dmg Tauri produced contains the .app as it was
+          # *before* we re-signed the nested backend, so it's stale.
+          # Recreate it from the now-stapled .app and re-use the same
+          # filename so the release upload step finds it.
+          if [ -z "$DMG_DIR" ]; then
+            DMG_DIR="$(dirname "$APP")/../dmg"
+            mkdir -p "$DMG_DIR"
+          fi
+          DMG_PATH=$(find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -print -quit 2>/dev/null)
+          if [ -n "$DMG_PATH" ]; then
+            echo "Replacing existing DMG: $DMG_PATH"
+            rm -f "$DMG_PATH"
+          else
+            DMG_PATH="$DMG_DIR/OTTO.dmg"
+            echo "No existing DMG found; will create: $DMG_PATH"
+          fi
+
+          # Stage only the signed .app to avoid including the stale
+          # Tauri-generated .app.tar.gz (unsigned) in the DMG.
+          STAGING="$RUNNER_TEMP/dmg_staging"
+          mkdir -p "$STAGING"
+          cp -R "$APP" "$STAGING/"
+
+          create-dmg \
+            --volname "OTTO" \
+            --volicon "app/src-tauri/icons/icon.icns" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "OTTO.app" 175 190 \
+            --hide-extension "OTTO.app" \
+            --app-drop-link 425 190 \
+            "$DMG_PATH" \
+            "$STAGING/"
+
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$DMG_PATH"
+
+          NOTARY_DMG_OUT="$RUNNER_TEMP/notary-dmg.json"
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait \
+            --output-format json | tee "$NOTARY_DMG_OUT" || true
+
+          NOTARY_DMG_STATUS=$(python3 -c "import json,sys; d=json.load(open('$NOTARY_DMG_OUT')); print(d.get('status',''))" 2>/dev/null || echo "")
+          NOTARY_DMG_ID=$(python3 -c "import json,sys; d=json.load(open('$NOTARY_DMG_OUT')); print(d.get('id',''))" 2>/dev/null || echo "")
+
+          if [ "$NOTARY_DMG_STATUS" != "Accepted" ]; then
+            echo "==> DMG notarisation failed (status: $NOTARY_DMG_STATUS). Fetching Apple log..."
+            if [ -n "$NOTARY_DMG_ID" ]; then
+              xcrun notarytool log "$NOTARY_DMG_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" || true
+            fi
+            exit 1
+          fi
+
+          xcrun stapler staple "$DMG_PATH"
+        shell: bash
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: otto-macOS-arm64
+          path: |
+            app/src-tauri/target/release/bundle/
+            app/src-tauri/target/*/release/bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+  build-exo-runtime:
+    runs-on: macos-latest
+    name: Build prebuilt exo runtime (macOS-arm64)
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      # exo's Rust/pyo3 extension requires a nightly toolchain.
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Build pruned exo runtime tree (unpacked)
+        run: python scripts/build_exo.py --no-pack
+        env:
+          EXO_REF: ${{ vars.EXO_REF || 'v1.0.71' }}
+
+      - name: Import Apple code-signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+        shell: bash
+
+      - name: Sign Mach-O files inside the runtime venv
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -e
+          VENV="dist/exo/src/.venv"
+          STAGING="$RUNNER_TEMP/exo-sign-staging"
+          rm -rf "$STAGING" && mkdir -p "$STAGING"
+          sign_one() {
+            local target="$1"
+            local staged="$STAGING/$(basename "$target").$RANDOM"
+            cp "$target" "$staged"
+            codesign --remove-signature "$staged" 2>/dev/null || true
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
+              --options runtime --timestamp "$staged"
+            cat "$staged" > "$target"
+            rm -f "$staged"
+          }
+          # Sign the bundled interpreter, dylibs, and the Rust extension.
+          find "$VENV" -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) \
+          | while read -r f; do
+            file "$f" | grep -qE "Mach-O|shared library" && sign_one "$f" || true
+          done
+        shell: bash
+
+      - name: Pack signed runtime tarball
+        id: pack
+        run: |
+          python scripts/build_exo.py --skip-clone --pack-only
+          TAR=$(ls dist/exo/exo-runtime-*.tar.gz)
+          SHA=$(awk '{print $1}' "${TAR}.sha256")
+          echo "tar=$TAR" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$TAR")" >> "$GITHUB_OUTPUT"
+        env:
+          EXO_REF: ${{ vars.EXO_REF || 'v1.0.71' }}
+        shell: bash
+
+      - name: Notarise the runtime (online ticket for hardened-runtime code)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -e
+          # notarytool accepts .zip/.dmg/.pkg (not .tar.gz). Submit a zip of
+          # the signed venv so Apple issues a notarization ticket for the
+          # binaries; loose binaries can't be stapled but Gatekeeper's online
+          # check passes once a ticket exists (and Otto de-quarantines on
+          # download as a belt-and-braces measure).
+          ZIP="$RUNNER_TEMP/exo-runtime.zip"
+          ditto -c -k --keepParent "dist/exo/src/.venv" "$ZIP"
+          xcrun notarytool submit "$ZIP" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait || true
+        shell: bash
+
+      - name: Upload exo runtime artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: exo-runtime-macOS-arm64
+          path: |
+            dist/exo/exo-runtime-*.tar.gz
+            dist/exo/exo-runtime-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [build, build-exo-runtime]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Attach Assets to Release
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Generate exo runtime manifest
+        run: |
+          set -e
+          TAR=$(ls artifacts/**/exo-runtime-*.tar.gz | head -1)
+          NAME=$(basename "$TAR")
+          SHA=$(awk '{print $1}' "$TAR.sha256")
+          # ref is encoded in the filename: exo-runtime-<ref>-<arch>.tar.gz
+          REF=$(echo "$NAME" | sed -E 's/^exo-runtime-(.+)-(aarch64|x86_64)-apple-darwin\.tar\.gz$/\1/')
+          ARCH=$(echo "$NAME" | sed -E 's/^exo-runtime-.+-((aarch64|x86_64)-apple-darwin)\.tar\.gz$/\1/')
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${NAME}"
+          cat > exo-runtime-manifest.json <<EOF
+          {
+            "artifacts": [
+              { "exo_ref": "${REF}", "arch": "${ARCH}", "url": "${URL}", "sha256": "${SHA}" }
+            ]
+          }
+          EOF
+          cat exo-runtime-manifest.json
+        shell: bash
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.app.tar.gz
+            artifacts/**/exo-runtime-*.tar.gz
+            artifacts/**/exo-runtime-*.tar.gz.sha256
+            exo-runtime-manifest.json

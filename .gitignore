@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+# ...but keep our shared shell library (the broad Python `lib/` rule above hides it)
+!scripts/lib/
+!scripts/lib/**
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.env.*
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Chroma database
+data/
+
+# Logs
+logs/
+*.log
+
+# output
+output/
+large_tool_results/
+conversation_history/
+
+# Node
+node_modules/
+
+# Tauri / Rust build artifacts
+app/src-tauri/target/
+app/src-tauri/gen/schemas/
+app/src-tauri/icons/android/
+app/src-tauri/icons/ios/
+
+# Tauri sidecar binaries (too large for git)
+app/src-tauri/binaries/
+# PyInstaller --onedir backend bundled as Tauri resources
+app/src-tauri/resources/backend/
+# Playwright MCP bundled node binary + node_modules (too large for git)
+app/src-tauri/resources/playwright-mcp/
+
+# Frontend build output
+app/dist/
+
+# PyInstaller artifacts
+*.spec
+
+# Desktop navigation agent output images
+doc/examples/desktop_navigation/output_imgs/*
+!doc/examples/desktop_navigation/output_imgs/.gitkeep
+
+# Playwright MCP runtime output (snapshots, screenshots, console logs)
+.playwright-mcp/
+!app/src-tauri/icons/*.png
+!app/src/assets/*.png
+
+# Added by ggshield
+.cache_ggshield

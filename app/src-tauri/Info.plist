@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Otto uses your microphone for hands-free voice input when voice mode is enabled. All audio processing happens locally on your Mac.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Otto discovers other Macs on your local network to form a local AI cluster (exo) for distributed on-device inference. No data leaves your network.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_exo._udp</string>
+    <string>_exo._tcp</string>
+  </array>
+</dict>
+</plist>

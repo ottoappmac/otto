@@ -1,0 +1,737 @@
+THIRD-PARTY SOFTWARE NOTICES AND LICENSE INFORMATION
+======================================================
+
+This file contains notices and license information for open-source software
+components bundled with or used by OTTO.  It is provided in compliance with
+the terms of the respective licenses.
+
+Packages that ship only as development / test tooling (pytest, pytest-asyncio,
+flake8, ipykernel, ipywidgets) are included for completeness but are NOT
+distributed in production builds.
+
+IMPORTANT — grandalf (GPL-2.0 OR EPL-1.0)
+  grandalf is dual-licensed.  OTTO elects to receive and distribute it under
+  the Eclipse Public License v1.0 only.  The EPL-1.0 text is reproduced in
+  Section C below.
+
+IMPORTANT — asyncssh (EPL-2.0 OR GPL-2.0-or-later)
+  asyncssh is dual-licensed.  OTTO elects to receive and distribute it under
+  the Eclipse Public License v2.0 only.  The EPL-2.0 text is reproduced in
+  Section D below, together with a link to the asyncssh source.
+
+------------------------------------------------------------------------
+QUICK-REFERENCE INDEX
+------------------------------------------------------------------------
+
+Package                       Version   License
+---------------------------------------------------------------------------
+langchain                     1.2.18    MIT
+langchain-core                1.3.3     MIT
+langchain-community           0.4.1     MIT
+langchain-text-splitters      1.1.2     MIT
+langchain-openai              1.2.1     MIT
+langchain-anthropic           1.4.3     MIT
+langchain-cohere              0.5.1     MIT
+langchain-aws                 1.4.6     MIT
+langchain-classic             1.0.7     MIT
+langchain-mcp-adapters        0.2.2     MIT
+langgraph                     1.1.10    MIT
+langgraph-checkpoint-sqlite   3.0.3     MIT
+anthropic                     0.100.0   MIT
+mcp                           1.27.1    MIT
+deepagents                    0.5.9     MIT  (see note §MIT-3)
+fastapi                       0.136.1   MIT
+pydantic                      2.13.4    MIT
+mlx                           0.31.2    MIT
+mlx-lm                        0.31.3    MIT
+mlx-vlm                       0.5.0     MIT
+tiktoken                      0.12.0    MIT
+ddgs                          *         MIT
+markdownify                   1.2.2     MIT
+wikipedia                     1.4.0     MIT
+aiosqlite                     0.22.1    MIT
+PyJWT                         2.12.1    MIT
+keyring                       25.7.0    MIT
+StrEnum                       0.4.15    MIT
+APScheduler                   3.11.2    MIT
+pytest                        9.0.3     MIT   [dev only]
+uvicorn                       0.46.0    BSD-3-Clause
+websockets                    16.0      BSD-3-Clause
+httpx                         0.28.1    BSD-3-Clause
+python-dotenv                 1.2.2     BSD-3-Clause
+PyAutoGUI                     0.9.54    BSD-3-Clause
+nest-asyncio                  1.6.0     BSD-2-Clause
+pyobjc-core                   12.1      MIT  (see note §MIT-4)
+pillow                        12.2.0    MIT-CMU + bundled codec notices (Section E)
+deepeval                      4.0.0     Apache-2.0
+transformers                  5.8.0     Apache-2.0
+huggingface_hub               1.14.0    Apache-2.0
+hf_transfer                   0.1.9     Apache-2.0
+playwright                    1.59.0    Apache-2.0 (+ NOTICE — Section F)
+aiohttp                       3.13.5    Apache-2.0
+rank-bm25                     0.2.2     Apache-2.0
+traceloop-sdk                 0.60.0    Apache-2.0  (see note §Apache-3)
+pytest-asyncio                1.3.0     Apache-2.0  [dev only]
+certifi                       2026.4.22 MPL-2.0 (Section G)
+grandalf                      0.8       EPL-1.0 (elected; Section C)
+asyncssh                      2.23.0    EPL-2.0 (elected; Section D)
+
+------------------------------------------------------------------------
+SECTION A — MIT LICENSE
+------------------------------------------------------------------------
+
+The MIT License text below applies to each package listed; the specific
+copyright holder is noted before the text where it differs.
+
+─── langchain, langchain-core, langchain-community, langchain-text-splitters,
+    langchain-classic, langchain-mcp-adapters ───────────────────────────────
+    Copyright (c) LangChain, Inc.
+
+─── langchain-openai, langchain-anthropic, langchain-cohere, langchain-aws ──
+    Copyright (c) 2023–2024 LangChain, Inc.
+
+─── langgraph, langgraph-checkpoint-sqlite ──────────────────────────────────
+    Copyright (c) 2024 LangChain, Inc.
+
+─── anthropic ────────────────────────────────────────────────────────────────
+    Copyright 2023 Anthropic, PBC.
+
+─── mcp ──────────────────────────────────────────────────────────────────────
+    Copyright (c) 2024 Anthropic, PBC
+
+─── deepagents  [§MIT-3: license text not shipped in dist-info; upstream MIT] ─
+    Copyright (c) DeepAgents contributors
+    Source: https://pypi.org/project/deepagents/
+
+─── fastapi ──────────────────────────────────────────────────────────────────
+    Copyright (c) 2018 Sebastián Ramírez
+
+─── pydantic ─────────────────────────────────────────────────────────────────
+    Copyright (c) 2017 to present Pydantic Services Inc. and individual contributors.
+
+─── mlx, mlx-lm ─────────────────────────────────────────────────────────────
+    Copyright © 2023 Apple Inc.
+
+─── mlx-vlm ─────────────────────────────────────────────────────────────────
+    Copyright © 2025 Prince Canuma
+
+─── tiktoken ─────────────────────────────────────────────────────────────────
+    Copyright (c) 2022 OpenAI, Shantanu Jain
+
+─── ddgs ─────────────────────────────────────────────────────────────────────
+    Copyright (c) 2022 deedy5
+
+─── markdownify ─────────────────────────────────────────────────────────────
+    Copyright 2012–2018 Matthew Tretter
+
+─── wikipedia ────────────────────────────────────────────────────────────────
+    Copyright 2013 Jonathan Goldsmith
+
+─── aiosqlite ────────────────────────────────────────────────────────────────
+    Copyright (c) 2022 Amethyst Reese
+
+─── PyJWT ────────────────────────────────────────────────────────────────────
+    Copyright (c) 2015–2022 José Padilla
+
+─── keyring ──────────────────────────────────────────────────────────────────
+    Copyright (c) 2025 keyring contributors
+
+─── StrEnum ──────────────────────────────────────────────────────────────────
+    Copyright (c) 2019 James C Sinclair
+
+─── APScheduler ──────────────────────────────────────────────────────────────
+    Copyright (c) Alex Grönholm
+
+─── pyobjc-core  [§MIT-4: license text not shipped in dist-info; upstream MIT] ─
+    Copyright (c) 2002–2024 Ronald Oussoren and contributors
+    Source: https://github.com/ronaldoussoren/pyobjc
+
+─── pytest ───────────────────────────────────────────────────────────────────
+    Copyright (c) 2004 Holger Krekel and others
+
+MIT License
+-----------
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+SECTION B — BSD LICENSES
+------------------------------------------------------------------------
+
+─── uvicorn ──────────────────────────────────────────────────────────────────
+    Copyright © 2017-present Encode OSS Ltd.
+    (BSD 3-Clause)
+
+─── websockets ───────────────────────────────────────────────────────────────
+    Copyright (c) Aymeric Augustin and contributors
+    (BSD 3-Clause)
+
+─── httpx ────────────────────────────────────────────────────────────────────
+    Copyright © 2019 Encode OSS Ltd.
+    (BSD 3-Clause)
+
+─── python-dotenv ────────────────────────────────────────────────────────────
+    Copyright (c) 2014 Saurabh Kumar (python-dotenv),
+                  2013 Ted Tieken (django-dotenv-rw),
+                  2013 Jacob Kaplan-Moss (django-dotenv)
+    (BSD 3-Clause)
+
+─── PyAutoGUI ────────────────────────────────────────────────────────────────
+    Copyright (c) 2014 Al Sweigart
+    (BSD 3-Clause)
+
+─── nest-asyncio ─────────────────────────────────────────────────────────────
+    Copyright (c) 2018–2020 Ewald de Wit
+    (BSD 2-Clause)
+
+BSD 3-Clause License
+--------------------
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+BSD 2-Clause License (nest-asyncio only)
+-----------------------------------------
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------
+SECTION C — APACHE LICENSE, VERSION 2.0
+------------------------------------------------------------------------
+
+─── deepeval ─────────────────────────────────────────────────────────────────
+    Copyright (c) Confident AI, Inc. / Jeffrey Ip
+
+─── transformers ─────────────────────────────────────────────────────────────
+    Copyright 2018– The Hugging Face team. All rights reserved.
+
+─── huggingface_hub ──────────────────────────────────────────────────────────
+    Copyright 2023 HuggingFace Inc.
+
+─── hf_transfer ──────────────────────────────────────────────────────────────
+    Copyright 2023 HuggingFace Inc.
+
+─── playwright ───────────────────────────────────────────────────────────────
+    Copyright (c) Microsoft Corporation
+    (See also Section F — Playwright NOTICE)
+
+─── aiohttp ──────────────────────────────────────────────────────────────────
+    Copyright aio-libs contributors.
+
+─── rank-bm25 ────────────────────────────────────────────────────────────────
+    Copyright (c) D. Brown
+
+─── traceloop-sdk  [§Apache-3: no dist-info license file; upstream Apache-2.0] ─
+    Copyright (c) Traceloop Ltd. / Gal Kleinman, Nir Gazit
+    Source: https://github.com/traceloop/openllmetry
+
+─── pytest-asyncio ───────────────────────────────────────────────────────────
+    Copyright (c) Tin Tvrtković and contributors
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source form" shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object form" shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but not
+      limited to compiled object code, generated documentation, and
+      conversions to other media formats.
+
+      "Work" shall mean the work of authorship made available under the
+      License.
+
+      "Derivative Works" shall mean any work that is based on the Work.
+
+      "Contribution" shall mean any work of authorship submitted to the
+      Licensor for inclusion in the Work.
+
+      "Contributor" means the Licensor and any Legal Entity on behalf of
+      whom a Contribution has been received by the Licensor.
+
+   2. Grant of Copyright License. Each Contributor grants You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of, publicly
+      display, publicly perform, sublicense, and distribute the Work and
+      Derivative Works thereof.
+
+   3. Grant of Patent License. Each Contributor grants You a patent license
+      to make, use, sell, import, and otherwise transfer the Work.
+
+   4. Redistribution. You may reproduce and distribute copies of the Work or
+      Derivative Works in any medium, with or without modifications, provided:
+
+      (a) You give any recipients a copy of this License; and
+      (b) Modified files carry prominent notices stating that you changed them;
+      (c) You retain all copyright, patent, trademark, and attribution notices;
+      (d) If the Work includes a NOTICE file, you include a readable copy of
+          the attribution notices in any Derivative Works you distribute.
+
+   5. Submission of Contributions. Any Contribution submitted for inclusion in
+      the Work shall be under this License.
+
+   6. Trademarks. This License does not grant permission to use the Licensor's
+      trade names, trademarks, service marks, or product names.
+
+   7. Disclaimer of Warranty. The Work is provided on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
+   8. Limitation of Liability. In no event shall any Contributor be liable for
+      damages arising from this License or use of the Work.
+
+   9. Accepting Warranty or Additional Liability. While redistributing, you
+      may offer warranty or liability obligations only on your own behalf.
+
+      END OF TERMS AND CONDITIONS
+
+------------------------------------------------------------------------
+SECTION D — ECLIPSE PUBLIC LICENSE v1.0  (grandalf)
+------------------------------------------------------------------------
+
+grandalf is distributed under the GNU General Public License v2 OR the
+Eclipse Public License v1.0.  OTTO receives and distributes grandalf under
+the Eclipse Public License v1.0 only, as permitted by grandalf's dual-license
+header.
+
+Copyright (c) Axel Tillequin and contributors.
+Source: https://github.com/bdcht/grandalf
+
+Eclipse Public License - v 1.0
+
+THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS ECLIPSE PUBLIC
+LICENSE ("AGREEMENT"). ANY USE, REPRODUCTION OR DISTRIBUTION OF THE PROGRAM
+CONSTITUTES RECIPIENT'S ACCEPTANCE OF THIS AGREEMENT.
+
+1. DEFINITIONS
+
+"Contribution" means:
+
+  a) in the case of the initial Contributor, the initial code and
+     documentation distributed under this Agreement, and
+  b) in the case of each subsequent Contributor, changes to the Program
+     and additions to the Program.
+
+"Contributor" means any person or entity that distributes the Program.
+
+"Licensed Patents" means patent claims licensable by a Contributor which are
+necessarily infringed by the use or sale of its Contribution alone or when
+combined with the Program.
+
+"Program" means the Contributions distributed in accordance with this
+Agreement.
+
+"Recipient" means anyone who receives the Program under this Agreement,
+including all Contributors.
+
+2. GRANT OF RIGHTS
+
+  a) Each Contributor grants Recipient a non-exclusive, worldwide,
+     royalty-free copyright license to reproduce, prepare Derivative Works of,
+     publicly display, publicly perform, Distribute and sublicense the
+     Contribution of such Contributor, if any, and such Derivative Works.
+
+  b) Each Contributor grants Recipient a non-exclusive, worldwide,
+     royalty-free patent license under Licensed Patents to make, use, sell,
+     offer to sell, import and otherwise transfer the Contribution of such
+     Contributor, if any, in source code and object code form.
+
+3. REQUIREMENTS
+
+  A Contributor may choose to distribute the Program in object code form
+  under its own license agreement, provided that:
+
+  a) it complies with the terms and conditions of this Agreement; and
+  b) its license agreement effectively disclaims on behalf of all Contributors
+     all warranties and conditions, express and implied.
+
+  When the Program is made available in source code form, then a copy of this
+  Agreement must be included with each copy of the Program.
+
+4. COMMERCIAL DISTRIBUTION
+
+  Commercial distributors of software may accept certain responsibilities with
+  respect to end users, business partners and the like.  While this license is
+  intended to facilitate the commercial use of the Program, the Contributor who
+  includes the Program in a commercial product offering should do so in a manner
+  which does not create potential liability for other Contributors.
+
+5. NO WARRANTY
+
+  EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, THE PROGRAM IS PROVIDED ON
+  AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER
+  EXPRESS OR IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS
+  OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR
+  PURPOSE. Each Recipient is solely responsible for determining the
+  appropriateness of using and distributing the Program and assumes all risks
+  associated with its exercise of rights under this Agreement, including but not
+  limited to the risks and costs of program errors, compliance with applicable
+  laws, damage to or loss of data, programs or equipment, and unavailability or
+  interruption of operations.
+
+6. DISCLAIMER OF LIABILITY
+
+  EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, NEITHER RECIPIENT NOR ANY
+  CONTRIBUTORS SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING WITHOUT LIMITATION
+  LOST PROFITS), HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+  ARISING IN ANY WAY OUT OF THE USE OR DISTRIBUTION OF THE PROGRAM OR THE
+  EXERCISE OF ANY RIGHTS GRANTED HEREUNDER, EVEN IF ADVISED OF THE POSSIBILITY
+  OF SUCH DAMAGES.
+
+7. GENERAL
+
+  If any provision of this Agreement is invalid or unenforceable under
+  applicable law, it shall not affect the validity or enforceability of the
+  remainder of the terms of this Agreement.
+
+------------------------------------------------------------------------
+SECTION E — ECLIPSE PUBLIC LICENSE v2.0  (asyncssh)
+------------------------------------------------------------------------
+
+asyncssh is dual-licensed: EPL-2.0 OR GPL-2.0-or-later.
+OTTO receives and distributes asyncssh under the EPL-2.0 only.
+
+Copyright (c) 2013–2024 Ron Frederick <ronf@timeheart.net> and contributors.
+Source code available at: https://github.com/ronf/asyncssh
+
+Eclipse Public License - v 2.0
+
+    THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS ECLIPSE
+    PUBLIC LICENSE ("AGREEMENT"). ANY USE, REPRODUCTION OR DISTRIBUTION
+    OF THE PROGRAM CONSTITUTES RECIPIENT'S ACCEPTANCE OF THIS AGREEMENT.
+
+1. DEFINITIONS
+
+"Contribution" means:
+  a) the initial content Distributed under this Agreement, and
+  b) any subsequent changes to the Program.
+
+"Contributor" means any person or entity that Distributes the Program.
+
+"Licensed Patents" means patent claims licensable by a Contributor which are
+necessarily infringed by the use or sale of its Contribution alone or when
+combined with the Program.
+
+"Program" means the Contributions Distributed in accordance with this
+Agreement.
+
+"Recipient" means anyone who receives the Program under this Agreement or any
+Secondary License (as applicable), including Contributors.
+
+"Derivative Works" means any work that is based on (or derived from) the
+Program.
+
+"Modified Works" means any work in Source Code or other form that results from
+an addition to, deletion from, or modification of the contents of the Program.
+
+"Distribute" means the acts of (a) distributing or (b) making available in any
+manner that enables the transfer of a copy.
+
+"Source Code" means the form of a Program preferred for making modifications.
+
+"Secondary License" means either the GNU General Public License, Version 2.0,
+or any later versions of that license, including any exceptions or additional
+permissions as identified by the initial Contributor.
+
+2. GRANT OF RIGHTS
+
+  a) Each Contributor grants Recipient a non-exclusive, worldwide,
+     royalty-free copyright license to reproduce, prepare Derivative Works of,
+     publicly display, publicly perform, Distribute and sublicense the
+     Contribution of such Contributor, if any, and such Derivative Works.
+
+  b) Each Contributor grants Recipient a non-exclusive, worldwide,
+     royalty-free patent license to make, use, sell, offer to sell, import and
+     otherwise transfer the Contribution.
+
+3. REQUIREMENTS
+
+  3.1 If a Contributor Distributes the Program in any form, then:
+    a) the Program must also be made available as Source Code, and the
+       Contributor must accompany the Program with a statement that the Source
+       Code for the Program is available under this Agreement;
+    b) each Recipient must be allowed to Distribute the Program under the terms
+       of this Agreement;
+    c) each Recipient must receive a copy of this Agreement with the Program.
+
+  3.2 When the Contributor Distributes the Program as part of a Larger Work
+    (such as OTTO), the Contributor may do so under terms that are different
+    from this Agreement, provided that:
+    a) the terms do not restrict or limit the recipients' rights in the Program;
+    b) the Contributor makes available the Program Source Code for the Program
+       under the terms of this Agreement (e.g. by linking to the upstream
+       source repository).
+
+  3.3 The Contributor must include a readable copy of this Agreement with every
+  copy of the Program it Distributes.
+
+4. COMMERCIAL DISTRIBUTION — same obligations as EPL-1.0 §4 above.
+
+5. NO WARRANTY
+
+  EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, AND TO THE EXTENT PERMITTED
+  BY APPLICABLE LAW, THE PROGRAM IS PROVIDED ON AN "AS IS" BASIS, WITHOUT
+  WARRANTIES OR CONDITIONS OF ANY KIND.
+
+6. DISCLAIMER OF LIABILITY
+
+  EXCEPT AS EXPRESSLY SET FORTH IN THIS AGREEMENT, NEITHER RECIPIENT NOR ANY
+  CONTRIBUTORS SHALL HAVE ANY LIABILITY FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.
+
+7. GENERAL — standard severability and miscellaneous clauses apply.
+
+Full license text: https://www.eclipse.org/legal/epl-2.0/
+
+------------------------------------------------------------------------
+SECTION F — PILLOW (MIT-CMU License + Bundled Codec Notices)
+------------------------------------------------------------------------
+
+The Python Imaging Library (PIL) is
+
+    Copyright © 1997–2011 by Secret Labs AB
+    Copyright © 1995–2011 by Fredrik Lundh and contributors
+
+Pillow is the friendly PIL fork. It is
+
+    Copyright © 2010 by Jeffrey 'Alex' Clark and contributors
+
+Like PIL, Pillow is licensed under the open source MIT-CMU License:
+
+By obtaining, using, and/or copying this software and/or its associated
+documentation, you agree that you have read, understood, and will comply
+with the following terms and conditions:
+
+Permission to use, copy, modify and distribute this software and its
+documentation for any purpose and without fee is hereby granted, provided
+that the above copyright notice appears in all copies, and that both that
+copyright notice and this permission notice appear in supporting documentation,
+and that the name of Secret Labs AB or the author not be used in advertising
+or publicity pertaining to distribution of the software without specific,
+written prior permission.
+
+SECRET LABS AB AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
+SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN
+NO EVENT SHALL SECRET LABS AB OR THE AUTHOR BE LIABLE FOR ANY SPECIAL,
+INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+Bundled image codec notices (AOM, Brotli, FreeType, libjpeg, libtiff, zlib,
+and others) are reproduced verbatim in the Pillow distribution's LICENSE file,
+which is installed at:
+
+    .venv/lib/python3.12/site-packages/Pillow-<version>.dist-info/LICENSE
+
+and at runtime in the binary bundle produced by PyInstaller.
+
+------------------------------------------------------------------------
+SECTION G — PLAYWRIGHT NOTICE FILE
+------------------------------------------------------------------------
+
+The following attribution notices are required by Playwright's Apache-2.0
+license (NOTICE file).
+
+Playwright
+Copyright (c) Microsoft Corporation
+
+This software contains code derived from the Puppeteer project
+(https://github.com/puppeteer/puppeteer), available under the Apache 2.0
+license (https://github.com/puppeteer/puppeteer/blob/master/LICENSE).
+
+microsoft/playwright-core THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+This project incorporates components from projects listed in the Playwright
+distribution's NOTICE file.  A copy of that file is installed at:
+
+    .venv/lib/python3.12/site-packages/playwright-<version>.dist-info/NOTICE
+
+and at runtime in the binary bundle produced by PyInstaller.
+
+------------------------------------------------------------------------
+SECTION H — MOZILLA PUBLIC LICENSE v2.0  (certifi)
+------------------------------------------------------------------------
+
+certifi — Python package for providing Mozilla's CA Bundle
+Copyright (c) 2011–2024 Kenneth Reitz and contributors.
+Source: https://github.com/certifi/python-certifi
+
+This package contains a modified version of the Mozilla CA certificate bundle
+(ca-bundle.crt).  The bundle itself is subject to the Mozilla Public License
+v2.0 (MPL-2.0).
+
+certifi is used unmodified by OTTO.  No source disclosure obligation arises
+under MPL-2.0 for unmodified use.  If you modify any certifi source files and
+distribute those modifications, you must make the modified files available
+under MPL-2.0.
+
+Mozilla Public License Version 2.0
+
+1. Definitions
+   "Contributor" means each individual or legal entity that creates, contributes
+   to the creation of, or owns Covered Software.
+   "Covered Software" means Source Code Form to which the initial Contributor
+   has attached the notice in Exhibit A, the Executable Form of such Source Code
+   Form, and Modifications of such Source Code Form.
+   "Incompatible With Secondary Licenses" means the Covered Software was not
+   released under a Compatible License or a Secondary License.
+   "Larger Work" means a work that combines Covered Software with other material
+   in a separate file or files that is not Covered Software.
+   "License" means this document.
+   "Licensable" means having the right to grant, to the maximum extent possible,
+   whether at the time of the initial grant or subsequently, any and all of the
+   rights conveyed by this License.
+   "Modifications" means any of the changes listed in Section 1(f)(ii).
+   "Patent Claims" of a Contributor means any patent claim(s) owned or
+   controlled by the Contributor.
+   "Source Code Form" means the form of the work preferred for making
+   modifications.
+   "You" (or "Your") means an individual or a legal entity exercising rights
+   under this License.
+
+2. License Grants and Conditions
+   2.1. Grants
+        Each Contributor hereby grants You a world-wide, royalty-free,
+        non-exclusive license to reproduce, modify, use, sell, offer for sale,
+        import, and otherwise transfer either its Contributions or its
+        Contributor Version.
+   2.2. Effective Date
+        The licenses granted in Section 2.1 become effective for each
+        Contribution on the date the Contributor first distributes such
+        Contribution.
+   2.3. Limitations on Grant Scope
+        The licenses granted in this Section 2 are the only rights granted
+        under this License. No additional rights or licenses will be implied
+        from the distribution or licensing of Covered Software under this
+        License.
+   2.4. Subsequent Licenses
+        No Contributor makes additional grants as a result of Your choice to
+        distribute the Covered Software under a subsequent version of this
+        License (see Section 10.2).
+   2.5. Representation
+        Each Contributor represents that the Contributor believes its
+        Contributions are its original creation(s) or it has sufficient rights
+        to grant the rights to its Contributions conveyed by this License.
+   2.6. Fair Use
+        This License is not intended to limit any rights You have under
+        applicable copyright doctrines of fair use, fair dealing, or other
+        equivalents.
+   2.7. Conditions
+        Sections 3.1, 3.2, 3.3, and 3.4 are conditions of the licenses granted
+        in Section 2.1.
+
+3. Responsibilities
+   3.1. Distribution of Source Form
+        All distribution of Covered Software in Source Code Form must include a
+        copy of this License. You must inform recipients that the Source Code
+        Form of the Covered Software is governed by the terms of this License,
+        and how they can obtain a copy of this License.
+   3.2. Distribution of Executable Form
+        If You distribute Covered Software in Executable Form then you must also
+        make the Source Code Form available, or inform recipients where they can
+        obtain a copy of the Source Code Form.
+   3.3. Distribution of a Larger Work
+        You may create and distribute a Larger Work under terms You choose,
+        provided that You also comply with the requirements of this License for
+        the Covered Software.
+   3.4. Notices
+        You may not remove or alter the substance of any license notices
+        (including copyright notices, patent notices, disclaimers of warranty,
+        or limitations of liability) contained within the Source Code Form of
+        the Covered Software, except that You may alter any license notices to
+        the extent required to remedy known factual inaccuracies.
+   3.5. Application of Additional Terms
+        You may choose to offer, and to charge a fee for, warranty, support,
+        indemnity or liability obligations to one or more recipients of Covered
+        Software.
+
+4–10. (remaining MPL-2.0 sections)
+      Full text available at: https://www.mozilla.org/en-US/MPL/2.0/
+
+This Source Code Form is subject to the terms of the Mozilla Public License,
+v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain
+one at http://mozilla.org/MPL/2.0/.
+
+------------------------------------------------------------------------
+END OF THIRD-PARTY NOTICES
+------------------------------------------------------------------------
