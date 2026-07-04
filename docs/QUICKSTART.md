@@ -1,7 +1,8 @@
 # Quickstart
 
-Get OTTO running fast: install the pre-built app, or run it from source with
-or without Rust — then grab MLX models from Hugging Face straight from the
+Two ways to run OTTO: install the pre-built app, or run it from source in your
+browser — no Rust required. Either way, you configure your model and API key
+from the in-app **Settings**, and you can pull MLX models straight from the
 command line if you'd rather skip the On-Device UI.
 
 ---
@@ -16,129 +17,71 @@ No Python, Node, or Rust required — this is the quickest way to try OTTO.
    - The app is signed and notarized, so it should open normally. If macOS
      still shows an "unidentified developer" warning, right-click the app →
      **Open** once to bypass it.
-4. On first launch, open **Settings** and either:
-   - add a cloud API key (`ANTHROPIC_API_KEY` or similar), or
-   - switch to **On-Device (MLX)** and download a model from the catalog —
-     see [`settings.md`](./settings.md), or use the command-line route in
-     [Download MLX models via command line](#download-mlx-models-via-command-line) below.
-
-Skip to [Troubleshooting](#troubleshooting) or [Run tests](#run-tests) if
-that's all you need — everything below is for running from source instead.
+4. On first launch, open **Settings** and configure a model — see
+   [Configure a model](#configure-a-model) below.
 
 ---
 
-## Option 2 — Run from source
+## Option 2 — Run from source (no Rust required)
+
+This runs the real UI in your web browser via the Vite dev server, talking to
+the FastAPI backend. It needs neither Rust, Xcode, nor the packaged app build,
+which makes it ideal for VMs, headless machines, or a quick dev loop.
+
+> You do **not** need to run `./install.sh` first. That script is only for
+> building the packaged desktop app (it downloads the Playwright browser and
+> compiles a PyInstaller backend binary). To run from source you just need the
+> Python venv and the frontend `npm` deps — the two steps below.
 
 ### Prerequisites
 
-| Tool | Version | Check | Needed for |
-|------|---------|-------|-------------|
-| Python | 3.12 | `python3 --version` | both |
-| Node.js | 18+ | `node -v` | both |
-| `uv` | any | `uv --version` | both |
-| Rust | stable | `rustc --version` | native desktop app only (not needed for the browser workflow) |
+| Tool | Version | Check |
+|------|---------|-------|
+| Python | 3.12 | `python3 --version` |
+| Node.js | 18+ | `node -v` |
+| `uv` | any | `uv --version` |
 
-These are installed automatically by `./install.sh` and `./start_app.sh` if
-missing. Missing something manually?
+Missing something?
 
 ```bash
 # uv (Python package/venv manager)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Rust (required by Tauri — native desktop app only)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
 # Node.js — via Homebrew (macOS)
 brew install node
 ```
 
-**macOS, native desktop app only**: also install the Xcode Command Line
-Tools (the ~1.5 GB CLT package, *not* the full Xcode IDE) — required for the
-Rust/Tauri linker:
+### Step 1 — Install dependencies
 
 ```bash
-xcode-select --install
+# Python: creates .venv/ and installs backend deps from the lockfile
+uv sync --frozen --python 3.12
+
+# Frontend
+npm install --prefix app
 ```
 
-If you're short on disk space or don't want the Command Line Tools, use the
-browser workflow below instead — it needs neither Rust nor Xcode.
-
-### Step 1 — Add your API key
-
-Copy the environment template and set at least one LLM key:
+### Step 2 — Start the backend
 
 ```bash
-cp .env.template .env
-```
-
-Open `.env` and fill in one of:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-...
-# or
-COHERE_API_KEY=...
-```
-
-> Running fully on-device with MLX? Set `LLM_PROVIDER=mlx` instead — no API key needed.
-
-### Step 2 — Start everything (native desktop app, with Rust)
-
-```bash
-./start_app.sh              # first run (installs deps too)
-./start_app.sh --no-install # subsequent runs — skip dependency install
-```
-
-This will:
-1. Create a Python 3.12 virtual environment at `.venv/` (first run only)
-2. Install Python dependencies (`uv pip install -e .`)
-3. Install frontend dependencies (`npm install`)
-4. Start the FastAPI backend on **port 18081**
-5. Start the Tauri desktop app (Vite dev server on **port 5173**)
-
-Press `Ctrl-C` to stop both services cleanly.
-
-If you'd rather run the pieces yourself, or don't have Rust installed, pick
-one of the two manual workflows below.
-
-#### Manual — With Rust (native desktop app)
-
-```bash
-# Terminal 1 — FastAPI backend
 source .venv/bin/activate
 PYTHONPATH=src python -m backend --port 18081 --reload
-
-# Terminal 2 — Tauri desktop app
-cd app
-npm install        # first run only
-npm run tauri dev
 ```
 
-#### Manual — Without Rust (browser only)
+### Step 3 — Start the frontend
 
-Best for VMs, headless machines, or anywhere you don't want to install the
-Command Line Tools. Runs the same UI in your web browser via the Vite dev
-server.
+In a second terminal:
 
 ```bash
-# Terminal 1 — FastAPI backend
-source .venv/bin/activate
-PYTHONPATH=src python -m backend --port 18081 --reload
-
-# Terminal 2 — frontend dev server
 cd app
-npm install        # first run only
 npm run dev
 ```
 
 Open the printed address — usually **http://localhost:5173** — in Safari or
-Chrome. No Rust, no Command Line Tools, no Xcode required. You lose the
-native desktop niceties (system notifications, dock badge), but the app
-itself works fully.
+Chrome. You lose the native desktop niceties (system notifications, dock
+badge), but the app itself works fully.
 
-### Step 3 — Use the app
-
-The Tauri desktop window opens automatically (or your browser, for the
-manual/no-Rust workflow). You can also reach the backend directly:
+You can also reach the backend directly:
 
 | Endpoint | URL |
 |----------|-----|
@@ -146,21 +89,37 @@ manual/no-Rust workflow). You can also reach the backend directly:
 | REST API | http://localhost:18081/api/ |
 | WebSocket | ws://localhost:18081/ws/{session_id} |
 
-### Optional — Browser automation
+### Optional — native desktop app (needs Rust)
 
-The `playwright_mcp` tool requires a running Playwright MCP server. Start it in a separate terminal before launching the app:
-
-```bash
-npx -y @playwright/mcp@latest --port 8931
-```
-
-Configure via `.env`:
+Want the native Tauri window instead of the browser? Install Rust and the
+Xcode Command Line Tools (the ~1.5 GB CLT package, *not* the full Xcode IDE),
+then let `./start_app.sh` handle everything:
 
 ```bash
-PLAYWRIGHT_MCP_HOST=localhost
-PLAYWRIGHT_MCP_PORT=8931
-PLAYWRIGHT_MCP_HEADLESS=false
+# Rust (required by Tauri)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Xcode Command Line Tools (macOS — required for the Tauri linker)
+xcode-select --install
+
+./start_app.sh              # first run (installs deps + launches backend & app)
+./start_app.sh --no-install # subsequent runs — skip dependency install
 ```
+
+Press `Ctrl-C` to stop both services cleanly.
+
+---
+
+## Configure a model
+
+On first launch, open **Settings** and either:
+
+- add a cloud API key (e.g. `ANTHROPIC_API_KEY`), or
+- switch to **On-Device (MLX)** and download a model from the catalog.
+
+Keys are stored in the OS keychain — never in config files — so there's no
+`.env` to edit. See [`settings.md`](./settings.md) for the full walkthrough, or
+use the command-line route below to pre-download an MLX model.
 
 ---
 
@@ -208,8 +167,29 @@ curated list, or search [huggingface.co/mlx-community](https://huggingface.co/ml
 | Vision-language | `mlx-community/Qwen2.5-VL-7B-Instruct-4bit` |
 | Power (32 GB+ Macs) | `mlx-community/Qwen3-30B-A3B-4bit` |
 
-Once downloaded, open OTTO's On-Device tab (or set `LLM_PROVIDER=mlx` and
-`HF_LLM_MODEL_ID=<repo_id>` in `.env`) — no re-download needed.
+Once downloaded, open OTTO's On-Device tab and select the model — no
+re-download needed.
+
+---
+
+## Optional — Browser automation
+
+The `playwright_mcp` tool requires a running Playwright MCP server. Start it in
+a separate terminal before launching the app:
+
+```bash
+npx -y @playwright/mcp@latest --port 8931
+```
+
+The defaults (`localhost:8931`, non-headless) match the command above. To point
+at a different host/port or run headless, export the corresponding variables
+before starting the backend:
+
+```bash
+export PLAYWRIGHT_MCP_HOST=localhost
+export PLAYWRIGHT_MCP_PORT=8931
+export PLAYWRIGHT_MCP_HEADLESS=false
+```
 
 ---
 
@@ -217,7 +197,7 @@ Once downloaded, open OTTO's On-Device tab (or set `LLM_PROVIDER=mlx` and
 
 **Port already in use**
 
-`start_app.sh` checks ports 18081 and 5173 before starting and will print which process holds them. To free a port manually:
+The backend uses port 18081 and Vite uses 5173. To free a port:
 
 ```bash
 lsof -ti :18081 | xargs kill   # backend port
@@ -226,7 +206,10 @@ lsof -ti :5173  | xargs kill   # Vite frontend port
 
 **Backend crashes on startup**
 
-Check that `.env` exists and has a valid API key set. The most common cause is a missing or malformed key.
+The backend starts fine without any keys — you configure a model afterward in
+**Settings**. If it crashes, check the terminal output; the most common causes
+are a port already in use or a missing Python dependency (re-run
+`uv sync --frozen`).
 
 **`uv` not found**
 
