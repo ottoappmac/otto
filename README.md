@@ -8,6 +8,16 @@ Supports cloud LLMs (Anthropic, OpenAI) and fully local inference via MLX on [Ap
 
 OTTO is self-managing: through conversation alone it creates and maintains its own **Agents**, **Skills**, **Tools**, **Schedules**, **Triggers**, and **Settings** — no config files or UI required.
 
+## Quickstart
+
+**New here? Start with [`QUICKSTART.md`](./docs/QUICKSTART.md).** Install the pre-built `.dmg`, or run from source in your browser with a single command — no Rust, Xcode, or Homebrew required:
+
+```bash
+./start_web.sh   # installs deps, then serves the UI at http://localhost:5173
+```
+
+Prefer the native desktop app? `./start_app.sh` builds and launches the Tauri window (needs Rust). Full instructions — including CLI MLX model downloads — are in the [Quickstart](./docs/QUICKSTART.md).
+
 ## Documentation
 
 Per-page guides for the desktop UI (each with screenshots). The pages below map to the items in OTTO's right-hand navigation:
@@ -24,7 +34,7 @@ Per-page guides for the desktop UI (each with screenshots). The pages below map 
 | Activity | [`activity.md`](./docs/activity.md) | The on-device macOS activity timeline |
 | Settings | [`settings.md`](./docs/settings.md) | LLM, Agent Memory, Voice, Privacy, and all other settings |
 
-Also in [`docs/`](./docs/): [`QUICKSTART.md`](./docs/QUICKSTART.md) (install the `.dmg`, run from source with/without Rust, download MLX models via the CLI) and [`features.md`](./docs/features.md) (a longer, screenshot-heavy feature tour).
+Also in [`docs/`](./docs/): [`QUICKSTART.md`](./docs/QUICKSTART.md) (install the `.dmg`, run from source in the browser without Rust, run the native app, download MLX models via the CLI) and [`features.md`](./docs/features.md) (a longer, screenshot-heavy feature tour).
 
 ## Services
 
