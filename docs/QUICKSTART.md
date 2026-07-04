@@ -41,7 +41,8 @@ which makes it ideal for VMs, headless machines, or a quick dev loop.
 | Node.js | 18+ | `node -v` |
 | `uv` | any | `uv --version` |
 
-Missing something?
+`uv` and Node are installed automatically by `./start_web.sh` (below) if
+missing — no Homebrew required. To install them yourself instead:
 
 ```bash
 # uv (Python package/venv manager)
@@ -51,7 +52,30 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 brew install node
 ```
 
-### Step 1 — Install dependencies
+> No Homebrew? See [Install Node without Homebrew](#install-node-without-homebrew)
+> below — `./start_web.sh` uses that same package-manager-free path automatically.
+
+### Quick start — one command
+
+`./start_web.sh` installs everything (Python venv + deps, frontend deps) and
+launches the backend plus the Vite dev server. It needs **no Rust, no Xcode,
+and no Homebrew** — missing `uv`/Node are installed from their official
+sudo-free installers.
+
+```bash
+./start_web.sh              # first run — installs deps, then launches
+./start_web.sh --no-install # subsequent runs — skip dependency install
+```
+
+Then open the printed address — usually **http://localhost:5173** — in Safari
+or Chrome. Press `Ctrl-C` to stop both services cleanly.
+
+### Manual — run the pieces yourself
+
+Prefer to run each step by hand? These are exactly what `start_web.sh`
+automates.
+
+**1. Install dependencies**
 
 ```bash
 # Python: creates .venv/ and installs backend deps from the lockfile
@@ -61,16 +85,14 @@ uv sync --frozen --python 3.12
 npm install --prefix app
 ```
 
-### Step 2 — Start the backend
+**2. Start the backend**
 
 ```bash
 source .venv/bin/activate
 PYTHONPATH=src python -m backend --port 18081 --reload
 ```
 
-### Step 3 — Start the frontend
-
-In a second terminal:
+**3. Start the frontend** (in a second terminal)
 
 ```bash
 cd app
@@ -107,6 +129,28 @@ xcode-select --install
 ```
 
 Press `Ctrl-C` to stop both services cleanly.
+
+### Install Node without Homebrew
+
+`./start_web.sh` and `./start_app.sh` already install Node this way when it's
+missing, so you usually don't need to do this by hand. To install it yourself
+without a package manager, download the official prebuilt tarball into
+`~/.local` (no sudo):
+
+```bash
+NODE_VERSION="v22.14.0"
+OS="darwin"; ARCH="arm64"   # use ARCH="x64" on Intel Macs
+NAME="node-${NODE_VERSION}-${OS}-${ARCH}"
+mkdir -p ~/.local/node ~/.local/bin
+curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${NAME}.tar.gz" \
+  | tar xz --strip-components 1 -C ~/.local/node
+for t in node npm npx; do ln -sf ~/.local/node/bin/$t ~/.local/bin/$t; done
+export PATH="$HOME/.local/bin:$PATH"   # add to ~/.zshrc to persist
+```
+
+Or use a version manager such as [`nvm`](https://github.com/nvm-sh/nvm)
+(`nvm install 22`) or [`fnm`](https://github.com/Schniz/fnm)
+(`fnm install 22`). Any Node ≥ 18 works.
 
 ---
 
