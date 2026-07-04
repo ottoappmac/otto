@@ -1,6 +1,6 @@
 # OTTO
 
-[![OTTO intro video](https://img.youtube.com/vi/G0XRYghuWNc/maxresdefault.jpg)](https://youtu.be/G0XRYghuWNc)
+[![OTTO intro video](https://img.youtube.com/vi/_uVWnEHIuWA/maxresdefault.jpg)](https://youtu.be/_uVWnEHIuWA)
 
 A macOS AI agent desktop app. FastAPI backend, Tauri + React frontend, LangGraph orchestration. Runs entirely on your machine — no cloud relay, no telemetry.
 
