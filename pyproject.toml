@@ -42,7 +42,7 @@ dependencies = [
     "mlx>=0.31.1",
     "mlx-lm>=0.31.2",
     "mlx-vlm>=0.4.4",
-    "transformers>=5.0.0",
+    "transformers>=5.0.0,<5.13.0",  # 5.13.0 broke mlx-lm's AutoTokenizer.register("NewlineTokenizer", ...) string-key call
     "huggingface-hub>=1.3.0",
     # Optional accelerator for non-Xet repos.  Used in
     # ``backend/routes/mlx.py`` via ``HF_HUB_ENABLE_HF_TRANSFER=1`` for a
