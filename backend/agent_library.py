@@ -408,7 +408,7 @@ _BUILTIN_SKILL_VERSIONS: dict[str, int] = {
 }
 
 _BUILTIN_AGENT_VERSIONS: dict[str, int] = {
-    "browser-agent": 13,
+    "browser-agent": 15,
     "claude-session-eval-agent": 11,
     "openclaw-session-eval-agent": 2,
     "macos-desktop-agent": 1,
@@ -1318,6 +1318,65 @@ You automate web application interactions using Playwright MCP browser tools. Yo
 ## Speed
 - Do not use `write_todos` — proceed directly to tool calls
 - Do not add steps beyond what was requested
+
+## Login / Authentication Walls (ALWAYS do this)
+
+If the page requires the user to sign in before you can proceed (a login form,
+"Sign in to continue" wall, SSO / OAuth prompt, 2FA/OTP challenge, or CAPTCHA),
+do NOT attempt to enter credentials yourself and do NOT guess them:
+
+1. Take a `browser_snapshot()` (and, if available, a `browser_take_screenshot()`)
+   so the user can see the current login page.
+2. Call `ask_user` to tell the user login is required and ask them to complete
+   the sign-in in the browser window, e.g.
+   `ask_user(question="This page requires you to sign in. Please complete the login in the browser window, then let me know when you're done.")`
+3. **Wait and re-check in a loop** until login is complete:
+   - Call `browser_wait_for` (or `browser_snapshot()` after a short wait) and
+     take a fresh `browser_snapshot()` / `browser_take_screenshot()` to observe
+     the current state.
+   - Detect completion by the disappearance of the login form / auth wall and
+     the appearance of the authenticated content you were sent to reach.
+   - Repeat the wait-and-screenshot cycle; do NOT proceed with the task until
+     you have confirmed via a snapshot that login succeeded.
+4. Only after login is confirmed complete, resume the original workflow.
+5. If login cannot be completed (user reports they cannot sign in, or repeated
+   checks still show the auth wall), record `status: "failure"` with a note and
+   stop — do not fabricate results.
+
+## Large Results & Offloading (do NOT hallucinate offloaded files)
+
+A tool result is only "offloaded" to the filesystem when you see the LITERAL
+notice `Tool result too large ... was saved in the filesystem at this path:
+/large_tool_results/<tool_call_id>` in the tool result itself.
+
+- If you did NOT see that exact notice, the result was NOT offloaded — the full
+  content was returned inline. Do NOT invent, guess, or reconstruct an offload
+  path. In particular, `page-<timestamp>.yml` is a Playwright-internal snapshot
+  name, NOT an offload path — never `read_file` a path you did not receive.
+- Only when you DID see the offload notice: read it back with
+  `read_file(path, offset=..., limit=...)` using the EXACT path from the notice,
+  or search across offloaded results with `grep_large_results(pattern=...)`.
+- Empty, sparse, or "compact"-looking results are NOT evidence of offloading
+  (see Lazy-Loaded / Paginated Content below).
+
+## Lazy-Loaded / Paginated Content
+
+Many sites (LinkedIn, infinite-scroll feeds, virtualized lists) render only the
+first few items; later items appear as EMPTY list items in the snapshot until
+scrolled into view. If a snapshot shows a known total (e.g. "23 results") but
+only a few are populated:
+
+1. Do NOT assume the data was offloaded or lost. It simply isn't loaded yet.
+2. Scroll to trigger loading: `browser_evaluate` a `window.scrollTo(...)` or
+   scroll the list container, or use `browser_press_key(key="End")`.
+3. `browser_wait_for` a short beat for lazy content to render, then take a FRESH
+   `browser_snapshot()` — refs go stale after scrolling.
+4. Repeat scroll → wait → snapshot until the count stops increasing or you have
+   what the task needs. Prefer the accessibility snapshot over `browser_evaluate`
+   DOM scraping — obfuscated / hashed class names make raw selectors unreliable
+   and they will return `[]`.
+5. If some items still cannot be loaded after a few passes, record the ones you
+   captured plus a `partial`/`notes` field — do NOT fabricate the rest.
 
 ## Data Integrity (NON-NEGOTIABLE)
 
