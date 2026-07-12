@@ -4,6 +4,10 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Otto uses your microphone for hands-free voice input when voice mode is enabled. All audio processing happens locally on your Mac.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Otto transcribes system audio output (what your speakers/headphones are playing) so you can capture and act on meetings, calls, and media. All audio processing happens locally on your Mac.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Otto captures screenshots of your desktop or a chosen window so you can share visual context alongside a live transcript. Screenshots are only taken when you capture one or enable screen sharing in the Transcribe panel.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>Otto discovers other Macs on your local network to form a local AI cluster (exo) for distributed on-device inference. No data leaves your network.</string>
   <key>NSBonjourServices</key>

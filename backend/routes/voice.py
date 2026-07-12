@@ -55,6 +55,26 @@ async def _get_voice_manager():
     return get_manager()
 
 
+async def _get_loopback_manager():
+    from backend.voice.loopback_manager import get_loopback_manager
+    return get_loopback_manager()
+
+
+async def _apply_config_to_loopback(cfg: AppConfig) -> None:
+    mgr = await _get_loopback_manager()
+    vc = cfg.voice
+    mgr.configure({
+        "stt_model": vc.stt_model,
+        "stt_language": vc.stt_language,
+        "mic_device": vc.mic_device,
+        "loopback_enabled": vc.loopback_enabled,
+        "loopback_vad_silence_secs": vc.loopback_vad_silence_secs,
+        "loopback_max_segment_secs": vc.loopback_max_segment_secs,
+        "loopback_live_partials": vc.loopback_live_partials,
+        "loopback_partial_interval_secs": vc.loopback_partial_interval_secs,
+    })
+
+
 async def _apply_config_to_manager(cfg: AppConfig) -> None:
     mgr = await _get_voice_manager()
     vc = cfg.voice
@@ -122,6 +142,39 @@ async def voice_status():
         "state": mgr.state.value,
         "config": cfg.voice.model_dump(),
         "input_devices": list_input_devices(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Loopback (system audio) capability status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/loopback-status")
+async def voice_loopback_status():
+    """Report system-audio capture capability + current state."""
+    from backend.voice.loopback_manager import (
+        get_loopback_manager,
+        helper_available,
+        macos_supported,
+        mic_available,
+    )
+
+    mgr = get_loopback_manager()
+    cfg = await AppConfig.aload()
+    return {
+        "state": mgr.state.value,
+        "supported": macos_supported(),
+        "helper_available": helper_available(),
+        "mic_available": mic_available(),
+        "config": {
+            "loopback_enabled": cfg.voice.loopback_enabled,
+            "loopback_vad_silence_secs": cfg.voice.loopback_vad_silence_secs,
+            "loopback_max_segment_secs": cfg.voice.loopback_max_segment_secs,
+            "loopback_live_partials": cfg.voice.loopback_live_partials,
+            "loopback_partial_interval_secs": cfg.voice.loopback_partial_interval_secs,
+            "loopback_auto_send_silence_secs": cfg.voice.loopback_auto_send_silence_secs,
+        },
     }
 
 
@@ -249,6 +302,75 @@ async def voice_websocket(websocket: WebSocket):
         pass
     except Exception as exc:  # noqa: BLE001
         logger.debug("voice WS error: %s", exc)
+    finally:
+        send_task.cancel()
+        mgr.remove_client(event_q)
+
+
+@ws_router.websocket("/ws/transcribe")
+async def transcribe_websocket(websocket: WebSocket):
+    """System-audio (loopback) transcription control channel.
+
+    Inbound:  {"type": "start"|"stop"|"configure", "config": {...}}
+    Outbound: {"type": "state"|"partial"|"segment"|"level"|"error", ...}
+    """
+    await websocket.accept()
+
+    mgr = await _get_loopback_manager()
+
+    event_q: asyncio.Queue = asyncio.Queue(maxsize=512)
+    mgr.add_client(event_q)
+
+    cfg = await AppConfig.aload()
+    await _apply_config_to_loopback(cfg)
+
+    await websocket.send_json({"type": "state", "state": mgr.state.value})
+
+    async def _send_loop() -> None:
+        while True:
+            event = await event_q.get()
+            try:
+                await websocket.send_json(event)
+            except Exception:  # noqa: BLE001
+                return
+
+    send_task = asyncio.create_task(_send_loop(), name="transcribe_ws_send")
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                import json
+                msg = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                continue
+
+            msg_type = msg.get("type", "")
+
+            if msg_type == "start":
+                sources = msg.get("sources")
+                if not isinstance(sources, list):
+                    sources = None
+                asyncio.create_task(mgr.start(sources))
+
+            elif msg_type == "stop":
+                asyncio.create_task(mgr.stop())
+
+            elif msg_type == "configure":
+                partial = msg.get("config", {})
+                if isinstance(partial, dict):
+                    cfg = await AppConfig.aload()
+                    updated = cfg.voice.model_dump()
+                    updated.update(partial)
+                    cfg.voice = cfg.voice.model_validate(updated)
+                    cfg.save()
+                    await _apply_config_to_loopback(cfg)
+                    await websocket.send_json({"type": "state", "state": mgr.state.value})
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("transcribe WS error: %s", exc)
     finally:
         send_task.cancel()
         mgr.remove_client(event_q)

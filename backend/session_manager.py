@@ -339,6 +339,19 @@ def _maybe_tool_image_relocation(model: Any) -> Any | None:
     return maybe_for_model(model)
 
 
+def _maybe_file_attachment_filename(model: Any) -> Any | None:
+    """Return a ``FileAttachmentFilenameMiddleware`` for OpenAI-compatible models.
+
+    See :mod:`middleware.file_attachment_filename` for why ``read_file``
+    attachments (PDF, PPTX, etc.) need a real filename filled in for these
+    providers — without it, some servers (e.g. oMLX) reject the request as
+    an "Unsupported attachment type".
+    """
+    from middleware.file_attachment_filename import maybe_for_model
+
+    return maybe_for_model(model)
+
+
 def _maybe_react_shim(model: Any) -> Any | None:
     """Return a ReAct-shim middleware instance when *model* lacks native tool calling.
 
@@ -706,6 +719,12 @@ def _build_gp_subagent(
             type(model).__name__,
         )
 
+    # Fill in real filenames on read_file's PDF/PPTX attachments so
+    # OpenAI-compatible servers don't reject them as an unsupported type.
+    file_attachment_filename = _maybe_file_attachment_filename(model)
+    if file_attachment_filename is not None:
+        middleware.append(file_attachment_filename)
+
     # Last-resort context-window enforcement.  Appended at the END so it
     # runs innermost — sees the request after every other middleware
     # (including deepagents' hardcoded Todo/Filesystem/SubAgents stack)
@@ -845,6 +864,10 @@ def _build_named_agent_subagent(
     image_relocation = _maybe_tool_image_relocation(model)
     if image_relocation is not None:
         middleware.append(image_relocation)
+
+    file_attachment_filename = _maybe_file_attachment_filename(model)
+    if file_attachment_filename is not None:
+        middleware.append(file_attachment_filename)
 
     ctx_trunc = _maybe_context_truncation(model)
     if ctx_trunc is not None:
@@ -2338,6 +2361,17 @@ class SessionManager:
             extra_middleware.append(orchestrator_image_relocation)
             logger.info(
                 "Tool-image relocation enabled for main orchestrator (model=%s)",
+                type(graph_llm).__name__,
+            )
+
+        # Fill in real filenames on read_file's PDF/PPTX attachments so
+        # OpenAI-compatible servers (e.g. oMLX) don't reject them as an
+        # unsupported attachment type. See middleware.file_attachment_filename.
+        orchestrator_file_attachment_filename = _maybe_file_attachment_filename(graph_llm)
+        if orchestrator_file_attachment_filename is not None:
+            extra_middleware.append(orchestrator_file_attachment_filename)
+            logger.info(
+                "File-attachment filename fix enabled for main orchestrator (model=%s)",
                 type(graph_llm).__name__,
             )
 

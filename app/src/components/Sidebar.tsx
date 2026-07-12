@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   MessageSquare,
@@ -19,6 +19,7 @@ import {
   Monitor,
   Sparkles,
   Mic,
+  Radio,
 } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
@@ -27,12 +28,14 @@ import { useTheme } from "../context/ThemeContext";
 import { formatRelativeTime } from "../utils/formatRelativeTime";
 import { useAmbientHints } from "../hooks/useAmbientHints";
 import { useAmbientSweepStatus } from "../hooks/useAmbientSweepStatus";
+import { isTranscribePanelOpen, subscribeTranscribePanel, toggleTranscribePanel } from "../utils/transcribePanel";
 import NotificationCenter from "./NotificationCenter";
 
 const NAV_ITEMS = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/runs", icon: Activity, label: "Runs" },
   { to: "/chat", icon: MessageSquare, label: "Chat" },
+  { to: "/transcribe", icon: Radio, label: "Capture" },
   { to: "/ambient", icon: Sparkles, label: "Suggestions" },
   { to: "/agents", icon: Workflow, label: "Agents" },
   { to: "/schedules", icon: Calendar, label: "Schedules" },
@@ -83,6 +86,10 @@ export default function Sidebar() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebarCollapsed") === "true");
   const [confirmQuit, setConfirmQuit] = useState(false);
+  // "Transcribe" opens a side panel next to Chat rather than routing to its
+  // own page — track its open state here for active-item styling.
+  const [transcribeOpen, setTranscribeOpen] = useState(isTranscribePanelOpen);
+  useEffect(() => subscribeTranscribePanel(setTranscribeOpen), []);
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -94,6 +101,11 @@ export default function Sidebar() {
 
   const handleNewChat = () => {
     navigate("/chat");
+  };
+
+  const handleToggleTranscribe = () => {
+    if (!location.pathname.startsWith("/chat")) navigate("/chat");
+    toggleTranscribePanel();
   };
 
   const handleQuit = async () => {
@@ -151,6 +163,28 @@ export default function Sidebar() {
           </button>
         </div>
         {NAV_ITEMS.map(({ to, icon: Icon, label }) => {
+          // "Capture" opens a side panel next to Chat instead of routing to
+          // its own page, so it renders as a button rather than a NavLink.
+          if (to === "/transcribe") {
+            return (
+              <button
+                key={to}
+                type="button"
+                onClick={handleToggleTranscribe}
+                className={`flex items-center ${collapsed ? "justify-center px-2" : "gap-3 px-3"} py-2.5 rounded-lg text-[13px] font-medium transition-all duration-150 ${
+                  transcribeOpen
+                    ? theme === "dark"
+                      ? "bg-neutral-800 text-white shadow-[inset_-3px_0_0_0_rgb(115,115,115)]"
+                      : "bg-neutral-900 text-white shadow-[inset_-3px_0_0_0_#111]"
+                    : "text-th-text-tertiary hover:bg-th-surface-hover hover:text-th-text-primary"
+                }`}
+                title={collapsed ? label : undefined}
+              >
+                <Icon size={18} className="shrink-0" />
+                {!collapsed && label}
+              </button>
+            );
+          }
           // "Schedules" restores the last visited detail page when one is saved.
           const resolvedTo =
             label === "Schedules"

@@ -62,6 +62,7 @@ from backend.routes.setup import router as setup_router
 from backend.routes.ambient import router as ambient_router
 from backend.routes.voice import router as voice_router, ws_router as voice_ws_router
 from backend.routes.runs import router as runs_router
+from backend.routes.capture import router as capture_router
 from backend.activity_tracker import tracker as activity_tracker
 from backend.scheduler import init_scheduler, shutdown_scheduler
 from backend.trigger_manager import init_trigger_manager
@@ -704,6 +705,7 @@ app.include_router(ambient_router)
 app.include_router(voice_router)
 app.include_router(voice_ws_router)
 app.include_router(runs_router)
+app.include_router(capture_router)
 
 
 # =========================================================================

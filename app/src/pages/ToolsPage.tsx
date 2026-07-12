@@ -261,6 +261,20 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                       <KeyRound size={11} />
                       {(srv.optional_secrets ?? []).length} optional credential{(srv.optional_secrets ?? []).length === 1 ? "" : "s"}
                     </button>
+                  ) : srv.auth && srv.auth.kind !== "static" ? (
+                    <button
+                      type="button"
+                      onClick={() => setCredentialsServer(srv)}
+                      title={srv.auth.has_bundle && !srv.auth.expired ? "Signed in — click to re-login or logout" : "This server needs an interactive login before it can start"}
+                      className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${
+                        srv.auth.has_bundle && !srv.auth.expired
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20"
+                          : "bg-amber-500/10 text-amber-400 border border-amber-500/25 hover:bg-amber-500/20"
+                      }`}
+                    >
+                      <KeyRound size={11} />
+                      {srv.auth.has_bundle && !srv.auth.expired ? "Signed in" : "Sign-in required"}
+                    </button>
                   ) : null}
                   {hasLifecycleControls(srv) && (
                     <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium ${srv.process_running ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25" : "bg-th-inset-bg text-th-text-tertiary border border-th-border"}`}>
@@ -299,7 +313,7 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                         {startingId === srv.id ? "Starting..." : "Start"}
                       </button>
                 )}
-                {(srv.required_secrets.length > 0 || (srv.optional_secrets ?? []).length > 0) && (
+                {(srv.required_secrets.length > 0 || (srv.optional_secrets ?? []).length > 0 || (srv.auth && srv.auth.kind !== "static")) && (
                   <button
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${
                       (srv.optional_secrets ?? []).length > 0 && srv.required_secrets.length === 0
@@ -413,6 +427,20 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                             <KeyRound size={11} />
                             {(srv.optional_secrets ?? []).length} optional credential{(srv.optional_secrets ?? []).length === 1 ? "" : "s"}
                           </button>
+                        ) : srv.auth && srv.auth.kind !== "static" ? (
+                          <button
+                            type="button"
+                            onClick={() => setCredentialsServer(srv)}
+                            title={srv.auth.has_bundle && !srv.auth.expired ? "Signed in — click to re-login or logout" : "This server needs an interactive login before it can start"}
+                            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${
+                              srv.auth.has_bundle && !srv.auth.expired
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20"
+                                : "bg-amber-500/10 text-amber-400 border border-amber-500/25 hover:bg-amber-500/20"
+                            }`}
+                          >
+                            <KeyRound size={11} />
+                            {srv.auth.has_bundle && !srv.auth.expired ? "Signed in" : "Sign-in required"}
+                          </button>
                         ) : null
                       )}
                       {srv.os_supported && srv.auto_start && (
@@ -461,7 +489,7 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                         {testingId === srv.id ? <Loader2 size={12} className="animate-spin" /> : <TestTube size={12} />}
                         {testingId === srv.id ? "Testing..." : "Test"}
                       </button>
-                      {(srv.required_secrets.length > 0 || (srv.optional_secrets ?? []).length > 0) && (
+                      {(srv.required_secrets.length > 0 || (srv.optional_secrets ?? []).length > 0 || (srv.auth && srv.auth.kind !== "static")) && (
                         <button
                           className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${
                             (srv.optional_secrets ?? []).length > 0 && srv.required_secrets.length === 0

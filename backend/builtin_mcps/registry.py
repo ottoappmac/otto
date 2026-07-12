@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from backend.config import MCPServerConfig
+from backend.config import MCPAuthConfig, MCPServerConfig
 from backend.mcp_builder import (
     VenvProvisionError,
     _find_uv,
@@ -77,6 +77,25 @@ class BuiltinMCP:
             — the connection itself spawns the subprocess; the flag is
             kept for parity with the HTTP MCPs.
         enabled: Initial enabled state.
+        auth: Optional interactive-auth spec (see :class:`backend.config.MCPAuthConfig`).
+            ``None`` (the default) means the historical "static"
+            paste-a-string flow driven entirely by ``required_secrets`` /
+            ``optional_secrets``.  Set this to an ``oauth_device`` /
+            ``oauth_authcode`` / ``browser_capture`` config to route the
+            MCP through :mod:`backend.auth` instead.
+        runtime: ``"python"`` (default) means this MCP is a repo-bundled
+            ``server.py`` run inside a per-MCP ``uv`` venv — the normal
+            case.  ``"node_npx"`` means it's a third-party npm package
+            run via ``npx`` with no repo source files / venv at all; see
+            ``npx_package`` / ``npx_version`` / ``static_env`` and the
+            ``microsoft-onedrive`` entry below.
+        npx_package: npm package name to run (``runtime="node_npx"`` only).
+        npx_version: Pinned version appended as ``package@version`` so
+            ``npx`` doesn't hit the registry on every cold start.
+        static_env: Plain (non-secret) env vars always passed to the
+            subprocess — e.g. auth-mode / tenant / tool-filter knobs for
+            a third-party MCP.  Merged with ``required_secrets`` at
+            spawn time; see :func:`builtin_mcp_config`.
     """
 
     id: str
@@ -93,6 +112,11 @@ class BuiltinMCP:
     # current ``platform_label()`` doesn't match.  ``None`` means runs
     # everywhere.
     requires_os: Optional[str] = None
+    auth: Optional[MCPAuthConfig] = None
+    runtime: str = "python"  # "python" | "node_npx"
+    npx_package: str = ""
+    npx_version: str = ""
+    static_env: dict[str, str] = field(default_factory=dict)
 
 
 BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
@@ -122,6 +146,67 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
             "permissions the user has already granted to the host."
         ),
         source_dir_name="macos_osascript",
+        requires_os="macos",
+    ),
+    BuiltinMCP(
+        id="macos-mail",
+        name="macOS Mail",
+        description=(
+            "Create/read/update/delete tools over Apple Mail via its "
+            "AppleScript dictionary: list accounts/mailboxes/messages, "
+            "read a message, search by subject/sender/content, send or "
+            "draft a new one, and mark/flag/move/delete existing messages."
+        ),
+        source_dir_name="macos_mail",
+        requires_os="macos",
+    ),
+    BuiltinMCP(
+        id="macos-reminders",
+        name="macOS Reminders",
+        description=(
+            "Create/read/update/delete tools over Apple Reminders via its "
+            "AppleScript dictionary: list lists/reminders, get one, create, "
+            "update (complete/re-date/re-prioritise), and delete — with "
+            "typed priority words and locale-safe dates."
+        ),
+        source_dir_name="macos_reminders",
+        requires_os="macos",
+    ),
+    BuiltinMCP(
+        id="macos-calendar",
+        name="macOS Calendar",
+        description=(
+            "Create/read/update/delete tools over Apple Calendar via its "
+            "AppleScript dictionary: list calendars, list events in a date "
+            "range, get one, create, update, and delete — with locale-safe "
+            "dates and proper range-overlap queries."
+        ),
+        source_dir_name="macos_calendar",
+        requires_os="macos",
+    ),
+    BuiltinMCP(
+        id="macos-notes",
+        name="macOS Notes",
+        description=(
+            "Create/read/update/delete tools over Apple Notes via its "
+            "AppleScript dictionary: list folders/notes, get, search, "
+            "create, update (replace or append), and delete — taking plain "
+            "title/body and handling the HTML body conversion internally."
+        ),
+        source_dir_name="macos_notes",
+        requires_os="macos",
+    ),
+    BuiltinMCP(
+        id="macos-messages",
+        name="macOS Messages",
+        description=(
+            "Send iMessage/SMS and enumerate chats/buddies via the Messages "
+            "AppleScript dictionary, plus read recent message history from "
+            "the chat.db SQLite store.  Sending/listing needs Automation; "
+            "reading history needs Full Disk Access.  No edit/delete — the "
+            "dictionary can't modify sent messages."
+        ),
+        source_dir_name="macos_messages",
         requires_os="macos",
     ),
     BuiltinMCP(
@@ -158,6 +243,48 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
         ),
         source_dir_name="microsoft_teams",
         required_secrets=("TEAMS_TENANT_ID", "TEAMS_CLIENT_ID", "TEAMS_CLIENT_SECRET"),
+    ),
+    BuiltinMCP(
+        id="microsoft-onedrive",
+        name="OneDrive / SharePoint",
+        description=(
+            "Browse/search OneDrive & SharePoint files via the "
+            "third-party microsoft365-mcp-server npm package (run "
+            "via npx), scoped down to just the Files + SharePoint "
+            "Sites tools.  Signs in as a specific person (personal "
+            "Microsoft account or Entra guest) via a real browser "
+            "sign-in redirect — no Microsoft 365 work tenant or admin "
+            "consent required.  See this MCP's README for the Entra "
+            "app registration needed before ``MS365_CLIENT_ID`` can be "
+            "set."
+        ),
+        source_dir_name="microsoft_onedrive",
+        # Off by default: connecting a stdio MCP *is* spawning its
+        # subprocess, and Otto connects every enabled server eagerly at
+        # backend startup (and again on first chat session).  This
+        # particular npm package authenticates as part of its own
+        # process bootstrap — before it even starts serving MCP
+        # traffic — so an eager connect means an unprompted browser
+        # sign-in window at app launch.  Leaving this disabled means
+        # the user's own "Start" click on the Tools page is what
+        # triggers the subprocess (and therefore the sign-in), which
+        # lines up sign-in with actual intent to use the tool.
+        enabled=False,
+        required_secrets=("MS365_CLIENT_ID",),
+        runtime="node_npx",
+        npx_package="microsoft365-mcp-server",
+        npx_version="1.0.24",
+        static_env={
+            "MS365_AUTH_MODE": "interactive",
+            "MS365_TENANT_ID": "common",
+            "MS365_ORG_MODE": "true",
+            "MS365_ENABLED_TOOLS": (
+                "^(list_drive_items|get_drive_item|search_files|"
+                "download_file|create_folder|upload_file|list_sites|"
+                "get_site|list_site_drives|list_site_items|"
+                "search_site_files|get_auth_status)$"
+            ),
+        },
     ),
 )
 
@@ -206,6 +333,10 @@ def sync_builtin_mcp_files() -> dict[str, bool]:
     """
     results: dict[str, bool] = {}
     for mcp in BUILTIN_MCPS:
+        if mcp.runtime != "python":
+            # No repo-bundled server.py / requirements.txt for these —
+            # they run a third-party npm package via npx instead.
+            continue
         try:
             results[mcp.id] = _sync_one(mcp)
         except Exception as exc:
@@ -281,10 +412,16 @@ async def ensure_builtin_mcp_venvs(
         )
         logger.warning("builtin_mcps: %s", msg)
         for mcp in BUILTIN_MCPS:
+            if mcp.runtime != "python":
+                continue
             statuses[mcp.id] = f"error: {msg}"
         return statuses
 
     for mcp in BUILTIN_MCPS:
+        if mcp.runtime != "python":
+            # Third-party npm package run via npx — no venv to provision.
+            statuses[mcp.id] = "ready"
+            continue
         try:
             statuses[mcp.id] = await _ensure_one_venv(
                 mcp, uv=uv, force=mcp.id in forced,
@@ -358,11 +495,40 @@ async def _ensure_one_venv(mcp: BuiltinMCP, *, uv: str, force: bool) -> str:
 def builtin_mcp_config(mcp: BuiltinMCP) -> MCPServerConfig:
     """Build the ``MCPServerConfig`` entry for one built-in MCP.
 
-    The command/args paths are deterministic — ``server_dir(id)`` and
-    ``venv_python(id)`` resolve the same way regardless of whether the
-    files exist yet, which lets us emit the config entry at first-run
-    and let the lifespan startup populate the disk asynchronously.
+    Two shapes, selected by ``mcp.runtime``:
+
+    * ``"python"`` (the default) — command/args are deterministic
+      (``server_dir(id)`` / ``venv_python(id)``), which lets us emit
+      the config entry at first-run and let the lifespan startup
+      populate the disk asynchronously.
+    * ``"node_npx"`` — no repo source files at all; ``command="npx"``
+      runs a pinned third-party npm package directly, with
+      ``static_env`` merged into ``env`` (plus a stable
+      ``TOKEN_STORAGE_PATH`` under this MCP's app-data dir so the
+      package's own token cache survives restarts instead of living
+      under ``/tmp``).
     """
+    if mcp.runtime == "node_npx":
+        env = dict(mcp.static_env)
+        env.setdefault("TOKEN_STORAGE_PATH", str(server_dir(mcp.id) / "tokens"))
+        return MCPServerConfig(
+            id=mcp.id,
+            name=mcp.name,
+            transport="stdio",
+            command="npx",
+            args=["-y", f"{mcp.npx_package}@{mcp.npx_version}"],
+            env=env,
+            enabled=mcp.enabled,
+            auto_start=mcp.auto_start,
+            builtin=True,
+            generated=False,
+            required_secrets=list(mcp.required_secrets),
+            optional_secrets=list(mcp.optional_secrets),
+            excluded_tools=list(mcp.excluded_tools),
+            requires_os=mcp.requires_os,
+            auth=mcp.auth if mcp.auth is not None else MCPAuthConfig(),
+        )
+
     py = venv_python(mcp.id)
     server_py = server_dir(mcp.id) / "server.py"
     return MCPServerConfig(
@@ -379,6 +545,7 @@ def builtin_mcp_config(mcp: BuiltinMCP) -> MCPServerConfig:
         optional_secrets=list(mcp.optional_secrets),
         excluded_tools=list(mcp.excluded_tools),
         requires_os=mcp.requires_os,
+        auth=mcp.auth if mcp.auth is not None else MCPAuthConfig(),
     )
 
 
@@ -393,8 +560,14 @@ def _self_check() -> int:
         files = [str(p.relative_to(_BUILTIN_ROOT)) for p in _source_files(mcp)]
         print(f"{mcp.id}: {mcp.name}")
         print(f"  description: {mcp.description}")
+        print(f"  runtime: {mcp.runtime}")
         print(f"  required_secrets: {list(mcp.required_secrets)}")
-        print(f"  source files: {files}")
+        print(f"  auth: {mcp.auth.kind if mcp.auth else 'static'}")
+        if mcp.runtime == "node_npx":
+            print(f"  npx package: {mcp.npx_package}@{mcp.npx_version}")
+            print(f"  static_env: {mcp.static_env}")
+        else:
+            print(f"  source files: {files}")
     return 0
 
 

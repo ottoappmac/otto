@@ -166,9 +166,11 @@ Any MCP server — stdio or SSE — can be added through the Settings UI or REST
 |-----|-------|
 | `edgar-sec` | `search_filings`, `get_company_submissions`, `search_company_by_ticker`, `get_company_facts`, `get_filing_document`, `get_xbrl_frames` — full read access to 18M+ SEC EDGAR filings |
 | `macos-osascript` | Execute AppleScript snippets for macOS automation |
+| `macos-mail` | `list_accounts`, `list_mailboxes`, `list_messages`, `get_message`, `search_messages`, `send_message`, `create_draft`, `update_message`, `delete_message` — CRUD + full-text search over Apple Mail via its AppleScript dictionary, no Full Disk Access required |
 | `slack` | `list_channels`, `get_channel_history`, `get_thread_replies`, `send_message`, `add_reaction`, `list_users`, and more — read/write access to a Slack workspace via a bot token |
 | `discord` | `list_guilds`, `list_channels`, `get_channel_messages`, `send_message`, `add_reaction`, `list_guild_members`, and more — read/write access to a Discord server via a bot token |
 | `microsoft-teams` | `list_teams`, `list_channels`, `list_channel_members`, `get_channel_messages`, `list_users`, and more — **read-only** access to Microsoft Teams via Graph app-only auth (sending messages requires delegated auth, which this MCP doesn't implement) |
+| `microsoft-onedrive` | `list_drive_items`, `get_drive_item`, `search_files`, `download_file`, `upload_file`, `list_sites`, `list_site_items`, and more — browses/searches OneDrive/SharePoint via the third-party `microsoft365-mcp-server` npm package (run via `npx`), scoped to just the Files/SharePoint tools. Signs in via a real browser sign-in redirect (personal Microsoft account or guest identity), not a work tenant like `microsoft-teams`. Ships **disabled** — sign-in happens the moment you click Start, not on app launch |
 
 ### Agent & Skill library
 
@@ -515,7 +517,7 @@ agents/
 │   │   │                      #   vault, activity, mlx, exo, settings
 │   ├── auth/                  # static, OAuth device, OAuth auth-code,
 │   │                          #   browser-capture auth flows
-│   ├── builtin_mcps/          # edgar_sec, macos_osascript, slack, discord, microsoft_teams
+│   ├── builtin_mcps/          # edgar_sec, macos_osascript, macos_mail, slack, discord, microsoft_teams
 │   ├── agent_library.py       # Agent + Skill CRUD
 │   ├── mcp_manager.py         # Config-driven MCP connection manager
 │   ├── mcp_builder.py         # Runtime MCP generation + venv provisioning

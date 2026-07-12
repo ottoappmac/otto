@@ -1094,6 +1094,26 @@ class VoiceConfig(BaseModel):
     # Empty string = system default microphone
     mic_device: str = ""
 
+    # ── System-audio (loopback) transcription ─────────────────────────────
+    # Captures what the speakers/headphones are playing via a native macOS
+    # Core Audio process tap (macOS 14.4+, no third-party driver).  Entirely
+    # opt-in and independent of the microphone voice pipeline above.
+    loopback_enabled: bool = False
+    # Silence (seconds) after speech before a sentence is finalised.  Lower
+    # than the mic default for snappier live transcription.
+    loopback_vad_silence_secs: float = 0.7
+    # Hard cut so a long monologue is still transcribed in bounded chunks.
+    loopback_max_segment_secs: float = 12.0
+    # Emit interim transcripts while the speaker is still talking.  Multiplies
+    # STT compute; can be disabled on lower-end machines.
+    loopback_live_partials: bool = True
+    # Cadence (seconds) for interim re-transcription of the in-progress buffer.
+    loopback_partial_interval_secs: float = 1.5
+    # Hands-free auto-send: seconds of transcript silence (no new finalized
+    # segment or partial) after which unsent segments are flushed to the agent.
+    # Longer than loopback_vad_silence_secs so several sentences batch together.
+    loopback_auto_send_silence_secs: float = 2.5
+
 
 class SetupChatConfig(BaseModel):
     """Configuration for the conversational first-run setup agent.
@@ -1131,6 +1151,12 @@ class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
     mcp_servers: list[MCPServerConfig] = Field(default_factory=_default_mcp_servers)
+    # Idempotency markers for one-off corrections to an existing install's
+    # ``mcp_servers`` state (e.g. flipping a builtin's default ``enabled``
+    # after shipping a behavior change) that must apply exactly once and
+    # then leave the field alone so a later, deliberate user change isn't
+    # silently reverted on the next restart.  See ``_ensure_default_servers``.
+    mcp_one_time_fixups: list[str] = Field(default_factory=list)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     claude_hook: ClaudeHookConfig = Field(default_factory=ClaudeHookConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
@@ -1302,6 +1328,25 @@ class AppConfig(BaseModel):
                     if cur.requires_os != default_srv.requires_os:
                         cur.requires_os = default_srv.requires_os
                         dirty = True
+                    # Re-pin the static env dict too — built-ins that run
+                    # a third-party package via npx (e.g. auth-mode /
+                    # tenant / tool-filter knobs) need upgrades to reach
+                    # existing installs the same way required_secrets
+                    # does.  Vault-hydrated secrets are layered on top of
+                    # this at spawn time, so overwriting here is safe.
+                    if dict(cur.env or {}) != dict(default_srv.env or {}):
+                        cur.env = dict(default_srv.env or {})
+                        dirty = True
+                    # Re-pin interactive-auth config (device/auth-code/
+                    # browser-capture flow, scopes, client id) so a
+                    # scope or endpoint change to a built-in ships to
+                    # existing installs on upgrade, same rationale as
+                    # required_secrets above.  Comparing via
+                    # model_dump() avoids needing __eq__ on the nested
+                    # model.
+                    if cur.auth.model_dump() != default_srv.auth.model_dump():
+                        cur.auth = default_srv.auth
+                        dirty = True
 
         ch_srv = existing.get("claude-eval-hook")
         if ch_srv is not None and ch_srv.enabled != self.claude_hook.enabled:
@@ -1312,6 +1357,52 @@ class AppConfig(BaseModel):
         if oc_srv is not None and oc_srv.enabled != self.openclaw.enabled:
             oc_srv.enabled = self.openclaw.enabled
             dirty = True
+
+        # One-time fixup: microsoft-onedrive originally shipped
+        # enabled=True, which meant Otto's eager startup/session
+        # connect immediately spawned the npx subprocess and it opened
+        # an unprompted Microsoft sign-in window before the user had
+        # asked to use the tool.  It now defaults to enabled=False (see
+        # registry.py) so sign-in only happens when the user clicks
+        # Start.  Apply that correction once to existing installs
+        # without clobbering a later, deliberate re-enable.
+        _ONEDRIVE_DISABLE_FIXUP = "onedrive_default_disabled_2026_07"
+        if _ONEDRIVE_DISABLE_FIXUP not in self.mcp_one_time_fixups:
+            od_srv = existing.get("microsoft-onedrive")
+            if od_srv is not None and od_srv.enabled:
+                od_srv.enabled = False
+                dirty = True
+            self.mcp_one_time_fixups.append(_ONEDRIVE_DISABLE_FIXUP)
+            dirty = True
+
+        # One-time migration: the OneDrive/SharePoint MCP was rebuilt on
+        # top of a third-party npx package whose client-id env var is
+        # named ``MS365_CLIENT_ID`` rather than the old ``ONEDRIVE_
+        # CLIENT_ID``.  Copy a previously-pasted value forward so users
+        # who already tracked down their Entra Application (client) ID
+        # don't have to re-paste it.
+        if "microsoft-onedrive" in existing:
+            try:
+                from backend.credential_vault import vault as _mcp_vault
+                if (
+                    _mcp_vault.available()
+                    and not _mcp_vault.has("microsoft-onedrive", "MS365_CLIENT_ID")
+                ):
+                    old_client_id = _mcp_vault.get(
+                        "microsoft-onedrive", "ONEDRIVE_CLIENT_ID",
+                    )
+                    if old_client_id:
+                        _mcp_vault.set(
+                            "microsoft-onedrive", "MS365_CLIENT_ID", old_client_id,
+                        )
+                        logger.info(
+                            "Migrated microsoft-onedrive client id "
+                            "ONEDRIVE_CLIENT_ID -> MS365_CLIENT_ID",
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to migrate microsoft-onedrive client id: %s", exc,
+                )
 
         if platform_label() != "macos":
             n_before = len(self.mcp_servers)

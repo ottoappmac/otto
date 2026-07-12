@@ -217,6 +217,19 @@ class DeepAgent(CallbackMixin):
         if image_relocation is not None:
             middleware.append(image_relocation)
 
+        # ``read_file`` returns non-text files (PDF, PPTX, etc.) as a "file"
+        # content block with no filename.  The OpenAI wire format falls back
+        # to a placeholder filename with no extension in that case, which
+        # some OpenAI-compatible servers (e.g. oMLX) reject outright as an
+        # "Unsupported attachment type". Fill in a real filename first.
+        from middleware.file_attachment_filename import (
+            maybe_for_model as maybe_file_attachment_filename_for_model,
+        )
+
+        file_attachment_filename = maybe_file_attachment_filename_for_model(self._llm)
+        if file_attachment_filename is not None:
+            middleware.append(file_attachment_filename)
+
         # ── Assemble ──────────────────────────────────────────────────────
         from langgraph.checkpoint.memory import MemorySaver
 
