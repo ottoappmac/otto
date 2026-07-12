@@ -140,6 +140,7 @@ Beyond the built-ins, any **MCP server** (stdio or SSE) adds its tools to the se
 |---|---|
 | `edgar-sec` | Full read access to 18M+ SEC EDGAR filings |
 | `macos-osascript` | Execute AppleScript snippets (macOS only) |
+| `macos-mail` | CRUD + full-text search over Apple Mail via AppleScript (macOS only) |
 
 Every tool call is wrapped with a loop guard that detects repeated identical-argument failures and injects a recovery hint. MCP results are scrubbed for known credential patterns before they reach the model context.
 

@@ -1593,6 +1593,119 @@ export interface VoiceConfig {
   wake_model: string;
   vad_silence_secs: number;
   mic_device: string;
+  loopback_enabled: boolean;
+  loopback_vad_silence_secs: number;
+  loopback_max_segment_secs: number;
+  loopback_live_partials: boolean;
+  loopback_partial_interval_secs: number;
+  loopback_auto_send_silence_secs: number;
+}
+
+// ---------------------------------------------------------------------------
+// System-audio (loopback) transcription
+// ---------------------------------------------------------------------------
+
+export type TranscribeState = "idle" | "recording";
+
+export type TranscribeSource = "system" | "mic";
+
+export type TranscribeWSEventType =
+  | "state"
+  | "partial"
+  | "segment"
+  | "level"
+  | "error";
+
+export interface TranscribeWSEvent {
+  type: TranscribeWSEventType;
+  state?: TranscribeState;
+  text?: string;
+  message?: string;
+  ts?: number;
+  rms?: number;
+  source?: TranscribeSource;
+  /** Stable, run-scoped event id used to dedupe across multiple sockets. */
+  eid?: string;
+}
+
+export interface TranscriptSegment {
+  id: string;
+  text: string;
+  ts: number;
+  source: TranscribeSource;
+}
+
+export interface LoopbackStatus {
+  state: TranscribeState;
+  supported: boolean;
+  helper_available: boolean;
+  mic_available: boolean;
+  config: {
+    loopback_enabled: boolean;
+    loopback_vad_silence_secs: number;
+    loopback_max_segment_secs: number;
+    loopback_live_partials: boolean;
+    loopback_partial_interval_secs: number;
+    loopback_auto_send_silence_secs: number;
+  };
+}
+
+// ── Screen capture (Transcribe screenshots) ─────────────────────────────
+export interface CaptureWindow {
+  window_id: number;
+  app: string;
+  title: string;
+  /** Small base64 PNG preview (best-effort; requires Screen Recording). */
+  thumb_b64?: string;
+}
+
+export interface CapturePermission {
+  supported: boolean;
+  /** true / false / null (unknown). */
+  granted: boolean | null;
+  can_prompt: boolean;
+}
+
+/** Result of POST /api/capture/screen. */
+export interface CaptureResult {
+  image_b64?: string;
+  mime_type?: string;
+  width?: number;
+  height?: number;
+  hash?: string;
+  /** Screen was visually unchanged vs. last_hash — no image returned. */
+  unchanged?: boolean;
+  /** Screen Recording permission missing. */
+  needs_permission?: boolean;
+  /** Followed window no longer exists. */
+  window_gone?: boolean;
+  /** Platform / frameworks unavailable. */
+  unsupported?: boolean;
+  error?: string;
+}
+
+/** The window the user chose to "follow" for transcript-anchored auto-capture. */
+export interface FollowedWindow {
+  window_id: number;
+  app: string;
+  title: string;
+}
+
+/** A captured screenshot shown inline in the transcript feed. */
+export interface Shot {
+  id: string;
+  /** Full data URL (data:image/png;base64,...) for display + upload. */
+  dataUrl: string;
+  label: string;
+  ts: number;
+  /** Discriminator so the feed can distinguish shots from transcript segments. */
+  kind: "shot";
+}
+
+/** Image attachment carried over the ask-Otto bus. */
+export interface AskImage {
+  name: string;
+  dataUrl: string;
 }
 
 export interface VoiceCatalogRow {

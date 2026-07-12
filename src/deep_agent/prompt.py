@@ -249,6 +249,12 @@ significant work. Pass `options=[...]` when you can list likely choices;
 `allow_multiple=True` for multi-select. Never ask for things you can derive
 from context, files, or the capability ladder. Prefer reasonable progress
 with course-correction over blocking on small details.
+
+When the user shares passively-captured audio/transcript content with no
+explicit instruction, and it isn't obvious what they want done with it, call
+`ask_user` with concrete `options` (e.g. Summarize, Extract action items &
+decisions, Draft a reply, Answer a question) plus an "Other…" choice, rather
+than guessing.
 </ask_user>"""
 
 
@@ -516,19 +522,29 @@ Match the scope of your actions to what was actually requested.
 
 
 _MACOS_APPLESCRIPT_PREFERENCE_RULE = (
-    "FIRST dispatch macos-applescript-agent for ANY task that touches a\n"
-    "   desktop app installed on the user's Mac — ANY GUI app, not just\n"
-    "   the examples below (Slack, Messages, Mail, Notes, Calendar,\n"
-    "   Reminders, Music, Spotify, Safari, Finder, Discord, Things,\n"
-    "   Cursor, VS Code, Linear, Figma, Zoom, Teams, Obsidian, …).\n"
-    "   Includes reading a message, sending one, listing items, opening\n"
-    "   a window, or changing any app state.  The examples are\n"
-    "   illustrative; the rule applies to every native macOS app.  Do\n"
-    "   NOT ask the user whether you have a tool for it; the answer is\n"
-    "   yes.  Fall back to macos-desktop-agent ONLY if\n"
-    "   macos-applescript-agent returns a `FALLBACK:` block.  Do NOT\n"
-    "   fall back on TCC `-1743` errors — those need the user to grant\n"
-    "   Automation permission and UI automation hits the same gate."
+    "For a task that touches a desktop app on the user's Mac, prefer a\n"
+    "   DEDICATED built-in tool when one exists for that app, and only\n"
+    "   dispatch macos-applescript-agent when none does:\n"
+    "   a. STANDARD TOOLS FIRST.  Otto ships typed, first-class tools for\n"
+    "      several apps — Apple Mail (`macos-mail`), Reminders\n"
+    "      (`macos-reminders`), Calendar (`macos-calendar`), Notes\n"
+    "      (`macos-notes`), and Messages (`macos-messages`).  If the task\n"
+    "      targets one of these apps AND its tools are in your tool list,\n"
+    "      call those tools directly — they take typed arguments and are\n"
+    "      faster and more reliable than hand-authored AppleScript.  Do\n"
+    "      NOT route these through macos-applescript-agent.\n"
+    "   b. macos-applescript-agent OTHERWISE.  For ANY other desktop app\n"
+    "      that has no dedicated tool (Music, Spotify, Safari, Finder,\n"
+    "      Slack, Discord, Things, Cursor, VS Code, Linear, Figma, Zoom,\n"
+    "      Teams, Obsidian, …) — or when the dedicated tool doesn't cover\n"
+    "      what you need — dispatch macos-applescript-agent.  Includes\n"
+    "      reading a message, sending one, listing items, opening a\n"
+    "      window, or changing any app state.  Do NOT ask the user\n"
+    "      whether you have a tool for it; the answer is yes.\n"
+    "   Fall back to macos-desktop-agent ONLY if macos-applescript-agent\n"
+    "   returns a `FALLBACK:` block.  Do NOT fall back on TCC `-1743`\n"
+    "   errors — those need the user to grant Automation permission and\n"
+    "   UI automation hits the same gate."
 )
 
 
@@ -676,16 +692,21 @@ def _build_lite_rules_section(subagent_names: set[str]) -> str:
     if "macos-applescript-agent" in subagent_names:
         rule_num = len(rules) + 1
         rules.append(
-            f"{rule_num}. FIRST dispatch macos-applescript-agent for ANY task that\n"
-            "   touches a desktop app on the user's Mac (ANY GUI app — examples:\n"
-            "   Slack, Messages, Mail, Notes, Calendar, Reminders, Music,\n"
-            "   Spotify, Safari, Finder, Discord, Cursor, Linear, Figma, Zoom,\n"
-            "   Obsidian, …). Includes reading or sending a message, listing\n"
-            "   items, opening windows, or changing app state. The examples\n"
-            "   are illustrative; the rule applies to every native macOS app.\n"
-            "   Do NOT ask the user whether you have a tool for it; the answer\n"
-            "   is yes. Fall back to macos-desktop-agent ONLY if\n"
-            "   macos-applescript-agent returns a `FALLBACK:` block."
+            f"{rule_num}. For a task touching a desktop app on the user's Mac,\n"
+            "   use a DEDICATED built-in tool first when one exists; otherwise\n"
+            "   dispatch macos-applescript-agent.\n"
+            "   - Standard tools FIRST: Mail (macos-mail), Reminders\n"
+            "     (macos-reminders), Calendar (macos-calendar), Notes\n"
+            "     (macos-notes), Messages (macos-messages) — if these tools are\n"
+            "     in your tool list, call them directly, do NOT use the agent.\n"
+            "   - macos-applescript-agent otherwise: any other app (Music,\n"
+            "     Spotify, Safari, Finder, Slack, Discord, Cursor, Linear,\n"
+            "     Figma, Zoom, Obsidian, …), or when a dedicated tool can't do\n"
+            "     what's needed. Covers reading/sending a message, listing\n"
+            "     items, opening windows, changing app state. Do NOT ask the\n"
+            "     user whether you have a tool for it; the answer is yes. Fall\n"
+            "     back to macos-desktop-agent ONLY if macos-applescript-agent\n"
+            "     returns a `FALLBACK:` block."
         )
 
     if subagent_names:
@@ -744,11 +765,13 @@ _LITE_GUIDANCE_STATIC = (
 # new built-in agent ships.
 _SUBAGENT_USE_WHEN: dict[str, str] = {
     "macos-applescript-agent": (
-        "ANY task involving a desktop app on the user's Mac (Slack, "
-        "Messages, Mail, Notes, Calendar, Reminders, Music, Spotify, "
-        "Safari, Finder, Discord, Cursor, Linear, Figma, Zoom, Obsidian, "
-        "or ANY other native macOS app) — read messages, send messages, "
-        "list items, open windows, change app state. Use this FIRST."
+        "Desktop apps on the user's Mac that DON'T have a dedicated tool. "
+        "Mail, Reminders, Calendar, Notes, and Messages have their own "
+        "typed tools (macos-mail/-reminders/-calendar/-notes/-messages) — "
+        "use those directly instead. Use this agent for any OTHER app "
+        "(Music, Spotify, Safari, Finder, Slack, Discord, Cursor, Linear, "
+        "Figma, Zoom, Obsidian, …) — read/send messages, list items, open "
+        "windows, change app state."
     ),
     "macos-desktop-agent": (
         "Fallback for native macOS apps when macos-applescript-agent "

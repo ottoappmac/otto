@@ -352,7 +352,7 @@ def test_full_ladder_handles_desktop_only(meta_tool):
     # AppleScript hints / preference rule are gated on the AppleScript
     # agent being registered.
     assert "For macos-applescript-agent:" not in p
-    assert "FIRST dispatch macos-applescript-agent" not in p
+    assert "DEDICATED built-in tool" not in p
 
 
 def test_full_rules_inject_applescript_preference_when_present(meta_tool):
@@ -364,15 +364,20 @@ def test_full_rules_inject_applescript_preference_when_present(meta_tool):
         ],
         lite=False,
     )
-    # The generalised rule begins with "FIRST dispatch …" and lists
-    # illustrative apps so 4B-class models can pattern-match on lexical
-    # surface instead of classifying intent.
-    assert "FIRST dispatch macos-applescript-agent" in p
-    # Illustrative apps must include both dictionary apps (Mail) and
-    # Electron / Catalyst apps (Slack, Cursor) — the rule explicitly
-    # covers ANY GUI app, not just dictionary-rich ones.
+    # The generalised rule tells the model to prefer a DEDICATED built-in
+    # tool for the app when one exists, then fall back to
+    # macos-applescript-agent, and lists illustrative apps so 4B-class
+    # models can pattern-match on lexical surface instead of classifying
+    # intent.
+    assert "DEDICATED built-in tool" in p
+    # Standard-tool apps (Mail/Notes) and applescript-agent fallback apps
+    # (Slack, Cursor) must both appear so the model can place any app on
+    # the right side of the rule.
     for app in ("Slack", "Cursor", "Mail", "Notes"):
         assert app in p, f"rule should list {app} as illustrative"
+    # The dedicated typed tools are named so the model calls them directly.
+    for tool in ("macos-mail", "macos-reminders", "macos-messages"):
+        assert tool in p, f"rule should name the {tool} standard tool"
     # The rule explicitly mentions TCC as the one case where you do NOT
     # fall back.
     assert "-1743" in p
@@ -386,7 +391,7 @@ def test_full_rules_skip_applescript_preference_when_absent(meta_tool):
         subagents=[{"name": "macos-desktop-agent"}],
         lite=False,
     )
-    assert "FIRST dispatch macos-applescript-agent" not in p
+    assert "DEDICATED built-in tool" not in p
 
 
 def test_lite_guidance_orders_applescript_before_desktop(gp_tool):
@@ -418,12 +423,15 @@ def test_lite_rules_inject_applescript_preference_when_present(gp_tool):
         ],
         lite=True,
     )
-    assert "FIRST dispatch macos-applescript-agent" in p
+    assert "DEDICATED built-in tool" in p
     assert "macos-desktop-agent" in p
     # Illustrative app list must travel in lite mode too — that's the
     # whole point of the generalisation for small models.
     for app in ("Slack", "Cursor"):
         assert app in p, f"lite rule should list {app}"
+    # Standard tools must be named in lite mode too so the model calls
+    # them directly instead of routing through the agent.
+    assert "macos-mail" in p
 
 
 def test_lite_rules_skip_applescript_preference_when_absent(gp_tool):
@@ -436,7 +444,7 @@ def test_lite_rules_skip_applescript_preference_when_absent(gp_tool):
     # the <subagents> block's macos-desktop-agent entry references
     # macos-applescript-agent as the primary, so check the rule body
     # specifically rather than the substring globally.
-    assert "FIRST dispatch macos-applescript-agent" not in p
+    assert "DEDICATED built-in tool" not in p
 
 
 def test_full_info_section_threads_applescript(meta_tool):

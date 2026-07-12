@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
+import TranscribeDrawer from "./transcribe/TranscribeDrawer";
 import { ConnectionBanner } from "./ConnectionBanner";
 import AmbientNotificationBanner from "./ambient/AmbientNotificationBanner";
 import AmbientToast from "./ambient/AmbientToast";
 import { useAmbientHints } from "../hooks/useAmbientHints";
 import { useNotification } from "../context/NotificationContext";
 import { onPendingRoute, nativeNotify } from "../utils/nativeNotify";
+import { closeTranscribePanel, isTranscribePanelOpen, subscribeTranscribePanel } from "../utils/transcribePanel";
 import type { AmbientHint } from "../types";
 
 export default function Layout() {
@@ -43,6 +45,13 @@ export default function Layout() {
   const [bannerHints, setBannerHints] = useState<AmbientHint[]>([]);
   const [showToast, setShowToast] = useState(false);
   const [toastCount, setToastCount] = useState(0);
+
+  // Live-transcription side panel — mounted once here (beside the Outlet, next
+  // to whatever page is showing, typically Chat) so its WebSocket connection
+  // and in-progress recording persist across route changes. Open/close is
+  // driven by the Sidebar's "Transcribe" nav item via a shared module store.
+  const [showTranscribe, setShowTranscribe] = useState(isTranscribePanelOpen);
+  useEffect(() => subscribeTranscribePanel(setShowTranscribe), []);
 
   const { pendingCount: _pendingCount, markSeen } = useAmbientHints(
     useCallback(
@@ -114,6 +123,10 @@ export default function Layout() {
           <Outlet />
         </div>
       </main>
+
+      {/* Non-modal transcription panel — sits in-flow so chat stays usable */}
+      <TranscribeDrawer open={showTranscribe} onClose={closeTranscribePanel} />
+
       <Sidebar />
 
       {/* Bottom-right slide-up toast — rendered outside page columns so it's never clipped */}

@@ -1040,6 +1040,29 @@ export const api = {
     ),
   voiceModelCached: (repoId: string) =>
     request<{ repo_id: string; cached: boolean }>(`/api/voice/model-cached?repo_id=${encodeURIComponent(repoId)}`),
+  loopbackStatus: () =>
+    request<import("../types").LoopbackStatus>("/api/voice/loopback-status"),
+
+  // ── Screen capture (Transcribe screenshots) ───────────────────────
+  captureScreenPermission: () =>
+    request<import("../types").CapturePermission>("/api/capture/permission"),
+  captureScreenPromptPermission: () =>
+    request<import("../types").CapturePermission>("/api/capture/permission/prompt", {
+      method: "POST",
+    }),
+  captureWindows: (thumbnails = false) =>
+    request<{ supported: boolean; windows: import("../types").CaptureWindow[] }>(
+      `/api/capture/windows${thumbnails ? "?thumbnails=true" : ""}`,
+    ),
+  captureScreen: (
+    mode: "desktop" | "window",
+    windowId?: number,
+    lastHash?: string,
+  ) =>
+    request<import("../types").CaptureResult>("/api/capture/screen", {
+      method: "POST",
+      body: JSON.stringify({ mode, window_id: windowId, last_hash: lastHash }),
+    }),
 };
 
 export interface ActivityRow {

@@ -63,6 +63,9 @@ app/src-tauri/gen/schemas/
 app/src-tauri/icons/android/
 app/src-tauri/icons/ios/
 
+# Swift audiotap helper build artifacts
+app/src-tauri/audiotap/.build/
+
 # Tauri sidecar binaries (too large for git)
 app/src-tauri/binaries/
 # PyInstaller --onedir backend bundled as Tauri resources

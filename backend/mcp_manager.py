@@ -844,6 +844,26 @@ def _build_eval_service_command(config: MCPServerConfig) -> tuple[list[str], dic
     return cmd, extra_env
 
 
+def _resolve_npx_path() -> str | None:
+    """Resolve an absolute path to ``npx``, or ``None`` if not found.
+
+    Bare ``"npx"`` isn't guaranteed to resolve via ``PATH`` inside a
+    packaged app, so this checks the system ``PATH`` first, then falls
+    back to the portable Node install managed by
+    :mod:`backend.node_provisioner` (its ``bin/`` may not be on ``PATH``
+    yet if Node was installed after this process started).
+    """
+    npx = shutil.which("npx")
+    if npx:
+        return npx
+    from backend.node_provisioner import node_bin_dir
+
+    candidate = node_bin_dir() / "npx"
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
 def _build_playwright_command(
     config: MCPServerConfig,
     *,
@@ -859,15 +879,7 @@ def _build_playwright_command(
     """
     from backend.config import get_app_data_dir
 
-    npx = shutil.which("npx")
-    if not npx:
-        # Fall back to the portable Node installed by node_provisioner (its
-        # bin/ may not be on PATH yet if installed after backend startup).
-        from backend.node_provisioner import node_bin_dir
-
-        candidate = node_bin_dir() / "npx"
-        if candidate.exists():
-            npx = str(candidate)
+    npx = _resolve_npx_path()
     if not npx:
         raise FileNotFoundError(
             "npx not found — install Node.js to auto-start Playwright MCP "
@@ -1358,12 +1370,31 @@ class MCPManager:
             # ``config.env`` so they cannot leak via config export, log
             # files, or the LLM context.  See ``backend.credential_vault``
             # for the trust-model rationale.
-            env_for_child = dict(config.env or {})
+            #
+            # Layered on top of the MCP SDK's own safe-subset baseline
+            # (PATH/HOME/etc.) rather than starting from an empty dict —
+            # any server declaring secrets or static env otherwise loses
+            # those defaults entirely, which is invisible for our
+            # venv-python built-ins (launched via an absolute interpreter
+            # path) but breaks anything that shells out via PATH, like an
+            # ``npx``-run third-party package.
+            from mcp.client.stdio import get_default_environment
+
+            env_for_child = get_default_environment()
+            env_for_child.update(config.env or {})
             secret_env = _hydrate_secrets(config)
             env_for_child.update(secret_env)
 
             spawn_command = config.command
             spawn_args = list(config.args or [])
+            if spawn_command == "npx":
+                resolved = _resolve_npx_path()
+                if not resolved:
+                    raise FileNotFoundError(
+                        f"npx not found — install Node.js to run {config.name} "
+                        "(POST /api/node/install)"
+                    )
+                spawn_command = resolved
 
             # Generated MCPs (those authored at runtime by the agent)
             # carry a signed manifest + a sandbox profile.  Verify the

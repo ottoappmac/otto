@@ -117,7 +117,7 @@ export function Popover({
   const renderProps: PopoverRenderProps = { open, toggle, close };
 
   return (
-    <div ref={triggerRef} className="inline-flex">
+    <div ref={triggerRef} className="inline-flex min-w-0">
       {trigger({
         ...renderProps,
         "aria-expanded": open,

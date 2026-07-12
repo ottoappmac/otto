@@ -24,8 +24,26 @@ import { usePolling } from "../hooks/usePolling";
 import { CRON_PRESETS } from "../types";
 import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJob, SessionInfo, WSMessage } from "../types";
 import { useVoice } from "../hooks/useVoice";
+import { onAskOtto } from "../utils/askOttoBus";
+import type { AskPayload } from "../utils/askOttoBus";
+import type { AskImage } from "../types";
 import logoDark from "../assets/logo-dark.png";
 import logoLight from "../assets/logo-light.png";
+
+/** Decode a base64 data URL into a File for upload. Returns null if malformed. */
+function dataUrlToFile(img: AskImage): File | null {
+  try {
+    const [meta, b64] = img.dataUrl.split(",");
+    if (!b64) return null;
+    const mime = /data:(.*?)(;|$)/.exec(meta)?.[1] ?? "image/png";
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], img.name, { type: mime });
+  } catch {
+    return null;
+  }
+}
 
 type RenderItem =
   | { kind: "message"; message: ChatMessage; index: number }
@@ -179,7 +197,13 @@ export default function ChatPage() {
   const voiceEnabled = !!(appSettings?.voice?.enabled);
   const wakeEnabled = !!(appSettings?.voice?.wake_enabled);
   const pendingVoiceTranscriptRef = useRef<string | null>(null);
+  // Screenshot attachments handed off from the transcription drawer, read by
+  // handleSend synchronously (uploaded like drag-dropped files).
+  const pendingTranscriptImagesRef = useRef<File[] | null>(null);
   const handleSendRef = useRef<(() => void) | null>(null);
+  // Latest input draft, read by the transcript hand-off so it can restore what
+  // the user was composing after handleSend clears the box.
+  const latestInputRef = useRef("");
   // Note: always-on wake listening is owned by the global listener in Layout,
   // so we don't autoStart here.  This connection receives the shared manager's
   // broadcasts (state, transcript) and drives the mic button + transcript send.
@@ -1050,16 +1074,73 @@ export default function ChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voice.transcript]);
 
+  // Keep the latest draft in a ref so the transcript hand-off can restore it.
+  useEffect(() => { latestInputRef.current = input; });
+
+  // Send captured-transcript text (and optional screenshot attachments) to the
+  // agent without clobbering the user's in-progress draft or touching the input
+  // box.  handleSend reads pendingVoiceTranscriptRef and pendingTranscriptImagesRef
+  // synchronously before its first await, so it's safe to clear right after
+  // invoking it.  Each call appends to the CURRENT session (or starts one), so
+  // incremental auto-sends stay in one conversation.
+  const sendTranscriptPayload = useCallback((payload: AskPayload) => {
+    const trimmed = (payload.text ?? "").trim();
+    const files = (payload.images ?? [])
+      .map(dataUrlToFile)
+      .filter((f): f is File => f !== null);
+    if (!trimmed && files.length === 0) return;
+    const draft = latestInputRef.current;
+    pendingVoiceTranscriptRef.current = trimmed;
+    pendingTranscriptImagesRef.current = files.length > 0 ? files : null;
+    handleSendRef.current?.();
+    pendingVoiceTranscriptRef.current = null;
+    if (draft) setTimeout(() => setInput(draft), 0);
+  }, []);
+
+  // Bridge: transcription drawer ("Ask Otto" / auto-send) → chat.  Drains any
+  // payload queued before this page mounted (the drawer navigates to /chat first).
+  useEffect(() => onAskOtto(sendTranscriptPayload), [sendTranscriptPayload]);
+
+  // Broadcast whether the agent is busy so the drawer can pause auto-send while
+  // Otto is streaming or awaiting an answer to an ask_user / hitl interrupt.
+  const agentBusy = useMemo(
+    () =>
+      isStreaming ||
+      messages.some(
+        (m) => (m.type === "hitl_request" || m.type === "ask_user") && !m.metadata?.resolved,
+      ),
+    [isStreaming, messages],
+  );
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("otto:agent-busy", { detail: agentBusy }));
+  }, [agentBusy]);
+  // On unmount (e.g. navigating away mid-stream) clear the busy flag so the
+  // drawer doesn't get stuck refusing to auto-send.
+  useEffect(() => () => {
+    window.dispatchEvent(new CustomEvent("otto:agent-busy", { detail: false }));
+  }, []);
+
   const handleSend = async () => {
     if (sendingRef.current) return;
     const text = (pendingVoiceTranscriptRef.current ?? input).trim();
-    if (!text && pendingFiles.length === 0 && pendingFilePaths.length === 0 && pendingFolders.length === 0) return;
+    // Screenshot attachments handed off from the transcription drawer — read
+    // and clear synchronously so they upload with this send only.
+    const transcriptImages = pendingTranscriptImagesRef.current ?? [];
+    pendingTranscriptImagesRef.current = null;
+    if (
+      !text &&
+      transcriptImages.length === 0 &&
+      pendingFiles.length === 0 &&
+      pendingFilePaths.length === 0 &&
+      pendingFolders.length === 0
+    )
+      return;
 
     if (currentSessionId) clearSession(currentSessionId);
     clearError();
     sendingRef.current = true;
 
-    const filesToUpload = [...pendingFiles];
+    const filesToUpload = [...pendingFiles, ...transcriptImages];
     const filePathsToSend = [...pendingFilePaths];
     const foldersToSend = [...pendingFolders];
     setInput("");

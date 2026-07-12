@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "bash src-tauri/build-audiotap.sh && npm run dev",
+    "beforeBuildCommand": "bash src-tauri/build-audiotap.sh && npm run build"
   },
   "app": {
     "windows": [
@@ -36,7 +36,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/backend/": "backend/"
+      "resources/backend/": "backend/",
+      "audiotap/.build/release/otto-audiotap": "audiotap/otto-audiotap"
     },
     "macOS": {
       "infoPlist": "Info.plist"

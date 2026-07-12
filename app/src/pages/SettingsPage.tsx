@@ -235,6 +235,12 @@ const DEFAULT_SETTINGS: AppSettings = {
     wake_model: "hey_otto",
     vad_silence_secs: 1.0,
     mic_device: "",
+    loopback_enabled: false,
+    loopback_vad_silence_secs: 0.7,
+    loopback_max_segment_secs: 12.0,
+    loopback_live_partials: true,
+    loopback_partial_interval_secs: 1.5,
+    loopback_auto_send_silence_secs: 2.5,
   },
 };
 
@@ -5269,6 +5275,12 @@ function VoiceSettingsPanel({
     wake_enabled: settings.voice?.wake_enabled ?? false,
     vad_silence_secs: settings.voice?.vad_silence_secs ?? 1.0,
     mic_device: settings.voice?.mic_device ?? "",
+    loopback_enabled: settings.voice?.loopback_enabled ?? false,
+    loopback_vad_silence_secs: settings.voice?.loopback_vad_silence_secs ?? 0.7,
+    loopback_max_segment_secs: settings.voice?.loopback_max_segment_secs ?? 12.0,
+    loopback_live_partials: settings.voice?.loopback_live_partials ?? true,
+    loopback_partial_interval_secs: settings.voice?.loopback_partial_interval_secs ?? 1.5,
+    loopback_auto_send_silence_secs: settings.voice?.loopback_auto_send_silence_secs ?? 2.5,
   };
 
   const patch = async (partial: Partial<VoiceConfig>) => {
@@ -5283,11 +5295,13 @@ function VoiceSettingsPanel({
   });
   useEffect(() => { sessionStorage.setItem("otto:settings:voiceSubTab", voiceSubTab); }, [voiceSubTab]);
   const [inputDevices, setInputDevices] = useState<Array<{ index: number; name: string; default: boolean }>>([]);
+  const [loopbackStatus, setLoopbackStatus] = useState<import("../types").LoopbackStatus | null>(null);
 
   useEffect(() => {
     api.voiceStatus().then((s) => {
       setInputDevices(s.input_devices ?? []);
     }).catch(() => {});
+    api.loopbackStatus().then(setLoopbackStatus).catch(() => {});
   }, []);
 
   // STT test state
@@ -5446,6 +5460,95 @@ function VoiceSettingsPanel({
         >
           <FeatureToggle enabled={voice.enabled} onToggle={() => patch({ enabled: !voice.enabled })} />
         </SettingRow>
+      </SectionCard>
+
+      {/* ── System audio (loopback) transcription ── */}
+      <SectionCard>
+        <SettingRow
+          label="System Audio Transcription"
+          description="Transcribe what your Mac is playing (meetings, calls, media) via a native macOS tap. Opens from the sidebar's Transcribe audio panel."
+        >
+          <FeatureToggle
+            enabled={voice.loopback_enabled}
+            onToggle={() => patch({ loopback_enabled: !voice.loopback_enabled })}
+          />
+        </SettingRow>
+
+        {loopbackStatus && !loopbackStatus.supported && (
+          <p className="mt-2 text-xs text-amber-400">
+            Requires macOS 14.4 or later.
+          </p>
+        )}
+        {loopbackStatus && loopbackStatus.supported && !loopbackStatus.helper_available && (
+          <p className="mt-2 text-xs text-amber-400">
+            Capture helper not found — build it with <code>app/src-tauri/build-audiotap.sh</code>.
+          </p>
+        )}
+
+        {voice.loopback_enabled && (
+          <div className="mt-4 space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-th-text-secondary mb-1.5">
+                Silence threshold <span className="opacity-50 font-normal">(seconds before finalising a sentence)</span>
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="0.3"
+                  max="2"
+                  step="0.1"
+                  value={voice.loopback_vad_silence_secs}
+                  onChange={(e) => patch({ loopback_vad_silence_secs: parseFloat(e.target.value) })}
+                  className="flex-1 accent-blue-500"
+                />
+                <span className="text-sm font-medium text-th-text-primary w-12 text-right tabular-nums">
+                  {voice.loopback_vad_silence_secs.toFixed(1)}s
+                </span>
+              </div>
+            </div>
+
+            <SettingRow
+              label="Live partial transcripts"
+              description="Show text while audio is still playing. Uses more CPU."
+            >
+              <FeatureToggle
+                enabled={voice.loopback_live_partials}
+                onToggle={() => patch({ loopback_live_partials: !voice.loopback_live_partials })}
+              />
+            </SettingRow>
+
+            <div>
+              <label className="block text-xs font-medium text-th-text-secondary mb-1.5">
+                Auto-send pause <span className="opacity-50 font-normal">(silence before new lines are sent to Otto)</span>
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="1"
+                  max="8"
+                  step="0.5"
+                  value={voice.loopback_auto_send_silence_secs}
+                  onChange={(e) => patch({ loopback_auto_send_silence_secs: parseFloat(e.target.value) })}
+                  className="flex-1 accent-blue-500"
+                />
+                <span className="text-sm font-medium text-th-text-primary w-12 text-right tabular-nums">
+                  {voice.loopback_auto_send_silence_secs.toFixed(1)}s
+                </span>
+              </div>
+              <p className="text-xs text-th-text-muted mt-1">
+                Only applies when you turn on <span className="font-medium">Auto</span> in the
+                transcription panel. Longer pauses batch more speech per message.
+              </p>
+            </div>
+
+            <p className="text-xs text-th-text-muted">
+              System audio is captured in software before it reaches your speakers or
+              headphones — you keep hearing everything normally. All transcription
+              runs on-device. macOS will ask for System Audio Recording permission the
+              first time you start.
+            </p>
+          </div>
+        )}
       </SectionCard>
 
       {voice.enabled && (
