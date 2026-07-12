@@ -279,6 +279,20 @@ def _mlx_args() -> list[str]:
     they will see a clear ``ModuleNotFoundError`` at first inference
     pointing at the missing dep, rather than paying the bundle cost
     up-front for everyone.
+
+    ``mlx_whisper`` powers on-device speech-to-text
+    (``backend.voice.stt`` → system-audio + mic transcription).  Its
+    ``transcribe`` entrypoint eagerly imports ``timing.py`` (``numba``
+    + ``scipy.signal``) and ``tokenizer.py`` (``tiktoken``) at module
+    load, so all of those must be bundled too — otherwise
+    ``import mlx_whisper`` raises ``ImportError`` inside the frozen
+    backend and every transcription fails with a misleading
+    "mlx-whisper is not installed" message.  ``numba``/``llvmlite``/
+    ``scipy`` are therefore NOT in ``_exclude_args`` — keep those two
+    lists in sync.  ``torch`` is intentionally left out: it appears in
+    mlx_whisper's ``Requires-Dist`` but is only touched by
+    ``torch_whisper.py`` (OpenAI-checkpoint conversion), which the
+    ``transcribe`` path never imports.
     """
     if not IS_MACOS_ARM:
         return []
@@ -286,12 +300,18 @@ def _mlx_args() -> list[str]:
         "--collect-all", "mlx",
         "--collect-all", "mlx_lm",
         "--collect-all", "mlx_vlm",
+        "--collect-all", "mlx_whisper",
         "--collect-all", "transformers",
         "--collect-all", "tokenizers",
         "--collect-all", "safetensors",
         "--collect-all", "huggingface_hub",
         "--collect-all", "sentencepiece",
         "--collect-all", "google.protobuf",
+        "--collect-all", "numba",
+        "--collect-all", "llvmlite",
+        "--collect-all", "scipy",
+        "--collect-all", "tiktoken",
+        "--collect-submodules", "tiktoken_ext",
     ]
 
 
@@ -384,11 +404,14 @@ def _exclude_args() -> list[str]:
         "--exclude-module", "tensorflow",
         "--exclude-module", "jax",
         # NLP / scientific stack — transitive only.
+        #
+        # NOTE: ``numba``, ``llvmlite``, and ``scipy`` are intentionally
+        # NOT excluded — ``mlx_whisper.transcribe`` imports them eagerly
+        # (via ``timing.py``) and they are bundled in ``_mlx_args``.
+        # Excluding them here would win over ``--collect-all`` and break
+        # speech-to-text in the frozen backend.
         "--exclude-module", "spacy",
         "--exclude-module", "thinc",
-        "--exclude-module", "numba",
-        "--exclude-module", "llvmlite",
-        "--exclude-module", "scipy",
         "--exclude-module", "sympy",
         "--exclude-module", "matplotlib",
         "--exclude-module", "pandas",
