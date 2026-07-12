@@ -316,6 +316,17 @@ jobs:
             sign_one "$BACKEND/otto-backend"
           fi
 
+          # ── 3b. Sign the audiotap helper binary ─────────────────────────
+          # Bundled separately from the backend (see tauri.conf.json
+          # resources: "audiotap/.build/release/otto-audiotap"), so it
+          # lives outside $BACKEND and needs its own signing pass.
+          AUDIOTAP="$APP/Contents/Resources/audiotap/otto-audiotap"
+          if [ -f "$AUDIOTAP" ]; then
+            sign_one "$AUDIOTAP"
+          else
+            echo "WARNING: audiotap binary not found at $AUDIOTAP"
+          fi
+
           # ── 4. Re-sign the .app bundle ──────────────────────────────────
           # All nested code is now correctly signed. Sign the main Tauri
           # binary and the outer bundle so CodeResources seals over them.
