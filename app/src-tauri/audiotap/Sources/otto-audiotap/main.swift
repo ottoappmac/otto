@@ -33,6 +33,34 @@ func fail(_ msg: String) -> Never {
     exit(1)
 }
 
+/// Write raw bytes to stdout using the low-level write(2) syscall.
+///
+/// ``FileHandle.write(_:)`` raises an uncaught ``NSFileHandleOperationException``
+/// on EPIPE (broken pipe) which crashes the process — ``SIG_IGN`` on SIGPIPE
+/// does NOT prevent it, because Foundation turns the failed write into an
+/// Objective-C exception, not a signal. Using ``write(2)`` directly lets us
+/// detect a closed reader (the backend went away / stopped capturing) and exit
+/// cleanly instead of dying with a spurious crash report.
+@inline(__always)
+func writeAllToStdout(_ base: UnsafeRawPointer, _ count: Int) {
+    var offset = 0
+    while offset < count {
+        let n = write(STDOUT_FILENO, base + offset, count - offset)
+        if n > 0 {
+            offset += n
+            continue
+        }
+        if n == -1 {
+            if errno == EINTR { continue }
+            // EPIPE (reader gone) or any other write error: the consumer is no
+            // longer there, so there's nothing useful left to do. Exit cleanly.
+            exit(0)
+        }
+        // n == 0 shouldn't happen for a pipe; treat it as a closed reader.
+        exit(0)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
@@ -210,7 +238,6 @@ final class Capture {
     private var aggID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
     private let ioQueue = DispatchQueue(label: "com.research.otto.audiotap.io")
-    private let stdoutHandle = FileHandle.standardOutput
     private var torndown = false
     private let lock = NSLock()
 
@@ -236,7 +263,6 @@ final class Capture {
 
         logErr("capturing: in=\(inFormat.sampleRate)Hz/\(inFormat.channelCount)ch -> out=\(targetSampleRate)Hz/mono/int16")
 
-        let handle = stdoutHandle
         let ioBlock: AudioDeviceIOBlock = { _, inInputData, _, _, _ in
             guard let inBuffer = AVAudioPCMBuffer(pcmFormat: inFormat, bufferListNoCopy: inInputData, deallocator: nil) else {
                 return
@@ -269,7 +295,8 @@ final class Capture {
             let outFrames = Int(outBuffer.frameLength)
             if outFrames == 0 { return }
             guard let channel = outBuffer.int16ChannelData else { return }
-            handle.write(Data(bytes: channel[0], count: outFrames * MemoryLayout<Int16>.size))
+            let byteCount = outFrames * MemoryLayout<Int16>.size
+            writeAllToStdout(UnsafeRawPointer(channel[0]), byteCount)
         }
 
         let createStatus = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggID, ioQueue, ioBlock)

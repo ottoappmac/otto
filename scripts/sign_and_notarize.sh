@@ -82,17 +82,29 @@ STAGING="${TMPDIR:-/tmp}/sign-staging-$$"
 rm -rf "$STAGING" && mkdir -p "$STAGING"
 trap 'rm -rf "$STAGING"' EXIT
 
+ENTITLEMENTS="$ROOT/app/src-tauri/backend.entitlements"
+
 # sign_one: stage to flat dir, strip existing signature, re-sign with
 # Developer ID + hardened runtime + secure timestamp, write back in place.
 # The flat staging path prevents codesign from interpreting the parent
 # directory as a bundle ("bundle format is ambiguous").
+#
+# Optional 2nd arg: path to an entitlements plist. The backend executable
+# needs JIT / unsigned-executable-memory entitlements because it imports
+# mlx_whisper -> numba/llvmlite, which JIT-compiles at runtime (mmap RW ->
+# mprotect RX). Under Hardened Runtime, without those entitlements macOS
+# kills the process with "SIGKILL (Code Signature Invalid) / Invalid Page"
+# the instant a capture/transcription starts.
 sign_one() {
   local target="$1"
+  local entitlements="${2:-}"
   local staged="$STAGING/$(basename "$target").$RANDOM"
   cp "$target" "$staged"
   codesign --remove-signature "$staged" 2>/dev/null || true
+  local ent_args=()
+  [ -n "$entitlements" ] && ent_args=(--entitlements "$entitlements")
   codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
-    --options runtime --timestamp \
+    --options runtime --timestamp "${ent_args[@]}" \
     "$staged"
   cat "$staged" > "$target"
   rm -f "$staged"
@@ -193,8 +205,20 @@ fi
 # ---------- 3. Main backend executable -------------------------------------
 
 if [ -f "$BACKEND/otto-backend" ]; then
-  info "Signing $BACKEND/otto-backend"
-  sign_one "$BACKEND/otto-backend"
+  info "Signing $BACKEND/otto-backend (with JIT entitlements)"
+  sign_one "$BACKEND/otto-backend" "$ENTITLEMENTS"
+fi
+
+# ---------- 3b. Sign the audiotap helper binary ----------------------------
+# Bundled separately from the backend (see tauri.conf.json resources:
+# "audiotap/.build/release/otto-audiotap"), so it lives outside $BACKEND
+# and needs its own signing pass.
+AUDIOTAP="$APP/Contents/Resources/audiotap/otto-audiotap"
+if [ -f "$AUDIOTAP" ]; then
+  info "Signing $AUDIOTAP"
+  sign_one "$AUDIOTAP"
+else
+  warn "audiotap binary not found at $AUDIOTAP"
 fi
 
 # ---------- 4. Re-sign the outer bundle ------------------------------------
