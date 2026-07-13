@@ -353,11 +353,19 @@ jobs:
           # binary and the outer bundle so CodeResources seals over them.
           # Without --deep, codesign only updates the top-level bundle
           # signature and records pre-signed nested code by identity.
+          #
+          # The outer binary is the TCC "responsible process" for the backend
+          # + helper children, so it must carry com.apple.security.device.
+          # audio-input or macOS denies microphone access under Hardened
+          # Runtime (the "mic" capture source records only silence).
+          APP_ENTITLEMENTS="$GITHUB_WORKSPACE/app/src-tauri/app.entitlements"
           codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
             --options runtime --timestamp \
+            --entitlements "$APP_ENTITLEMENTS" \
             "$APP/Contents/MacOS/otto"
           codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
             --options runtime --timestamp \
+            --entitlements "$APP_ENTITLEMENTS" \
             "$APP"
 
           codesign --verify --verbose=2 "$APP" || echo "(outer verify warning)"
