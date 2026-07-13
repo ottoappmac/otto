@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    The bundled Python backend imports mlx_whisper for on-device speech-to-text,
+    which pulls in numba/llvmlite. llvmlite JIT-compiles at runtime by allocating
+    memory and marking it executable (mmap RW -> mprotect RX). Under Hardened
+    Runtime (required for notarisation) macOS kills the process with a
+    "SIGKILL (Code Signature Invalid) / Invalid Page" fault unless these
+    entitlements are granted. Without them the backend crashes the instant a
+    capture/transcription starts.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

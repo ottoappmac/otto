@@ -179,6 +179,7 @@ jobs:
         run: |
           set -e
           BACKEND="$APP/Contents/Resources/backend"
+          ENTITLEMENTS="$GITHUB_WORKSPACE/app/src-tauri/backend.entitlements"
           STAGING="$RUNNER_TEMP/sign-staging-final"
           rm -rf "$STAGING" && mkdir -p "$STAGING"
 
@@ -193,13 +194,24 @@ jobs:
           # timestamp, then write back. The flat staging path prevents
           # codesign from detecting the parent directory as a bundle and
           # refusing to sign with "bundle format is ambiguous".
+          #
+          # Optional 2nd arg: path to an entitlements plist. The backend
+          # executable needs JIT / unsigned-executable-memory entitlements
+          # because it imports mlx_whisper -> numba/llvmlite, which JIT-
+          # compiles at runtime (mmap RW -> mprotect RX). Under Hardened
+          # Runtime, without those entitlements macOS kills the process
+          # with "SIGKILL (Code Signature Invalid) / Invalid Page" the
+          # instant a capture/transcription starts.
           sign_one() {
             local target="$1"
+            local entitlements="${2:-}"
             local staged="$STAGING/$(basename "$target").$RANDOM"
             cp "$target" "$staged"
             codesign --remove-signature "$staged" 2>/dev/null || true
+            local ent_args=()
+            [ -n "$entitlements" ] && ent_args=(--entitlements "$entitlements")
             codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
-              --options runtime --timestamp \
+              --options runtime --timestamp "${ent_args[@]}" \
               "$staged"
             # Write back in-place so hardlinks (if any) are also updated.
             cat "$staged" > "$target"
@@ -318,8 +330,11 @@ jobs:
           fi
 
           # ── 3. Sign main backend executable ────────────────────────────
+          # Signed WITH entitlements so llvmlite/numba JIT (used by the
+          # mlx_whisper speech-to-text path) can allocate executable memory
+          # under Hardened Runtime instead of being SIGKILLed.
           if [ -f "$BACKEND/otto-backend" ]; then
-            sign_one "$BACKEND/otto-backend"
+            sign_one "$BACKEND/otto-backend" "$ENTITLEMENTS"
           fi
 
           # ── 3b. Sign the audiotap helper binary ─────────────────────────
