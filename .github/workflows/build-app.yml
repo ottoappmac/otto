@@ -51,8 +51,14 @@ jobs:
       - name: Install Python dependencies
         shell: bash
         run: |
-          printf 'numba; python_version < "0"\nllvmlite; python_version < "0"\n' > "$RUNNER_TEMP/uv-overrides.txt"
-          uv pip install --system -e ".[app]" --override "$RUNNER_TEMP/uv-overrides.txt"
+          # numba + llvmlite are hard deps of mlx-whisper (its transcribe
+          # entrypoint eagerly imports numba via timing.py). They MUST be
+          # installed so PyInstaller's `--collect-all numba/llvmlite` in
+          # scripts/build_backend.py can bundle them — otherwise the packaged
+          # app fails every transcription with a misleading
+          # "mlx-whisper is not installed" error. Do NOT re-add an override
+          # suppressing them.
+          uv pip install --system -e ".[app]"
           uv pip install --system pyinstaller
 
       - name: Build Python backend
