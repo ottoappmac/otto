@@ -58,8 +58,11 @@ def app_data(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def fake_app_vault(monkeypatch):
-    """Replace the app_vault keyring backend with an in-memory fake."""
+def fake_app_vault(tmp_path, monkeypatch):
+    """Replace the shared vault keyring backend with an in-memory fake."""
+    # The one-time migration reads a sidecar under the app data dir — point
+    # it at a tmp dir so tests never touch the real keychain index.
+    monkeypatch.setattr(config_mod, "get_app_data_dir", lambda: tmp_path)
     fake = _FakeKeyring()
     monkeypatch.setattr(app_vault, "_keyring", fake)
     monkeypatch.setattr(app_vault, "_import_error", None)
@@ -90,8 +93,9 @@ def test_app_vault_set_get_has_delete(fake_app_vault):
     app_vault.set("anthropic_api_key", "sk-secret")
     assert app_vault.get("anthropic_api_key") == "sk-secret"
     assert app_vault.has("anthropic_api_key") is True
-    # Stored under the otto.app namespace.
-    assert fake_app_vault.store[("otto.app", "anthropic_api_key")] == "sk-secret"
+    # Stored inside the single consolidated keychain item.
+    raw = fake_app_vault.store[("otto.vault", "__otto_vault__")]
+    assert json.loads(raw)["app"]["anthropic_api_key"] == "sk-secret"
 
     assert app_vault.delete("anthropic_api_key") is True
     assert app_vault.get("anthropic_api_key") is None
@@ -148,7 +152,7 @@ def test_save_writes_single_keychain_item(app_data, fake_app_vault):
     cfg.save()
 
     assert len(fake_app_vault.store) == 1
-    assert ("otto.app", "__app_secrets__") in fake_app_vault.store
+    assert ("otto.vault", "__otto_vault__") in fake_app_vault.store
 
 
 def test_save_empty_secret_deletes_vault_entry(app_data, fake_app_vault):
@@ -157,11 +161,12 @@ def test_save_empty_secret_deletes_vault_entry(app_data, fake_app_vault):
     cfg.save()
     assert app_vault.get_bundle() == {"anthropic_api_key": "sk-anthropic"}
 
-    # Clearing the only secret and re-saving removes the bundle entirely.
+    # Clearing the only secret and re-saving empties the app section.
     cfg.llm.anthropic.api_key = ""
     cfg.save()
     assert app_vault.get_bundle() is None
-    assert fake_app_vault.store == {}
+    raw = fake_app_vault.store[("otto.vault", "__otto_vault__")]
+    assert json.loads(raw)["app"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -209,10 +214,10 @@ def test_load_migrates_legacy_plaintext_secret(app_data, fake_app_vault):
 def test_load_migrates_legacy_per_field_keychain_rows(app_data, fake_app_vault):
     # Simulate a version that stored one keychain row per secret (the
     # source of the ~10 first-run prompts). On load these are folded into
-    # the consolidated bundle WITHOUT deleting the old rows (deleting them
+    # the consolidated item WITHOUT deleting the old rows (deleting them
     # would re-trigger the per-item keychain prompt we're avoiding).
-    app_vault.set("anthropic_api_key", "sk-old")
-    app_vault.set("openai_api_key", "sk-old-openai")
+    fake_app_vault.set_password("otto.app", "anthropic_api_key", "sk-old")
+    fake_app_vault.set_password("otto.app", "openai_api_key", "sk-old-openai")
     (app_data / "config.json").write_text(
         json.dumps(AppConfig().model_dump(mode="json"), indent=2)
     )
@@ -221,7 +226,7 @@ def test_load_migrates_legacy_per_field_keychain_rows(app_data, fake_app_vault):
     assert loaded.llm.anthropic.api_key == "sk-old"
     assert loaded.llm.openai.api_key == "sk-old-openai"
 
-    # Consolidated into a single bundle...
+    # Consolidated into the single vault item...
     assert app_vault.get_bundle() == {
         "anthropic_api_key": "sk-old",
         "openai_api_key": "sk-old-openai",

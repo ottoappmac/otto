@@ -19,6 +19,7 @@ backend and verify:
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 import pytest
@@ -148,11 +149,20 @@ def test_delete_all_wipes_static_and_bundle(fake_keyring):
 
 
 def test_get_bundle_treats_corrupt_payload_as_missing(fake_keyring):
-    # Simulate a bug elsewhere having stored non-JSON in the slot.
-    fake_keyring.set_password("otto.mcp.github", "__auth_bundle__", "{not json")
+    # Simulate a bug elsewhere having stored non-JSON in the consolidated
+    # item — the whole document is unreadable, so every lookup is "missing".
+    fake_keyring.set_password("otto.vault", "__otto_vault__", "{not json")
+    vault._store.reset_cache()  # type: ignore[attr-defined]
     assert vault.get_bundle("github") is None
 
 
 def test_get_bundle_ignores_non_object_payload(fake_keyring):
-    fake_keyring.set_password("otto.mcp.github", "__auth_bundle__", '"a string"')
+    # A well-formed document whose bundle slot isn't an object is treated
+    # as missing rather than crashing the manager.
+    fake_keyring.set_password(
+        "otto.vault",
+        "__otto_vault__",
+        json.dumps({"v": 1, "app": {}, "mcp": {"github": {"__auth_bundle__": "a string"}}}),
+    )
+    vault._store.reset_cache()  # type: ignore[attr-defined]
     assert vault.get_bundle("github") is None
