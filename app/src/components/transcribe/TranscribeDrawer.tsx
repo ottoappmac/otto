@@ -354,6 +354,10 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
   const startedAtRef = useRef<number | null>(null);
 
   const recording = t.state === "recording";
+  const modelDownloading = t.modelStatus === "downloading";
+  const modelReady = t.modelStatus === "ready";
+  const modelPct =
+    t.modelProgress != null ? Math.round(Math.min(1, Math.max(0, t.modelProgress)) * 100) : null;
 
   useEffect(() => {
     if (!open) return;
@@ -993,10 +997,20 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
         {!recording ? (
           <button
             onClick={handleStart}
-            disabled={activeSources.length === 0 || !t.connected}
+            disabled={activeSources.length === 0 || !t.connected || !modelReady}
+            title={
+              !modelReady
+                ? "Downloading the speech model — recording will be available once it finishes"
+                : undefined
+            }
             className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-b from-red-500 to-red-600 hover:from-red-500 hover:to-red-500 text-white text-[13px] font-semibold shadow-sm shadow-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none transition-all active:scale-[0.97]"
           >
-            <Circle size={11} className="fill-current" /> Record
+            {modelDownloading ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Circle size={11} className="fill-current" />
+            )}
+            Record
           </button>
         ) : (
           <div className="flex items-center gap-2">
@@ -1048,6 +1062,28 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
           </button>
         )}
       </div>
+
+      {modelDownloading && (
+        <div className="mx-4 mt-3 p-2.5 rounded-2xl border border-indigo-500/25 bg-indigo-500/10 shrink-0 animate-fade-in">
+          <div className="flex items-center gap-2 text-[11px] text-indigo-300">
+            <Loader2 size={13} className="shrink-0 animate-spin" />
+            <span className="flex-1 font-medium">
+              Downloading speech model…{modelPct != null ? ` ${modelPct}%` : ""}
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] text-th-text-muted leading-snug">
+            One-time on-device setup (~1.5&nbsp;GB). Recording unlocks once it’s ready.
+          </p>
+          <div className="mt-2 h-1 rounded-full bg-th-surface-hover overflow-hidden">
+            <div
+              className={`h-full rounded-full bg-indigo-500 ${
+                modelPct != null ? "transition-[width] duration-300" : "w-1/3 animate-pulse"
+              }`}
+              style={modelPct != null ? { width: `${modelPct}%` } : undefined}
+            />
+          </div>
+        </div>
+      )}
 
       {captureError && (
         <div className="mx-4 mt-3 p-2.5 rounded-2xl border border-amber-500/25 bg-amber-500/10 text-[11px] text-amber-300 flex items-start gap-2 shrink-0 animate-fade-in">

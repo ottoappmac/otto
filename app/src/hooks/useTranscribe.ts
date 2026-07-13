@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  TranscribeModelStatus,
   TranscribeSource,
   TranscribeState,
   TranscribeWSEvent,
@@ -41,6 +42,10 @@ export interface UseTranscribeReturn {
   partials: SourceMap<string>;
   levels: SourceMap<number>;
   error: string | null;
+  /** Readiness of the on-device speech model (capture is gated on this). */
+  modelStatus: TranscribeModelStatus;
+  /** Download progress 0..1 while modelStatus === "downloading", else null. */
+  modelProgress: number | null;
   start: (sources: TranscribeSource[]) => void;
   stop: () => void;
   clear: () => void;
@@ -59,6 +64,11 @@ export function useTranscribe({
   const [partials, setPartials] = useState<SourceMap<string>>({});
   const [levels, setLevels] = useState<SourceMap<number>>({});
   const [error, setError] = useState<string | null>(null);
+  // Optimistic default: assume the model is ready so we don't block Record on
+  // an older backend that never sends "model" events. The backend gates start()
+  // anyway, and emits "downloading" on connect when the model is actually absent.
+  const [modelStatus, setModelStatus] = useState<TranscribeModelStatus>("ready");
+  const [modelProgress, setModelProgress] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,6 +159,19 @@ export function useTranscribe({
         case "level":
           setLevels((prev) => ({ ...prev, [source]: event.rms ?? 0 }));
           break;
+        case "model":
+          if (event.status) {
+            setModelStatus(event.status);
+            setModelProgress(
+              event.status === "downloading"
+                ? typeof event.progress === "number"
+                  ? event.progress
+                  : null
+                : null,
+            );
+            if (event.status === "error" && event.message) setError(event.message);
+          }
+          break;
         case "error":
           if (event.message) setError(event.message);
           break;
@@ -218,6 +241,8 @@ export function useTranscribe({
     partials,
     levels,
     error,
+    modelStatus,
+    modelProgress,
     start,
     stop,
     clear,
