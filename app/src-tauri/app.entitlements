@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Entitlements for the outer Tauri app binary (Contents/MacOS/otto).
+
+    The backend and audiotap helper run as children of this app, so for TCC
+    purposes THIS binary is the "responsible process". Under Hardened Runtime
+    macOS refuses to grant microphone access unless the responsible process
+    declares com.apple.security.device.audio-input — without it, starting a
+    "mic" capture is denied and the microphone delivers only silence:
+
+      tccd: Prompting policy for hardened runtime; service:
+      kTCCServiceMicrophone requires entitlement
+      com.apple.security.device.audio-input but it is missing for
+      responsible={identifier=com.research.otto, .../Contents/MacOS/otto}
+
+    NSMicrophoneUsageDescription (see Info.plist) supplies the prompt text.
+  -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>

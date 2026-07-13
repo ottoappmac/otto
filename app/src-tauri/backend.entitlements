@@ -17,5 +17,15 @@
   <true/>
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
+  <!--
+    The backend opens the microphone (sounddevice/PortAudio) for the Live
+    Capture "mic" source. Under Hardened Runtime macOS requires this
+    entitlement on the process accessing the input device, otherwise
+    kTCCServiceMicrophone access is denied and the mic silently delivers no
+    audio. (The outer app — the TCC-responsible process — also needs it; see
+    app.entitlements.)
+  -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>

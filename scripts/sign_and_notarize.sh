@@ -224,11 +224,18 @@ fi
 # ---------- 4. Re-sign the outer bundle ------------------------------------
 
 info "Signing main Tauri binary and outer bundle"
+# The outer binary is the TCC "responsible process" for the backend + helper
+# children, so it must carry com.apple.security.device.audio-input or macOS
+# denies microphone access under Hardened Runtime (the "mic" capture source
+# records only silence).
+APP_ENTITLEMENTS="$ROOT/app/src-tauri/app.entitlements"
 codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
   --options runtime --timestamp \
+  --entitlements "$APP_ENTITLEMENTS" \
   "$APP/Contents/MacOS/otto"
 codesign --force --sign "$APPLE_SIGNING_IDENTITY" \
   --options runtime --timestamp \
+  --entitlements "$APP_ENTITLEMENTS" \
   "$APP"
 
 codesign --verify --verbose=2 "$APP" || warn "(outer verify warning)"
