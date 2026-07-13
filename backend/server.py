@@ -264,11 +264,29 @@ async def _startup_mcp(cfg: AppConfig) -> None:
 
 
 _CLEANUP_INTERVAL_SECS = 60
+_CHECKPOINT_COMPACT_INTERVAL_SECS = 86400  # once a day
+
+
+async def _compact_checkpoint_db_on_startup() -> None:
+    """Fix legacy checkpoints.sqlite bloat shortly after boot.
+
+    Installs that predate incremental auto-vacuum being enabled can have a
+    checkpoints.sqlite file that is mostly empty freelist pages (deleted
+    session data that was never reclaimed). Deferred a few seconds so it
+    never competes with startup-critical work above.
+    """
+    await asyncio.sleep(10)
+    try:
+        await session_mgr.compact_checkpoint_db()
+    except Exception:
+        logger.debug("checkpoints.sqlite startup compaction failed", exc_info=True)
 
 
 async def _periodic_cleanup() -> None:
     """Evict idle sessions and prune orphaned message queues periodically."""
     from backend.state import context_queues, message_queues, running_tasks
+
+    next_compact_due = time.time() + _CHECKPOINT_COMPACT_INTERVAL_SECS
 
     while True:
         await asyncio.sleep(_CLEANUP_INTERVAL_SECS)
@@ -292,6 +310,13 @@ async def _periodic_cleanup() -> None:
                 logger.info("Periodic cleanup: removed %d stale queue(s)", len(stale_queues))
         except Exception:
             logger.debug("Periodic cleanup error", exc_info=True)
+
+        if time.time() >= next_compact_due:
+            next_compact_due = time.time() + _CHECKPOINT_COMPACT_INTERVAL_SECS
+            try:
+                await session_mgr.compact_checkpoint_db()
+            except Exception:
+                logger.debug("checkpoints.sqlite compaction failed", exc_info=True)
 
 
 def _warm_up_graph_imports() -> None:
@@ -617,6 +642,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     asyncio.create_task(_startup_mcp(cfg))
     asyncio.create_task(_auto_provision_node())
+    asyncio.create_task(_compact_checkpoint_db_on_startup())
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     health_task = asyncio.create_task(_loop_health_monitor())
     init_scheduler()

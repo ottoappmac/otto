@@ -239,6 +239,23 @@ def _checkpoint_db_path() -> str:
     return str(_sessions_dir() / "checkpoints.sqlite")
 
 
+async def _connect_checkpoint_db() -> aiosqlite.Connection:
+    """Open the checkpoint DB with incremental auto-vacuum enabled.
+
+    Without this, ``DELETE``s issued by ``delete_session`` free pages only
+    into SQLite's internal freelist — the file itself never shrinks, so a
+    session-heavy install accumulates an ever-growing ``checkpoints.sqlite``
+    even though the live row count stays small. ``auto_vacuum=INCREMENTAL``
+    only takes effect after a ``VACUUM``, so this is a no-op on a database
+    that already has it set (the common case); it only matters the first
+    time this runs against a legacy NONE-mode file, or against a brand new
+    one.
+    """
+    conn = await aiosqlite.connect(_checkpoint_db_path())
+    await conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+    return conn
+
+
 def _messages_path(session_id: str) -> Path:
     _validate_session_id(session_id)
     return _sessions_dir() / f"{session_id}.messages.json"
@@ -2514,7 +2531,7 @@ class SessionManager:
         config.apply_to_environ()
         session_id = str(uuid.uuid4())
 
-        sqlite_conn = await aiosqlite.connect(_checkpoint_db_path())
+        sqlite_conn = await _connect_checkpoint_db()
         checkpointer = AsyncSqliteSaver(sqlite_conn)
         await checkpointer.setup()
 
@@ -2633,7 +2650,7 @@ class SessionManager:
         info = SessionInfo.model_validate(meta)
         config.apply_to_environ()
 
-        sqlite_conn = await aiosqlite.connect(_checkpoint_db_path())
+        sqlite_conn = await _connect_checkpoint_db()
         checkpointer = AsyncSqliteSaver(sqlite_conn)
         await checkpointer.setup()
 
@@ -2769,10 +2786,19 @@ class SessionManager:
 
         await asyncio.to_thread(_remove_session_files)
         try:
-            async with aiosqlite.connect(_checkpoint_db_path()) as db:
+            db = await _connect_checkpoint_db()
+            try:
                 await db.execute("DELETE FROM checkpoints WHERE thread_id = ?", (session_id,))
                 await db.execute("DELETE FROM writes WHERE thread_id = ?", (session_id,))
                 await db.commit()
+                # Rows deleted above only land in SQLite's internal freelist —
+                # the file itself never shrinks without this. incremental_vacuum
+                # only does anything once auto_vacuum=INCREMENTAL has taken
+                # effect (see _connect_checkpoint_db), but is a harmless no-op
+                # otherwise, so it's always safe to call here.
+                await db.execute("PRAGMA incremental_vacuum")
+            finally:
+                await db.close()
         except Exception:
             logger.debug("Error cleaning checkpoint DB for session %s", session_id, exc_info=True)
 
@@ -2806,6 +2832,55 @@ class SessionManager:
             self._eviction_task = None
         for sid in list(self._active.keys()):
             await self.close_session(sid)
+
+    async def compact_checkpoint_db(self) -> None:
+        """One-time migration + ongoing maintenance for checkpoints.sqlite.
+
+        Historically ``delete_session`` deleted rows without ever running
+        ``VACUUM``/``incremental_vacuum``, so on ``auto_vacuum=NONE`` (SQLite's
+        default) freed pages stayed in the file's internal freelist forever —
+        the file only ever grew, even though live row counts stayed small.
+
+        Runs in a thread (blocking SQLite calls) and is best-effort: skipped
+        entirely if another connection currently holds the write lock (e.g.
+        an active session mid-checkpoint), since this is opportunistic
+        housekeeping, not correctness-critical.
+        """
+        await asyncio.to_thread(self._compact_checkpoint_db_sync)
+
+    @staticmethod
+    def _compact_checkpoint_db_sync() -> None:
+        import sqlite3
+
+        db_path = Path(_checkpoint_db_path())
+        if not db_path.exists():
+            return
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=5)
+        except sqlite3.OperationalError:
+            return
+        try:
+            page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+            if not page_count:
+                return
+            auto_vacuum = conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            freelist_count = conn.execute("PRAGMA freelist_count").fetchone()[0]
+            free_ratio = freelist_count / page_count
+            if auto_vacuum == 0 and free_ratio > 0.1:
+                logger.info(
+                    "checkpoints.sqlite: auto_vacuum=NONE with %.0f%% free pages "
+                    "(%d/%d) — running one-time VACUUM to reclaim disk space and "
+                    "switch to incremental auto-vacuum",
+                    free_ratio * 100, freelist_count, page_count,
+                )
+                conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+                conn.execute("VACUUM")
+            elif freelist_count:
+                conn.execute("PRAGMA incremental_vacuum")
+        except sqlite3.OperationalError:
+            logger.debug("checkpoints.sqlite compaction skipped (locked)", exc_info=True)
+        finally:
+            conn.close()
 
     def list_active(self) -> list[SessionInfo]:
         return [s.to_info() for s in self._active.values()]
