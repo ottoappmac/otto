@@ -63,8 +63,15 @@ def _transcribe_sync(pcm_bytes: bytes, model_id: str, language: Optional[str]) -
         import numpy as np
         import mlx_whisper  # type: ignore[import]
     except ImportError as exc:
+        # ``import mlx_whisper`` transitively imports numba, scipy.signal and
+        # tiktoken (via its ``transcribe``/``timing`` modules). A failure here
+        # is usually one of those transitive deps missing from a packaged
+        # build, not mlx-whisper itself — surface the real module so the log
+        # isn't misleading.
+        missing = getattr(exc, "name", None) or "mlx-whisper"
         raise RuntimeError(
-            "mlx-whisper is not installed — run: pip install mlx-whisper"
+            f"speech-to-text unavailable — failed to import '{missing}' "
+            f"({exc}). In a source checkout run: pip install mlx-whisper"
         ) from exc
 
     audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32_768.0

@@ -133,6 +133,13 @@ dependencies = [
     # the heavy model weights are only downloaded when the user opts in via
     # Settings → Voice.
     "mlx-whisper>=0.4.0",
+    # numba/llvmlite are hard deps of mlx-whisper (its STT transcribe path
+    # imports numba via timing.py). Pin a floor: an unconstrained resolve
+    # grabs the newest numpy, which backtracks numba down to 0.53.1 /
+    # llvmlite 0.36.0 — versions with no Python 3.12 support that fail to
+    # build in CI. These floors keep the resolver on 3.12-compatible wheels.
+    "numba>=0.61",
+    "llvmlite>=0.44",
     "openwakeword>=0.6.0",
     "onnxruntime>=1.17.0",
     "sounddevice>=0.5.0",
