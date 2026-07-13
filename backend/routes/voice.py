@@ -336,6 +336,10 @@ async def transcribe_websocket(websocket: WebSocket):
 
     send_task = asyncio.create_task(_send_loop(), name="transcribe_ws_send")
 
+    # Report speech-model readiness (and start downloading it if absent) so the
+    # UI can gate Record and show progress instead of a silent first-run hang.
+    asyncio.create_task(mgr.ensure_model_ready())
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -352,6 +356,9 @@ async def transcribe_websocket(websocket: WebSocket):
                 if not isinstance(sources, list):
                     sources = None
                 asyncio.create_task(mgr.start(sources))
+
+            elif msg_type == "prepare_model":
+                asyncio.create_task(mgr.ensure_model_ready())
 
             elif msg_type == "stop":
                 asyncio.create_task(mgr.stop())

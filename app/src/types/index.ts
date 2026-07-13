@@ -1614,7 +1614,11 @@ export type TranscribeWSEventType =
   | "partial"
   | "segment"
   | "level"
+  | "model"
   | "error";
+
+/** Readiness of the on-device speech (Whisper) model. */
+export type TranscribeModelStatus = "ready" | "downloading" | "error";
 
 export interface TranscribeWSEvent {
   type: TranscribeWSEventType;
@@ -1626,6 +1630,12 @@ export interface TranscribeWSEvent {
   source?: TranscribeSource;
   /** Stable, run-scoped event id used to dedupe across multiple sockets. */
   eid?: string;
+  /** For "model" events: model readiness/download status. */
+  status?: TranscribeModelStatus;
+  /** For "model" events: repo id of the speech model. */
+  model?: string;
+  /** For "model" events: download progress 0..1 (absent = indeterminate). */
+  progress?: number;
 }
 
 export interface TranscriptSegment {

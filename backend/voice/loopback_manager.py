@@ -149,6 +149,15 @@ class LoopbackManager:
         self._active: set[str] = set()
         self._src: dict[str, _SourceState] = {}
 
+        # Speech-model readiness. Capture is gated on the Whisper model being
+        # fully downloaded so the first run doesn't silently hang while ~1.5 GB
+        # streams from HuggingFace. Progress is surfaced as "model" events.
+        self._model_ready = False
+        self._model_id_checked: Optional[str] = None
+        self._model_preparing = False
+        self._model_progress = 0.0
+        self._model_task: Optional[asyncio.Task] = None
+
         # System-audio helper.
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._sys_read_task: Optional[asyncio.Task] = None
@@ -167,7 +176,13 @@ class LoopbackManager:
         self._cfg = cfg
         from backend.voice import stt as _stt
 
-        _stt.configure(cfg.get("stt_model", "mlx-community/whisper-large-v3-turbo"))
+        model = cfg.get("stt_model", "mlx-community/whisper-large-v3-turbo")
+        _stt.configure(model)
+        # If the model was switched, forget the previous readiness verdict so
+        # the new model is re-checked (and downloaded) before capture.
+        if model != self._model_id_checked:
+            self._model_ready = False
+            self._model_id_checked = None
 
     def add_client(self, q: asyncio.Queue) -> None:
         self._broadcast_queues.append(q)
@@ -201,12 +216,113 @@ class LoopbackManager:
         return set(self._active)
 
     # ------------------------------------------------------------------
+    # Speech-model readiness / download
+    # ------------------------------------------------------------------
+
+    def _current_model_id(self) -> str:
+        return self._cfg.get("stt_model") or "mlx-community/whisper-large-v3-turbo"
+
+    def _emit_model(self, status: str, **extra: Any) -> None:
+        """Emit a model-status event: status is ready|downloading|error."""
+        event: dict[str, Any] = {"type": "model", "status": status, "model": self._current_model_id()}
+        event.update(extra)
+        self._emit(event)
+
+    @property
+    def model_ready(self) -> bool:
+        return self._model_ready
+
+    async def ensure_model_ready(self, *, notify: bool = True) -> bool:
+        """Ensure the speech model is downloaded, kicking off a download if not.
+
+        Returns True if the model is already present (capture can start), or
+        False if a download was started / is in progress (capture must wait).
+        Progress is broadcast as ``{"type":"model", ...}`` events either way.
+        """
+        from backend.voice import stt as _stt
+
+        model = self._current_model_id()
+
+        if self._model_ready and self._model_id_checked == model:
+            if notify:
+                self._emit_model("ready")
+            return True
+
+        # Cheap cache probe off the event loop.
+        if await asyncio.to_thread(_stt.is_model_ready, model):
+            self._model_ready = True
+            self._model_id_checked = model
+            if notify:
+                self._emit_model("ready")
+            return True
+
+        # Not cached — start a background download (or report the running one).
+        if not self._model_preparing:
+            self._model_preparing = True
+            self._model_progress = 0.0
+            self._model_task = asyncio.create_task(
+                self._download_model(model), name="loopback_model_dl"
+            )
+        elif notify:
+            self._emit_model("downloading", progress=round(self._model_progress, 3))
+        return False
+
+    async def _download_model(self, model: str) -> None:
+        from backend.voice import stt as _stt
+
+        self._emit_model("downloading", progress=0.0)
+        total = await asyncio.to_thread(_stt.expected_total_bytes, model)
+
+        stop = asyncio.Event()
+
+        async def _poll() -> None:
+            while not stop.is_set():
+                done = await asyncio.to_thread(_stt.cached_bytes, model)
+                if total:
+                    # Monotonic and capped below 1.0 until the download actually
+                    # finishes, so the bar never shows 100% prematurely.
+                    self._model_progress = max(self._model_progress, min(0.999, done / total))
+                    self._emit_model("downloading", progress=round(self._model_progress, 3))
+                else:
+                    self._emit_model("downloading")  # indeterminate
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=0.7)
+                except asyncio.TimeoutError:
+                    pass
+
+        poll_task = asyncio.create_task(_poll(), name="loopback_model_poll")
+        try:
+            await asyncio.to_thread(_stt.download_model, model)
+            self._model_ready = True
+            self._model_id_checked = model
+            self._model_progress = 1.0
+            self._emit_model("ready")
+            logger.info("Speech model ready: %s", model)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Speech model download failed (%s): %s", model, exc)
+            self._emit_model(
+                "error",
+                message=f"Couldn't download the speech model ({model}): {exc}",
+            )
+        finally:
+            stop.set()
+            poll_task.cancel()
+            self._model_preparing = False
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def start(self, sources: Optional[list[str]] = None) -> None:
         async with self._lock:
             if self._state != LoopbackState.idle:
+                return
+
+            # Gate capture on the speech model being present. If it isn't,
+            # ensure_model_ready kicks off the download (emitting "model"
+            # progress events) and we bail out — the UI keeps Record disabled
+            # until it receives {"type":"model","status":"ready"}.
+            if not await self.ensure_model_ready():
                 return
 
             requested = [s for s in (sources or [SOURCE_SYSTEM]) if s in _VALID_SOURCES]
