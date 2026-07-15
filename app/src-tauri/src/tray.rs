@@ -95,6 +95,14 @@ pub fn update_ambient_count(app: &tauri::AppHandle, count: u32) {
     let _ = tray.set_menu(Some(menu));
 }
 
+/// Show or hide the menu-bar (status item) tray icon. Used by the
+/// "hide from screen share" toggle so Otto can vanish from the menu bar too.
+pub fn set_tray_visible(app: &tauri::AppHandle, visible: bool) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_visible(visible);
+    }
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();

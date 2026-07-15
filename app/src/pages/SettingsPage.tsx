@@ -4841,6 +4841,26 @@ function PrivacyTab() {
   const [savingHosts, setSavingHosts] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [showPf, setShowPf] = useState(false);
+  const [hideFromShare, setHideFromShare] = useState(false);
+  const [hideBusy, setHideBusy] = useState(false);
+
+  useEffect(() => {
+    import("../utils/screenShareVisibility")
+      .then(({ getHideFromScreenShare }) => setHideFromShare(getHideFromScreenShare()))
+      .catch(() => undefined);
+  }, []);
+
+  const toggleHideFromShare = async () => {
+    const next = !hideFromShare;
+    setHideBusy(true);
+    try {
+      const { setHideFromScreenShare } = await import("../utils/screenShareVisibility");
+      await setHideFromScreenShare(next);
+      setHideFromShare(next);
+    } finally {
+      setHideBusy(false);
+    }
+  };
 
   const refresh = () => {
     setLoading(true);
@@ -5001,6 +5021,56 @@ function PrivacyTab() {
               )}
             </>
           )}
+        </div>
+      </Card>
+
+      {/* ── Screen sharing visibility ────────────────────────────────────── */}
+      <Card title="Screen sharing visibility" dot={hideFromShare ? "bg-emerald-500" : "bg-th-text-muted"}>
+        <div className="space-y-4">
+          <div className={`flex items-center gap-3 rounded-xl border p-4 ${
+            hideFromShare
+              ? "border-emerald-500/30 bg-emerald-500/5"
+              : "border-th-border bg-th-inset-bg"
+          }`}>
+            <div className="shrink-0">
+              {hideFromShare
+                ? <EyeOff size={28} className="text-emerald-400" />
+                : <Eye size={28} className="text-th-text-muted" />
+              }
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-semibold ${hideFromShare ? "text-emerald-400" : "text-th-text-secondary"}`}>
+                {hideFromShare ? "Hidden from screen share" : "Visible in screen share"}
+              </p>
+              <p className="text-xs text-th-text-muted mt-0.5 leading-relaxed">
+                {hideFromShare
+                  ? "Otto's window is excluded from screen capture, and its menu bar and Dock icons are hidden — while staying visible on your own display."
+                  : "Otto appears normally when you share or record your screen, with its menu bar and Dock icons shown."}
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
+                hideFromShare
+                  ? "bg-rose-500/10 border border-rose-500/30 text-rose-400 hover:bg-rose-500/20"
+                  : "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+              }`}
+              onClick={() => void toggleHideFromShare()}
+              disabled={hideBusy}
+            >
+              {hideBusy
+                ? <Loader2 size={14} className="animate-spin" />
+                : hideFromShare ? <Eye size={14} /> : <EyeOff size={14} />
+              }
+              {hideBusy ? "…" : hideFromShare ? "Show" : "Hide"}
+            </button>
+          </div>
+          <div className="flex items-start gap-2 text-[11px] text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
+            <ShieldAlert size={12} className="shrink-0 mt-0.5" />
+            <span>
+              Works against CoreGraphics-based capture, including <strong className="text-th-text-secondary">Google Meet in Chrome</strong>. On macOS 15+ it does <strong className="text-th-text-secondary">not</strong> hide Otto's window from ScreenCaptureKit apps (Zoom, Teams, QuickTime, system screenshots) — for those, share a single window or a display Otto isn't on. While hidden, reach Otto by clicking its window; if you close it, re-open from this app (there's no menu bar or Dock icon until you turn this off).
+            </span>
+          </div>
         </div>
       </Card>
 
