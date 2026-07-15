@@ -21,3 +21,10 @@ serde_json = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Used to toggle the main window's NSWindow.sharingType so Otto can be excluded
+# from screen capture / screen sharing (e.g. Google Meet) on macOS.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSResponder", "NSApplication", "NSRunningApplication", "NSDockTile", "NSImage"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSData"] }

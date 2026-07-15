@@ -40,6 +40,16 @@ export default function App() {
     return () => unlisten?.();
   }, [navigate]);
 
+  // Re-apply the "hide from screen share" preference on startup so the native
+  // window's sharingType matches the user's saved choice.
+  useEffect(() => {
+    import("./utils/screenShareVisibility")
+      .then(({ getHideFromScreenShare, applyHideFromScreenShare }) => {
+        if (getHideFromScreenShare()) return applyHideFromScreenShare(true);
+      })
+      .catch(() => {}); // no-op in non-Tauri environments (e.g. web dev)
+  }, []);
+
   // Route external link clicks to the system browser. Without this, clicking a
   // URL in run results / chat would navigate the main Tauri webview away from
   // the React app (unloading the whole UI) with no way to get back. Same-origin

@@ -584,6 +584,31 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     void setBadge(unreadCount, topUnreadLevel);
   }, [unreadCount, topUnreadLevel]);
 
+  // Re-apply the badge when the native side returns Otto to the Dock (the fresh
+  // dock tile loses its badge). Refs keep the values current without resubscribing.
+  const badgeRef = useRef({ unreadCount, topUnreadLevel });
+  badgeRef.current = { unreadCount, topUnreadLevel };
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen("reassert-badge", () => {
+          const { unreadCount: c } = badgeRef.current;
+          // Re-apply the Dock badge natively (with an explicit tile redraw) —
+          // the standard setBadgeCount path doesn't composite over the custom
+          // icon we re-assert when returning to the Dock.
+          void import("@tauri-apps/api/core")
+            .then(({ invoke }) =>
+              invoke("set_dock_badge", { label: c > 0 ? String(c) : null }),
+            )
+            .catch(() => {});
+        }),
+      )
+      .then((fn) => { unlisten = fn; })
+      .catch(() => {}); // no-op in non-Tauri environments (e.g. web dev)
+    return () => unlisten?.();
+  }, []);
+
   const { hasAny, hasHitl, hasError } = useMemo(() => {
     const vals = Object.values(notifications);
     return {
