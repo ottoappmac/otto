@@ -14,7 +14,8 @@ OTTO is a macOS AI agent desktop app that manages itself. Through conversation a
 4. [Schedules](#schedules)
 5. [Triggers](#triggers)
 6. [macOS Activity](#macos-activity)
-7. [History](#history)
+7. [Capture](#capture)
+8. [History](#history)
 
 ---
 
@@ -141,6 +142,14 @@ Beyond the built-ins, any **MCP server** (stdio or SSE) adds its tools to the se
 | `edgar-sec` | Full read access to 18M+ SEC EDGAR filings |
 | `macos-osascript` | Execute AppleScript snippets (macOS only) |
 | `macos-mail` | CRUD + full-text search over Apple Mail via AppleScript (macOS only) |
+| `macos-calendar` | CRUD over Apple Calendar events (macOS only) |
+| `macos-notes` | CRUD over Apple Notes (macOS only) |
+| `macos-reminders` | CRUD over Apple Reminders (macOS only) |
+| `macos-messages` | Send iMessage/SMS, read chat history (macOS only) |
+| `slack` | Read/write access to a Slack workspace via a bot token |
+| `discord` | Read/write access to a Discord server via a bot token |
+| `microsoft-teams` | Read-only access to Microsoft Teams via Graph app-only auth |
+| `microsoft-onedrive` | Browse/search OneDrive/SharePoint (ships disabled) |
 
 Every tool call is wrapped with a loop guard that detects repeated identical-argument failures and injects a recovery hint. MCP results are scrubbed for known credential patterns before they reach the model context.
 
@@ -350,6 +359,30 @@ curl http://localhost:18081/api/activity/status
 | `search_screen_history` | FTS search over recorded app/window/URL/document rows |
 | `list_recent_apps` | Apps used in the last N minutes |
 | `activity_summary` | Summarise activity over a time window |
+
+---
+
+## Capture
+
+![Live Capture](screenshots/pages/capture-recording.png)
+
+**Capture** (`/transcribe`, opened from the **Capture** nav item) is Live Capture — an on-device panel, docked beside whatever page you're on, that transcribes system audio, your microphone, or both in real time via a Swift Core Audio process-tap helper piped through `mlx-whisper`. It can also interleave screenshots of the desktop or a chosen window into the transcript, deduped by perceptual hash so a static screen doesn't spam the feed.
+
+Auto-send hands new transcript (and any screenshots) to the agent a couple of seconds after you stop talking. The first message of a capture carries a standing instruction telling the agent this is passively-captured context, so it asks what to do (summarise, extract action items, draft a reply, …) rather than guessing when your intent isn't obvious. Nothing is sent anywhere until you explicitly hand it to the agent — audio and screenshots stay local until then.
+
+The on-device Whisper model (~1.5 GB) downloads on first use with a visible progress bar; **Record** stays disabled until it's ready instead of hanging silently.
+
+### How to use Capture
+
+1. Open **Capture** in the nav (it docks a panel beside Chat rather than navigating away).
+2. Toggle the sources you want: **System audio**, **Microphone**, **Screen**.
+3. Press **Record**. Transcript lines and screenshots appear in the feed as they happen.
+4. Either let **Auto** hand things to Otto hands-free, or select items and press **Ask Otto** yourself.
+5. **Save as .zip** to archive a transcript + screenshots locally without sending anything to the agent.
+
+**Permissions**: Screen Recording (screenshots), Microphone (mic source), and the system Audio Capture permission (system-audio source, macOS 14.4+ only) — each with a clear usage-description string, requested the first time you use that source.
+
+See [`docs/capture.md`](capture.md) for the full walkthrough.
 
 ---
 
