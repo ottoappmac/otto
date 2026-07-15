@@ -38,3 +38,9 @@ Once a run starts, the transcript streams in real time — agent messages, tool 
 | **Memory hits** | A brain badge shows how many responses used injected long-term memory. |
 
 Subagent activity is grouped, and any errors are pinned to the end of the conversation so they are never buried in the middle of a long transcript.
+
+---
+
+## Capture
+
+The **Capture** nav item docks a [Live Capture](capture.md) panel beside Chat for on-device system-audio and microphone transcription (plus optional screenshots). Captured transcript and screenshots are handed to the current chat session via **Ask Otto** or hands-free auto-send, appearing as a normal message in this conversation.

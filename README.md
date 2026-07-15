@@ -27,6 +27,7 @@ Per-page guides for the desktop UI (each with screenshots). The pages below map 
 | Dashboard | [`dashboard.md`](./docs/dashboard.md) | Live overview — KPIs, running activity, charts, and breakdowns |
 | Runs | [`runs.md`](./docs/runs.md) | Run history, filters, and the per-run detail tabs (Timeline, Graph, Results, Files, Metrics, Evaluation) |
 | Chat | [`chat.md`](./docs/chat.md) | Talking to the agent — composer, model picker, live runs, steering |
+| Capture | [`capture.md`](./docs/capture.md) | Live Capture — on-device system-audio + mic transcription and screenshot capture |
 | Suggestions | [`suggestions.md`](./docs/suggestions.md) | The ambient suggestions inbox |
 | Agents | [`agents.md`](./docs/agents.md) | Managing agents, skills, and tools |
 | Schedules | [`schedules.md`](./docs/schedules.md) | Cron-based automated runs |
@@ -167,6 +168,10 @@ Any MCP server — stdio or SSE — can be added through the Settings UI or REST
 | `edgar-sec` | `search_filings`, `get_company_submissions`, `search_company_by_ticker`, `get_company_facts`, `get_filing_document`, `get_xbrl_frames` — full read access to 18M+ SEC EDGAR filings |
 | `macos-osascript` | Execute AppleScript snippets for macOS automation |
 | `macos-mail` | `list_accounts`, `list_mailboxes`, `list_messages`, `get_message`, `search_messages`, `send_message`, `create_draft`, `update_message`, `delete_message` — CRUD + full-text search over Apple Mail via its AppleScript dictionary, no Full Disk Access required |
+| `macos-calendar` | `list_calendars`, `list_events`, `get_event`, `create_event`, `update_event`, `delete_event` — CRUD over Apple Calendar via AppleScript, with locale-safe date handling and range-overlap queries built in |
+| `macos-notes` | `list_folders`, `list_notes`, `get_note`, `search_notes`, `create_note`, `update_note`, `delete_note` — CRUD over Apple Notes; handles the HTML-vs-plaintext body conversion for you |
+| `macos-reminders` | `list_lists`, `list_reminders`, `get_reminder`, `create_reminder`, `update_reminder`, `delete_reminder` — CRUD over Apple Reminders, with named priority levels and locale-safe dates |
+| `macos-messages` | `send_message`, `list_chats`, `list_buddies`, `read_messages` — send iMessage/SMS and read history (`read_messages` needs Full Disk Access for `chat.db`) |
 | `slack` | `list_channels`, `get_channel_history`, `get_thread_replies`, `send_message`, `add_reaction`, `list_users`, and more — read/write access to a Slack workspace via a bot token |
 | `discord` | `list_guilds`, `list_channels`, `get_channel_messages`, `send_message`, `add_reaction`, `list_guild_members`, and more — read/write access to a Discord server via a bot token |
 | `microsoft-teams` | `list_teams`, `list_channels`, `list_channel_members`, `get_channel_messages`, `list_users`, and more — **read-only** access to Microsoft Teams via Graph app-only auth (sending messages requires delegated auth, which this MCP doesn't implement) |
@@ -205,6 +210,16 @@ Built-in triggers (opt-in, all disabled by default): new download, new screensho
 ### Activity tracker (macOS)
 
 An opt-in, screenshot-free local activity timeline. A background loop polls the foreground macOS application every N seconds and records `(app, window title, browser URL, active document)` into a local SQLite database with FTS5 full-text indexing. Nothing leaves the device. Deduplicates consecutive identical rows into a single span with a running duration. Accessible via the Activity page in the UI and queryable via `GET /api/activity`.
+
+### Live Capture (macOS)
+
+An on-device panel — opened from **Capture** in the nav — that transcribes system audio (what's playing through your speakers/headphones), your microphone, or both at once, via a Swift Core Audio process-tap helper (`otto-audiotap`) piped through `mlx-whisper`. Optionally interleaves screenshots of the desktop or a chosen window into the transcript, deduped by perceptual hash. Auto-send hands new transcript (and any screenshots) to the agent a couple of seconds after you stop talking; a standing instruction tells the agent this is passively-captured context so it asks what to do rather than guessing. The Whisper model (~1.5 GB) downloads on first use with a progress bar, gating **Record** until it's ready rather than hanging silently. Everything — audio and screenshots — stays on-device; nothing is sent anywhere until you explicitly hand it to the agent. See [`docs/capture.md`](./docs/capture.md).
+
+### Privacy & Security
+
+**Privacy Lock** restricts OTTO to on-device inference only: an app-layer guard refuses to construct any cloud LLM client before a network call is ever made, every engage/disengage/blocked attempt is appended to a local audit log, and an optional macOS `pf` firewall anchor can block all outbound traffic at the kernel level (one explicit `sudo` command, never run silently).
+
+**Screen sharing visibility** hides OTTO's window from screen-share and recording apps — independent of Privacy Lock, useful for keeping OTTO out of a Google Meet / Zoom share. Toggling it flips the window's `NSWindow.sharingType` and hides the menu bar + Dock icons; on macOS 15+ this defeats CoreGraphics-based capturers (notably Google Meet in Chrome) but not ScreenCaptureKit-based ones (Zoom, Teams, QuickTime, system screenshots). Both toggles live under Settings → Privacy & Security.
 
 ### On-device inference
 
@@ -509,15 +524,23 @@ agents/
 │   │   ├── pages/             # Chat, History, Agents, Memory, Schedules,
 │   │   │                      #   Triggers, Activity, Tools, Settings,
 │   │   │                      #   MLX (on-device), Exo (cluster)
-│   │   └── components/        # Layout, Sidebar, chat/, exo/, mlx/
+│   │   ├── components/        # Layout, Sidebar, chat/, exo/, mlx/,
+│   │   │                      #   transcribe/ (TranscribeDrawer — Live Capture)
+│   │   └── utils/              # screenShareVisibility.ts, transcribePanel.ts, askOttoBus.ts
 │   └── src-tauri/             # Rust shell + Tauri config
+│       └── audiotap/          # Swift Core Audio process-tap helper (otto-audiotap)
 ├── backend/                   # FastAPI + WebSocket backend (port 18081)
-│   ├── routes/                # REST endpoints: sessions, agents, mcp,
-│   │   │                      #   memory, schedules, triggers, hooks,
-│   │   │                      #   vault, activity, mlx, exo, settings
+│   ├── routes/                # REST endpoints: sessions, agents, mcp, memory,
+│   │   │                      #   schedules, triggers, hooks, vault, activity,
+│   │   │                      #   mlx, exo, settings, capture, voice
 │   ├── auth/                  # static, OAuth device, OAuth auth-code,
 │   │                          #   browser-capture auth flows
-│   ├── builtin_mcps/          # edgar_sec, macos_osascript, macos_mail, slack, discord, microsoft_teams
+│   ├── builtin_mcps/          # edgar_sec, macos_osascript, macos_mail,
+│   │                          #   macos_calendar, macos_notes, macos_reminders,
+│   │                          #   macos_messages, slack, discord,
+│   │                          #   microsoft_teams, microsoft_onedrive
+│   ├── capture/                # screen_capture.py — desktop/window screenshots
+│   ├── voice/                  # loopback_manager.py (system-audio + mic transcription), stt.py
 │   ├── agent_library.py       # Agent + Skill CRUD
 │   ├── mcp_manager.py         # Config-driven MCP connection manager
 │   ├── mcp_builder.py         # Runtime MCP generation + venv provisioning

@@ -343,6 +343,8 @@ On-device voice input. **Voice Mode** adds a mic button to chat and a hands-free
 | Wake phrase | Fixed "Hey Otto" — a built-in on-device model, no download |
 | Test wake word | Listen for ~15 seconds and confirm detection |
 
+> **Not the same as Capture.** This tab configures hands-free voice input for chat (mic → text in the composer). System-audio + screen transcription (calls, meetings, media) lives in **[Capture](capture.md)**, in the right-hand nav — a separate feature that shares the same on-device Whisper model.
+
 ---
 
 ## Advanced
@@ -433,6 +435,14 @@ On-device voice input. **Voice Mode** adds a mic button to chat and a hands-free
 | Allowed hosts | App-layer allowlist (`host[:port]`) for on-prem LLM servers that bypass the block even when engaged |
 | Kernel firewall (macOS pf) | Generates the `pf` rules + install command to copy into Terminal |
 | Audit log | Append-only JSONL of every engage / disengage / blocked attempt |
+
+**Screen sharing visibility** — hides Otto's window from screen-share and screen-recording apps, independent of Privacy Lock. Handy for keeping Otto out of a Google Meet / Zoom share while you use it alongside a call.
+
+| Control | Description |
+|---|---|
+| Hide / Show | Toggle visibility. When hidden, Otto's window is excluded from screen capture and its menu bar + Dock icons disappear (it's still visible on your own display) |
+
+> Works against CoreGraphics-based capture, including **Google Meet in Chrome**. On macOS 15+ it does **not** hide Otto from ScreenCaptureKit-based capturers (Zoom, Teams, QuickTime, system screenshots) — for those, share a single window or a display Otto isn't on instead. While hidden there's no menu bar or Dock icon, so reach Otto by clicking its window directly, or by re-opening it (e.g. via Spotlight) if you've closed it. The preference persists across restarts and is re-applied automatically on launch.
 
 ---
 
