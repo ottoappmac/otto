@@ -90,6 +90,13 @@ const VIEWPORT_MARGIN = 240; // keep at least this much room for the rest of the
 interface TranscribeDrawerProps {
   open: boolean;
   onClose: () => void;
+  /**
+   * Render as a standalone window surface (the stealth Live Capture panel)
+   * rather than a docked right-side drawer: fill the window, drop the drag-resize
+   * handle / docked chrome, and route "Ask Otto" to the separate Chat panel over
+   * the cross-window bridge instead of navigating in-window.
+   */
+  standalone?: boolean;
 }
 
 function fmtElapsed(secs: number): string {
@@ -193,7 +200,7 @@ function buildInterleavedBody(items: FeedItem[]): string {
     .join("\n");
 }
 
-export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProps) {
+export default function TranscribeDrawer({ open, onClose, standalone = false }: TranscribeDrawerProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const t = useTranscribe({ enabled: open });
@@ -523,10 +530,18 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
         for (const i of items) next.add(i.id);
         return next;
       });
-      if (!location.pathname.startsWith("/chat")) navigate("/chat");
-      emitAskOtto(text, images);
+      if (standalone) {
+        // Live Capture is its own stealth window — hand off to the separate Chat
+        // panel over the cross-window bridge (which also brings it forward).
+        void import("../../utils/askOttoBridge").then(({ routeAskToChat }) =>
+          routeAskToChat(text, images),
+        );
+      } else {
+        if (!location.pathname.startsWith("/chat")) navigate("/chat");
+        emitAskOtto(text, images);
+      }
     },
-    [location.pathname, navigate],
+    [location.pathname, navigate, standalone],
   );
 
   const askOtto = (onlySelected: boolean) => {
@@ -764,28 +779,35 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
   return (
     <>
     <aside
-      style={{ width: panelWidth }}
-      className={`relative shrink-0 h-full flex flex-col bg-th-bg/70 backdrop-blur-xl border-l border-th-border shadow-[-8px_0_24px_-8px_rgba(0,0,0,0.08)] ${
-        isResizing ? "" : "transition-[width] duration-150"
+      style={standalone ? undefined : { width: panelWidth }}
+      className={`relative h-full flex flex-col bg-th-bg/70 backdrop-blur-xl ${
+        standalone
+          ? "w-full"
+          : `shrink-0 border-l border-th-border shadow-[-8px_0_24px_-8px_rgba(0,0,0,0.08)] ${
+              isResizing ? "" : "transition-[width] duration-150"
+            }`
       }`}
     >
-      {/* Resize handle — drag to adjust width */}
-      <div
-        onPointerDown={startResize}
-        className="absolute left-0 top-0 -translate-x-1/2 h-full w-3 cursor-col-resize z-20 flex items-center justify-center group"
-        title="Drag to resize"
-      >
+      {/* Resize handle — drag to adjust width (docked drawer only; the
+          standalone stealth window is resized natively / via its title bar). */}
+      {!standalone && (
         <div
-          className={`h-full w-px transition-colors ${
-            isResizing ? "bg-blue-500" : "bg-transparent group-hover:bg-blue-500/50"
-          }`}
-        />
-        <div
-          className={`absolute w-[3px] h-9 rounded-full transition-all ${
-            isResizing ? "bg-blue-500/70" : "bg-th-border-strong/0 group-hover:bg-th-border-strong/70"
-          }`}
-        />
-      </div>
+          onPointerDown={startResize}
+          className="absolute left-0 top-0 -translate-x-1/2 h-full w-3 cursor-col-resize z-20 flex items-center justify-center group"
+          title="Drag to resize"
+        >
+          <div
+            className={`h-full w-px transition-colors ${
+              isResizing ? "bg-blue-500" : "bg-transparent group-hover:bg-blue-500/50"
+            }`}
+          />
+          <div
+            className={`absolute w-[3px] h-9 rounded-full transition-all ${
+              isResizing ? "bg-blue-500/70" : "bg-th-border-strong/0 group-hover:bg-th-border-strong/70"
+            }`}
+          />
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 h-14 border-b border-th-border/70 shrink-0">
@@ -804,17 +826,19 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          <button
-            onClick={toggleExpanded}
-            className="p-1.5 rounded-lg text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover active:scale-95 transition-all"
-            title={isExpanded ? "Collapse panel" : "Expand panel"}
-          >
-            {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
+          {!standalone && (
+            <button
+              onClick={toggleExpanded}
+              className="p-1.5 rounded-lg text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover active:scale-95 transition-all"
+              title={isExpanded ? "Collapse panel" : "Expand panel"}
+            >
+              {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+          )}
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover active:scale-95 transition-all"
-            title="Close panel"
+            title={standalone ? "Hide Live Capture panel" : "Close panel"}
           >
             <X size={16} />
           </button>
@@ -822,7 +846,7 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
       </div>
 
       {/* Source selection */}
-      <div className="px-4 py-3 space-y-1.5 border-b border-th-border/70 shrink-0">
+      <div data-capture-region="sources" className="px-4 py-3 space-y-1.5 border-b border-th-border/70 shrink-0">
         <p className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold px-0.5">Sources</p>
         {(["system", "mic"] as TranscribeSource[]).map((src) => {
           const meta = SOURCE_META[src];
@@ -1147,7 +1171,7 @@ export default function TranscribeDrawer({ open, onClose }: TranscribeDrawerProp
       )}
 
       {/* Feed */}
-      <div className="relative flex-1 min-h-0">
+      <div data-capture-region="feed" className="relative flex-1 min-h-0">
         <div
           ref={feedRef}
           onScroll={onScroll}

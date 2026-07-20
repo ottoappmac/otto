@@ -4845,9 +4845,16 @@ function PrivacyTab() {
   const [hideBusy, setHideBusy] = useState(false);
 
   useEffect(() => {
+    let dispose: (() => void) | undefined;
     import("../utils/screenShareVisibility")
-      .then(({ getHideFromScreenShare }) => setHideFromShare(getHideFromScreenShare()))
+      .then(({ getHideFromScreenShare, onHideFromScreenShareChanged }) => {
+        setHideFromShare(getHideFromScreenShare());
+        // Stealth can be turned off from the overlay panel (a separate window),
+        // so sync this toggle when the state changes anywhere.
+        dispose = onHideFromScreenShareChanged(setHideFromShare);
+      })
       .catch(() => undefined);
+    return () => dispose?.();
   }, []);
 
   const toggleHideFromShare = async () => {
@@ -5024,8 +5031,8 @@ function PrivacyTab() {
         </div>
       </Card>
 
-      {/* ── Screen sharing visibility ────────────────────────────────────── */}
-      <Card title="Screen sharing visibility" dot={hideFromShare ? "bg-emerald-500" : "bg-th-text-muted"}>
+      {/* ── Stealth mode ─────────────────────────────────────────────────── */}
+      <Card title="Stealth mode" dot={hideFromShare ? "bg-emerald-500" : "bg-th-text-muted"}>
         <div className="space-y-4">
           <div className={`flex items-center gap-3 rounded-xl border p-4 ${
             hideFromShare
@@ -5040,11 +5047,11 @@ function PrivacyTab() {
             </div>
             <div className="flex-1 min-w-0">
               <p className={`text-sm font-semibold ${hideFromShare ? "text-emerald-400" : "text-th-text-secondary"}`}>
-                {hideFromShare ? "Hidden from screen share" : "Visible in screen share"}
+                {hideFromShare ? "Stealth mode on" : "Stealth mode off"}
               </p>
               <p className="text-xs text-th-text-muted mt-0.5 leading-relaxed">
                 {hideFromShare
-                  ? "Otto's window is excluded from screen capture, and its menu bar and Dock icons are hidden — while staying visible on your own display."
+                  ? "Otto is excluded from screen capture (including browser screen sharing) and a focus-safe overlay is available — so it never appears in a recording or trips \u201Ctabbed away\u201D detection. Still visible on your own display."
                   : "Otto appears normally when you share or record your screen, with its menu bar and Dock icons shown."}
               </p>
             </div>
@@ -5062,13 +5069,19 @@ function PrivacyTab() {
                 ? <Loader2 size={14} className="animate-spin" />
                 : hideFromShare ? <Eye size={14} /> : <EyeOff size={14} />
               }
-              {hideBusy ? "…" : hideFromShare ? "Show" : "Hide"}
+              {hideBusy ? "…" : hideFromShare ? "Turn off" : "Turn on"}
             </button>
           </div>
+          {hideFromShare && (
+            <div className="flex items-center gap-2 text-[11px] text-th-text-muted rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
+              <span>Toggle the overlay anytime with</span>
+              <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded-md border border-th-border-strong bg-th-bg text-th-text-secondary">&#8984;&#8679;\</kbd>
+            </div>
+          )}
           <div className="flex items-start gap-2 text-[11px] text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
             <ShieldAlert size={12} className="shrink-0 mt-0.5" />
             <span>
-              Works against CoreGraphics-based capture, including <strong className="text-th-text-secondary">Google Meet in Chrome</strong>. On macOS 15+ it does <strong className="text-th-text-secondary">not</strong> hide Otto's window from ScreenCaptureKit apps (Zoom, Teams, QuickTime, system screenshots) — for those, share a single window or a display Otto isn't on. While hidden, reach Otto by clicking its window; if you close it, re-open from this app (there's no menu bar or Dock icon until you turn this off).
+              Hides Otto from every conformant capturer, including <strong className="text-th-text-secondary">browser screen sharing</strong> (CoderPad, Google Meet) and ScreenCaptureKit apps (Zoom, Teams, OBS). Apple's own <strong className="text-th-text-secondary">QuickTime</strong> and a few blessed conferencing partners can still capture the window. Uses a private macOS API, so behavior may change with future macOS updates. While on, there's no menu bar or Dock icon until you turn it off.
             </span>
           </div>
         </div>

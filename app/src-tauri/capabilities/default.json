@@ -2,9 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for the Otto desktop app",
-  "windows": ["main"],
+  "windows": ["main", "overlay", "capture"],
   "permissions": [
     "core:default",
+    "core:event:default",
     "shell:allow-execute",
     "shell:allow-open",
     "process:default",
@@ -13,6 +14,9 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-start-dragging",
     "core:image:default",
     "notification:default"
   ]
