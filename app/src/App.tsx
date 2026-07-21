@@ -15,11 +15,17 @@ import RunsPage from "./pages/RunsPage";
 import RunDetailPage from "./pages/RunDetailPage";
 import SetupWizard from "./components/setup/SetupWizard";
 import SetupChatPage from "./components/setup/SetupChatPage";
+import StealthCaptureWindow from "./components/stealth/StealthCaptureWindow";
 import { useBackendReady } from "./hooks/useBackendReady";
 import { useFirstRun } from "./hooks/useFirstRun";
 import { ConnectionProvider } from "./context/ConnectionContext";
 import { api } from "./hooks/useApi";
+import { stealthWindowKind } from "./utils/stealthWindow";
+import { initChatWindowBridge } from "./utils/askOttoBridge";
 import type { MlxCapabilities } from "./types";
+
+const STEALTH_KIND = stealthWindowKind();
+const STEALTH = STEALTH_KIND !== null;
 
 export default function App() {
   const { ready, timedOut, backendReachable, elapsedSec } = useBackendReady();
@@ -40,14 +46,23 @@ export default function App() {
     return () => unlisten?.();
   }, [navigate]);
 
-  // Re-apply the "hide from screen share" preference on startup so the native
-  // window's sharingType matches the user's saved choice.
+  // Re-apply the saved stealth preference on startup so the native window state
+  // matches the user's choice. Only the main window drives this — the stealth
+  // panels are consumers of that state, not a source.
   useEffect(() => {
+    if (STEALTH) return;
     import("./utils/screenShareVisibility")
       .then(({ getHideFromScreenShare, applyHideFromScreenShare }) => {
         if (getHideFromScreenShare()) return applyHideFromScreenShare(true);
       })
       .catch(() => {}); // no-op in non-Tauri environments (e.g. web dev)
+  }, []);
+
+  // Chat panel only: bridge cross-window hand-offs from the Live Capture panel
+  // (which lives in a separate webview) into the local chat bus + agent-busy.
+  useEffect(() => {
+    if (STEALTH_KIND !== "chat") return;
+    return initChatWindowBridge();
   }, []);
 
   // Route external link clicks to the system browser. Without this, clicking a
@@ -149,7 +164,7 @@ export default function App() {
     );
   }
 
-  if (firstRun.show) {
+  if (firstRun.show && !STEALTH) {
     if (eligibleForChatSetup && capabilities != null) {
       return (
         <SetupChatPage
@@ -167,6 +182,17 @@ export default function App() {
         onSkip={firstRun.hide}
         onNavigate={(path) => { firstRun.hide(); navigate(path); }}
       />
+    );
+  }
+
+  // The Live Capture stealth panel is a dedicated, single-purpose window — it
+  // renders only the capture surface (no router / chat page), and hands captured
+  // context to the separate Chat panel over the cross-window bridge.
+  if (STEALTH_KIND === "capture") {
+    return (
+      <ConnectionProvider backendReachable={backendReachable}>
+        <StealthCaptureWindow />
+      </ConnectionProvider>
     );
   }
 

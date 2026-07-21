@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import TranscribeDrawer from "./transcribe/TranscribeDrawer";
+import StealthTitlebar from "./stealth/StealthTitlebar";
 import { ConnectionBanner } from "./ConnectionBanner";
 import AmbientNotificationBanner from "./ambient/AmbientNotificationBanner";
 import AmbientToast from "./ambient/AmbientToast";
@@ -9,7 +10,10 @@ import { useAmbientHints } from "../hooks/useAmbientHints";
 import { useNotification } from "../context/NotificationContext";
 import { onPendingRoute, nativeNotify } from "../utils/nativeNotify";
 import { closeTranscribePanel, isTranscribePanelOpen, subscribeTranscribePanel } from "../utils/transcribePanel";
+import { isStealthWindow } from "../utils/stealthWindow";
 import type { AmbientHint } from "../types";
+
+const STEALTH = isStealthWindow();
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -52,6 +56,7 @@ export default function Layout() {
   // driven by the Sidebar's "Transcribe" nav item via a shared module store.
   const [showTranscribe, setShowTranscribe] = useState(isTranscribePanelOpen);
   useEffect(() => subscribeTranscribePanel(setShowTranscribe), []);
+
 
   const { pendingCount: _pendingCount, markSeen } = useAmbientHints(
     useCallback(
@@ -109,10 +114,12 @@ export default function Layout() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-th-bg">
+    <div className="flex h-screen flex-col overflow-hidden bg-th-bg">
+      {STEALTH && <StealthTitlebar kind="chat" />}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
       <main className="flex-1 flex flex-col overflow-hidden bg-th-bg-secondary">
         <ConnectionBanner />
-        {bannerHints.length > 0 && (
+        {!STEALTH && bannerHints.length > 0 && (
           <AmbientNotificationBanner
             hints={bannerHints}
             onView={handleViewAmbient}
@@ -124,19 +131,22 @@ export default function Layout() {
         </div>
       </main>
 
-      {/* Non-modal transcription panel — sits in-flow so chat stays usable */}
-      <TranscribeDrawer open={showTranscribe} onClose={closeTranscribePanel} />
+      {/* Non-modal transcription panel — sits in-flow so chat stays usable.
+          In stealth mode Live Capture is its own separate panel/window, so this
+          docked drawer is only for the normal (main) window. */}
+      {!STEALTH && <TranscribeDrawer open={showTranscribe} onClose={closeTranscribePanel} />}
 
-      <Sidebar />
+      {!STEALTH && <Sidebar />}
 
       {/* Bottom-right slide-up toast — rendered outside page columns so it's never clipped */}
-      {showToast && (
+      {!STEALTH && showToast && (
         <AmbientToast
           count={toastCount}
           onView={handleViewAmbient}
           onDismiss={() => setShowToast(false)}
         />
       )}
+      </div>
     </div>
   );
 }

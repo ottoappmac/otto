@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Globe, RefreshCw, Image as ImageIcon, FileJson } from "lucide-react";
+import { X, ExternalLink, FileText, Globe, RefreshCw, Image as ImageIcon, FileJson, FileCode2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -7,13 +7,29 @@ import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 
 export type ArtifactType =
-  | "html" | "md" | "pdf" | "docx" | "txt" | "csv" | "xlsx" | "image" | "json";
+  | "html" | "md" | "pdf" | "docx" | "txt" | "csv" | "xlsx" | "image" | "json" | "code";
 
 export interface Artifact {
   path: string;       // virtual path, e.g. "output/report.html"
   fileUrl: string;    // full URL to fetch / display
   type: ArtifactType;
 }
+
+// Source/script files opened as read-only code (Python and other common
+// languages), rendered in a monospace script view like the other text artifacts.
+const CODE_EXTENSIONS = [
+  "py", "pyw", "ipy",
+  "js", "jsx", "ts", "tsx", "mjs", "cjs",
+  "sh", "bash", "zsh", "fish",
+  "rb", "go", "rs", "java", "kt", "swift",
+  "c", "h", "cpp", "cc", "hpp", "cs",
+  "php", "pl", "lua", "r",
+  "css", "scss", "less",
+  "yaml", "yml", "toml", "ini", "cfg", "env",
+  "sql", "graphql", "proto", "dockerfile", "makefile",
+] as const;
+
+const CODE_EXT_RE = new RegExp(`\\.(${CODE_EXTENSIONS.join("|")})$`);
 
 /** Map a file path to a viewable artifact type, or null if unknown. */
 export function artifactTypeFromPath(path: string): ArtifactType | null {
@@ -27,6 +43,7 @@ export function artifactTypeFromPath(path: string): ArtifactType | null {
   if (p.endsWith(".xlsx")) return "xlsx";
   if (p.endsWith(".json")) return "json";
   if (/\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/.test(p)) return "image";
+  if (CODE_EXT_RE.test(p)) return "code";
   return null;
 }
 
@@ -230,7 +247,7 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
         .then(apply(setMdContent))
         .catch(applyError)
         .finally(applyDone);
-    } else if (artifact.type === "txt") {
+    } else if (artifact.type === "txt" || artifact.type === "code") {
       setLoading(true);
       fetch(artifact.fileUrl)
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
@@ -279,11 +296,13 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
     artifact.type === "xlsx" || artifact.type === "csv" ? "text-emerald-400" :
     artifact.type === "image" ? "text-purple-400" :
     artifact.type === "json" ? "text-amber-400" :
+    artifact.type === "code" ? "text-sky-400" :
     "text-th-text-secondary";
   const Icon =
     artifact.type === "html" ? Globe :
     artifact.type === "image" ? ImageIcon :
     artifact.type === "json" ? FileJson :
+    artifact.type === "code" ? FileCode2 :
     FileText;
 
   return (
@@ -371,6 +390,12 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
         ) : artifact.type === "txt" ? (
           <div className="h-full overflow-y-auto px-6 py-5">
             <pre className="text-xs text-th-text-primary font-mono whitespace-pre-wrap break-words leading-relaxed">
+              {plainText ?? ""}
+            </pre>
+          </div>
+        ) : artifact.type === "code" ? (
+          <div className="h-full overflow-auto px-6 py-5">
+            <pre className="text-xs text-th-text-primary font-mono whitespace-pre leading-relaxed">
               {plainText ?? ""}
             </pre>
           </div>

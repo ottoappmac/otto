@@ -1714,7 +1714,7 @@ export default function ChatPage() {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex flex-col flex-1 min-w-0 h-full">
-      <header className="border-b border-th-border px-6 py-3.5 flex items-center justify-between shrink-0 bg-th-bg-secondary">
+      <header data-chat-region="header" className="border-b border-th-border px-6 py-3.5 flex items-center justify-between shrink-0 bg-th-bg-secondary">
         <div className="flex items-center gap-3">
           {currentSessionId && (
             <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium ${connected ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25" : "bg-amber-500/15 text-amber-400 border border-amber-500/25"}`}>
@@ -1791,9 +1791,9 @@ export default function ChatPage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-8 py-8 space-y-7">
+      <div data-chat-region="history" className="flex-1 overflow-y-auto px-8 py-8 space-y-7">
         {sessionMessages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full -mt-12">
+          <div data-chat-empty className="flex flex-col items-center justify-center h-full -mt-12">
             <img
               src={theme === "dark" ? logoDark : logoLight}
               alt="Otto"
@@ -1989,6 +1989,7 @@ export default function ChatPage() {
       )}
 
       <div
+        data-chat-region="composer"
         className={`px-6 pb-5 pt-3 shrink-0 bg-th-bg-secondary transition-colors ${isDragging ? "border-t-2 border-blue-500/60 bg-blue-500/5" : "border-t border-th-border"}`}
       >
         <input

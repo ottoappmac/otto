@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod stealth;
 mod tray;
 
 use std::process::Child;
@@ -74,14 +76,15 @@ fn set_ambient_count(count: u32, app_handle: tauri::AppHandle) {
     tray::update_ambient_count(&app_handle, count);
 }
 
-/// Toggle whether the main window is excluded from screen capture / screen
-/// sharing on macOS by flipping its `NSWindow.sharingType`.
+/// Toggle Otto's anti-proctoring "stealth mode" on macOS.
 ///
-/// `NSWindowSharingNone` hides the window from CoreGraphics-based capturers
-/// (`CGWindowListCreateImage`, `screencapture`, and Chrome's `getDisplayMedia`
-/// — i.e. Google Meet) while keeping it fully visible on the physical display.
-/// Note: on macOS 15+ this no longer hides the window from ScreenCaptureKit
-/// consumers (Zoom, Teams, QuickTime), which composite a single framebuffer.
+/// When enabled this (a) excludes the main window from *all* screen-capture
+/// paths — the legacy `NSWindow.sharingType` flag plus the private
+/// `CGSSetWindowCaptureExcludeShape` window-server call that also defeats
+/// ScreenCaptureKit / browser `getDisplayMedia` (what CoderPad proctoring uses)
+/// — and (b) shows the non-activating overlay panel so Otto can be used without
+/// deactivating the browser (which would trip focus-loss detection). See
+/// `stealth.rs` for the caveats.
 ///
 /// Must run on the main thread since it touches AppKit. No-op off macOS.
 #[tauri::command]
@@ -157,29 +160,16 @@ fn set_dock_icon(ns_app: &objc2_app_kit::NSApplication) {
 
 #[cfg(target_os = "macos")]
 fn apply_hidden_from_capture(app: &tauri::AppHandle, hidden: bool) {
-    use objc2::runtime::AnyObject;
-    use objc2_app_kit::NSWindowSharingType;
-
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let ns_window = match window.ns_window() {
-        Ok(ptr) if !ptr.is_null() => ptr as *mut AnyObject,
-        _ => return,
-    };
-    // NSWindowSharingNone (0) excludes the window from capture; the default
-    // is NSWindowSharingReadWrite (2), exposed here only as a raw value since
-    // the named constant is deprecated in this SDK.
-    let sharing_type = if hidden {
-        NSWindowSharingType::None
-    } else {
-        NSWindowSharingType(2)
-    };
-    // SAFETY: `ns_window` is a valid `NSWindow` for the app's lifetime and we
-    // are on the main thread (guaranteed by `run_on_main_thread`).
-    unsafe {
-        let _: () = objc2::msg_send![&*ns_window, setSharingType: sharing_type];
-    }
+
+    // Exclude (or restore) the main window across every capture path: the
+    // legacy `sharingType` flag and the private capture-exclude-shape that also
+    // hides the window from ScreenCaptureKit / browser screen sharing. (It is
+    // hidden while stealth is on, but staying excluded avoids any capture flash
+    // during the transition.)
+    stealth::apply_capture_exclusion(app, "main", hidden);
 
     // Also hide Otto from the menu bar (tray) and Dock while hidden, so a
     // full-screen share doesn't reveal its icons. Restored when shown again.
@@ -195,16 +185,23 @@ fn apply_hidden_from_capture(app: &tauri::AppHandle, hidden: bool) {
             let ns_app = NSApplication::sharedApplication(mtm);
             let _ = ns_app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         }
-        // Dropping to `.accessory` deactivates the app, so its window falls
-        // behind others. Raise it to the front once (toggling always-on-top
-        // briefly forces a re-order) without pinning it above everything.
-        let _ = window.set_always_on_top(true);
-        let _ = window.show();
-        let _ = window.set_focus();
-        let _ = window.set_always_on_top(false);
+        // Stealth on: the full app moves into the non-activating overlay panel.
+        // Bring up the panel first and only hide the normal (decorated, focus-
+        // stealing) main window if the panel actually showed — otherwise a panel
+        // failure would leave nothing visible at all.
+        match stealth::show_overlay(app, true) {
+            Ok(()) => {
+                let _ = window.hide();
+            }
+            Err(e) => {
+                eprintln!("[stealth] overlay failed to show, keeping main window: {e}");
+            }
+        }
     } else {
-        // Restore immediately; the caller also re-asserts after a short delay
-        // since macOS may not redraw the Dock icon on the first attempt.
+        // Stealth off: dismiss the panel and restore the main window. The caller
+        // also re-asserts foreground after a short delay since macOS may not
+        // redraw the Dock icon on the first attempt.
+        stealth::hide_overlay(app);
         force_foreground(app);
     }
 }
@@ -237,21 +234,131 @@ fn set_dock_badge(label: Option<String>, app: tauri::AppHandle) -> Result<(), St
     Ok(())
 }
 
+/// Show the non-activating stealth overlay panel. `make_key` requests keyboard
+/// focus so the overlay input can be typed into. No-op off macOS.
+#[tauri::command]
+fn show_stealth_overlay(make_key: Option<bool>, app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        let make_key = make_key.unwrap_or(false);
+        app.run_on_main_thread(move || {
+            let _ = stealth::show_overlay(&handle, make_key);
+        })
+        .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (make_key, app);
+    }
+    Ok(())
+}
+
+/// Hide all stealth panels. No-op off macOS.
+#[tauri::command]
+fn hide_stealth_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        app.run_on_main_thread(move || stealth::hide_overlay(&handle))
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+    Ok(())
+}
+
+/// Bring a single stealth panel to the front (creating it if needed). Used by
+/// the "Show Chat" / "Show Live Capture" buttons so each panel can summon the
+/// other. `panel` is the window label ("overlay" for chat, "capture" for Live
+/// Capture); `make_key` grabs keyboard focus (for the chat composer). No-op off
+/// macOS.
+#[tauri::command]
+fn focus_stealth_panel(
+    panel: String,
+    make_key: Option<bool>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        let make_key = make_key.unwrap_or(false);
+        app.run_on_main_thread(move || {
+            let _ = stealth::focus_panel(&handle, &panel, make_key);
+        })
+        .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (panel, make_key, app);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    // Global hotkey (Cmd+Shift+\) to toggle the stealth overlay from any app.
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+        let toggle_shortcut = Shortcut::new(
+            Some(Modifiers::SUPER | Modifiers::SHIFT),
+            Code::Backslash,
+        );
+        builder = builder
+            .plugin(tauri_nspanel::init())
+            .plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(move |app, shortcut, event| {
+                        if shortcut == &toggle_shortcut
+                            && event.state() == ShortcutState::Pressed
+                        {
+                            let handle = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                stealth::toggle_overlay(&handle);
+                            });
+                        }
+                    })
+                    .build(),
+            );
+    }
+
+    builder
         .manage(BackendState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             kill_backend,
             set_ambient_count,
             set_hidden_from_capture,
-            set_dock_badge
+            set_dock_badge,
+            show_stealth_overlay,
+            hide_stealth_overlay,
+            focus_stealth_panel
         ])
         .setup(|app| {
             tray::create_tray(app)?;
+
+            // Register the overlay toggle hotkey now that the app is running.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+                let toggle_shortcut = Shortcut::new(
+                    Some(Modifiers::SUPER | Modifiers::SHIFT),
+                    Code::Backslash,
+                );
+                let _ = app.global_shortcut().register(toggle_shortcut);
+
+                // Guard against ⌘M losing stealth panels into the Dock.
+                let handle = app.handle().clone();
+                let _ = handle.run_on_main_thread(stealth::install_miniaturize_guard);
+            }
 
             #[cfg(not(debug_assertions))]
             {

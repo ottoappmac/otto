@@ -81,4 +81,4 @@ All three are declared in the app's `Info.plist` usage-description strings, so m
 
 - **[Chat](chat.md)** — where captured transcript and screenshots land once you hand them to Otto.
 - **[Settings → Voice](settings.md#voice)** — configures hands-free voice input (mic → chat), a separate feature from Live Capture that shares the same on-device Whisper model.
-- **[Settings → Privacy & Security](settings.md#privacy--security)** — the **Screen sharing visibility** toggle hides Otto's own window from screen-share apps, useful if you're capturing a call you're also sharing your screen on.
+- **[Settings → Privacy & Security](settings.md#privacy--security)** — **Stealth mode** hides Otto's own windows from screen-share apps (including browser screen sharing) and moves Otto into focus-safe Chat + Live Capture panels, useful if you're capturing a call you're also sharing your screen on.

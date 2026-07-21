@@ -2,6 +2,73 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Stealth panels: borderless, transparent NSPanel windows (the Chat panel and
+   the Live Capture panel). Let the transparent window show through so each reads
+   as a rounded floating macOS panel with a hairline border and soft shadow, and
+   fade when unfocused. Shared by both panels via `.stealth-window`; per-panel
+   classes `.stealth-chat` / `.stealth-capture` are available for future tweaks. */
+html.stealth-window,
+html.stealth-window body,
+html.stealth-window #root {
+  background: transparent !important;
+}
+html.stealth-window #root {
+  height: 100vh;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 18px 48px -12px rgba(0, 0, 0, 0.55);
+  outline: 1px solid rgba(255, 255, 255, 0.08);
+  outline-offset: -1px;
+  /* Focus-driven transparency: solid when focused, faded when clicked away. */
+  opacity: 1;
+  transition: opacity 180ms ease-out;
+}
+html.stealth-window.stealth-unfocused #root {
+  opacity: 0.85;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.stealth-window #root {
+    transition: none;
+  }
+}
+
+/* Stealth Chat panel: start compact — the input composer with a peek of just
+   the latest message below it. The stealth title bar is the window chrome, so
+   the in-page chat header is hidden and the composer is pulled to the top.
+   Pressing Expand in the title bar (adds `.stealth-chat-expanded`) grows the
+   history region to the full, scrollable message list. */
+html.stealth-chat [data-chat-region="header"] {
+  display: none;
+}
+html.stealth-chat [data-chat-region="composer"] {
+  order: -1;
+  border-top: 0;
+}
+html.stealth-chat [data-chat-region="history"] {
+  border-top: 1px solid rgb(var(--color-border));
+}
+/* Compact: cap the history to a small peek (auto-scrolled to the newest
+   message) and hide the large empty state so an empty chat stays minimal. */
+html.stealth-chat:not(.stealth-chat-expanded) [data-chat-region="history"] {
+  flex: 0 0 auto;
+  max-height: 180px;
+}
+html.stealth-chat:not(.stealth-chat-expanded) [data-chat-region="history"] [data-chat-empty] {
+  display: none;
+}
+
+/* Stealth Live Capture panel: start compact — the record controls with a peek
+   of just the latest transcribed line. Pressing Expand (adds
+   `.stealth-capture-expanded`) reveals the source options and grows the feed so
+   multiple transcriptions are visible. */
+html.stealth-capture:not(.stealth-capture-expanded) [data-capture-region="sources"] {
+  display: none;
+}
+html.stealth-capture:not(.stealth-capture-expanded) [data-capture-region="feed"] {
+  flex: 0 0 auto;
+  height: 104px;
+}
+
 @layer base {
   :root {
     /* Apple-like grouped UI: soft window chrome, white content wells, calm borders */
