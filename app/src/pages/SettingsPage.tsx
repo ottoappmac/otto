@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useLocation } from "react-router-dom";
-import { Eye, EyeOff, CheckCircle, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Loader2, Check, ChevronDown, Plus, Trash2, Server, Play, Square, X, Wifi, PlugZap, ShieldCheck, ShieldOff, ShieldAlert, Copy, ClipboardCheck, Lock, Unlock, Mic, Zap, Wand2 } from "lucide-react";
+import { Eye, EyeOff, CheckCircle, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Loader2, Check, ChevronDown, Plus, Trash2, Server, Play, Square, X, Wifi, PlugZap, ShieldCheck, ShieldOff, ShieldAlert, Copy, ClipboardCheck, Lock, Unlock, Mic, Zap, Wand2, Minimize2, Maximize2 } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { WS_BASE } from "../config/apiBase";
 import { usePolling } from "../hooks/usePolling";
@@ -4843,6 +4843,9 @@ function PrivacyTab() {
   const [showPf, setShowPf] = useState(false);
   const [hideFromShare, setHideFromShare] = useState(false);
   const [hideBusy, setHideBusy] = useState(false);
+  const [compactMode, setCompactModeState] = useState(false);
+  const [compactBusy, setCompactBusy] = useState(false);
+  const [fadeOpacity, setFadeOpacityState] = useState(0.7);
 
   useEffect(() => {
     let dispose: (() => void) | undefined;
@@ -4857,6 +4860,30 @@ function PrivacyTab() {
     return () => dispose?.();
   }, []);
 
+  useEffect(() => {
+    let dispose: (() => void) | undefined;
+    import("../utils/compactMode")
+      .then(({ getCompactMode, onCompactModeChanged }) => {
+        setCompactModeState(getCompactMode());
+        // Compact can also be turned off as a side effect of turning stealth
+        // off (from this page or the overlay panel), so stay in sync.
+        dispose = onCompactModeChanged(setCompactModeState);
+      })
+      .catch(() => undefined);
+    return () => dispose?.();
+  }, []);
+
+  useEffect(() => {
+    let dispose: (() => void) | undefined;
+    import("../utils/stealthFadeOpacity")
+      .then(({ getStealthFadeOpacity, onStealthFadeOpacityChanged }) => {
+        setFadeOpacityState(getStealthFadeOpacity());
+        dispose = onStealthFadeOpacityChanged(setFadeOpacityState);
+      })
+      .catch(() => undefined);
+    return () => dispose?.();
+  }, []);
+
   const toggleHideFromShare = async () => {
     const next = !hideFromShare;
     setHideBusy(true);
@@ -4864,9 +4891,30 @@ function PrivacyTab() {
       const { setHideFromScreenShare } = await import("../utils/screenShareVisibility");
       await setHideFromScreenShare(next);
       setHideFromShare(next);
+      // Turning stealth off always turns compact off too (it requires stealth).
+      if (!next) setCompactModeState(false);
     } finally {
       setHideBusy(false);
     }
+  };
+
+  const toggleCompactMode = async () => {
+    if (!hideFromShare) return; // gated on stealth mode being on
+    const next = !compactMode;
+    setCompactBusy(true);
+    try {
+      const { setCompactMode } = await import("../utils/compactMode");
+      await setCompactMode(next);
+      setCompactModeState(next);
+    } finally {
+      setCompactBusy(false);
+    }
+  };
+
+  const changeFadeOpacity = async (opacity: number) => {
+    setFadeOpacityState(opacity); // update immediately for a responsive slider
+    const { setStealthFadeOpacity } = await import("../utils/stealthFadeOpacity");
+    await setStealthFadeOpacity(opacity);
   };
 
   const refresh = () => {
@@ -5051,7 +5099,7 @@ function PrivacyTab() {
               </p>
               <p className="text-xs text-th-text-muted mt-0.5 leading-relaxed">
                 {hideFromShare
-                  ? "Otto is excluded from screen capture (including browser screen sharing) and a focus-safe overlay is available — so it never appears in a recording or trips \u201Ctabbed away\u201D detection. Still visible on your own display."
+                  ? "Otto is excluded from screen capture (including browser screen sharing) and floats on top of other windows — so it never appears in a recording or trips \u201Ctabbed away\u201D detection. Still visible on your own display, and keeps its normal window unless you also turn on Compact mode below."
                   : "Otto appears normally when you share or record your screen, with its menu bar and Dock icons shown."}
               </p>
             </div>
@@ -5072,18 +5120,93 @@ function PrivacyTab() {
               {hideBusy ? "…" : hideFromShare ? "Turn off" : "Turn on"}
             </button>
           </div>
-          {hideFromShare && (
-            <div className="flex items-center gap-2 text-[11px] text-th-text-muted rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
-              <span>Toggle the overlay anytime with</span>
-              <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded-md border border-th-border-strong bg-th-bg text-th-text-secondary">&#8984;&#8679;\</kbd>
+          <div className={`rounded-xl border p-4 transition-opacity ${
+            !hideFromShare
+              ? "border-th-border bg-th-inset-bg opacity-50"
+              : "border-th-border bg-th-inset-bg"
+          }`}>
+            <div className="flex items-center justify-between gap-3 mb-1">
+              <p className="text-sm font-medium text-th-text-secondary">Fade opacity when unfocused</p>
+              <span className="text-sm font-medium text-th-text-primary tabular-nums">{Math.round(fadeOpacity * 100)}%</span>
             </div>
-          )}
+            <p className="text-xs text-th-text-muted mb-3 leading-relaxed">
+              How see-through Otto goes when it loses focus (e.g. you click into your browser) — applies to both the normal window and Compact mode's panels. Lower is more transparent.
+            </p>
+            <input
+              type="range"
+              min={0.2}
+              max={1}
+              step={0.05}
+              value={fadeOpacity}
+              onChange={(e) => void changeFadeOpacity(parseFloat(e.target.value))}
+              disabled={!hideFromShare}
+              className="w-full accent-emerald-500 disabled:cursor-not-allowed"
+            />
+          </div>
           <div className="flex items-start gap-2 text-[11px] text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
             <ShieldAlert size={12} className="shrink-0 mt-0.5" />
             <span>
               Hides Otto from every conformant capturer, including <strong className="text-th-text-secondary">browser screen sharing</strong> (CoderPad, Google Meet) and ScreenCaptureKit apps (Zoom, Teams, OBS). Apple's own <strong className="text-th-text-secondary">QuickTime</strong> and a few blessed conferencing partners can still capture the window. Uses a private macOS API, so behavior may change with future macOS updates. While on, there's no menu bar or Dock icon until you turn it off.
             </span>
           </div>
+        </div>
+      </Card>
+
+      {/* ── Compact mode ─────────────────────────────────────────────────── */}
+      <Card title="Compact mode" dot={compactMode ? "bg-emerald-500" : "bg-th-text-muted"}>
+        <div className="space-y-4">
+          {!hideFromShare && (
+            <div className="flex items-start gap-2 text-[11px] text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
+              <ShieldAlert size={12} className="shrink-0 mt-0.5" />
+              <span>Turn on Stealth mode above first — compact only makes sense once Otto is already hidden from capture.</span>
+            </div>
+          )}
+          <div className={`flex items-center gap-3 rounded-xl border p-4 transition-opacity ${
+            !hideFromShare
+              ? "border-th-border bg-th-inset-bg opacity-50"
+              : compactMode
+                ? "border-emerald-500/30 bg-emerald-500/5"
+                : "border-th-border bg-th-inset-bg"
+          }`}>
+            <div className="shrink-0">
+              {compactMode
+                ? <Minimize2 size={28} className="text-emerald-400" />
+                : <Maximize2 size={28} className="text-th-text-muted" />
+              }
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-semibold ${compactMode ? "text-emerald-400" : "text-th-text-secondary"}`}>
+                {compactMode ? "Compact mode on" : "Compact mode off"}
+              </p>
+              <p className="text-xs text-th-text-muted mt-0.5 leading-relaxed">
+                {compactMode
+                  ? "Otto's normal window is swapped for two small, transparent, focus-safe panels — Chat and Live Capture — that float on top and can be moved independently."
+                  : "Otto stays in its normal-sized window while Stealth mode is on. Turn this on to shrink it into small floating Chat + Live Capture panels."}
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
+                compactMode
+                  ? "bg-rose-500/10 border border-rose-500/30 text-rose-400 hover:bg-rose-500/20"
+                  : "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+              }`}
+              onClick={() => void toggleCompactMode()}
+              disabled={!hideFromShare || compactBusy}
+            >
+              {compactBusy
+                ? <Loader2 size={14} className="animate-spin" />
+                : compactMode ? <Maximize2 size={14} /> : <Minimize2 size={14} />
+              }
+              {compactBusy ? "…" : compactMode ? "Turn off" : "Turn on"}
+            </button>
+          </div>
+          {hideFromShare && (
+            <div className="flex items-center gap-2 text-[11px] text-th-text-muted rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
+              <span>Toggle the panels anytime with</span>
+              <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded-md border border-th-border-strong bg-th-bg text-th-text-secondary">&#8984;&#8679;\</kbd>
+            </div>
+          )}
         </div>
       </Card>
 

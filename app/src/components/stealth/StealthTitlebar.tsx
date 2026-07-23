@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Maximize2, Minimize2, MessageSquare, Minus, Power, Radio } from "lucide-react";
+import { AppWindow, Maximize2, Minimize2, MessageSquare, Minus, Power, Radio } from "lucide-react";
 import type { StealthKind } from "../../utils/stealthWindow";
 import { CHAT_WINDOW_LABEL, CAPTURE_WINDOW_LABEL } from "../../utils/stealthWindow";
 
@@ -28,8 +28,9 @@ interface StealthTitlebarProps {
  * the state is always legible.
  *
  * Provides the per-panel window controls: move (drag anywhere on the bar),
- * summon the *other* panel, expand/collapse height (chat), hide this panel, and
- * turn stealth off entirely (restores the normal main window and dismisses both
+ * summon the *other* panel, expand/collapse height (chat), hide this panel,
+ * exit compact mode (restores the normal main window but leaves stealth on),
+ * and turn stealth off entirely (which also exits compact and dismisses both
  * panels). Drives focus-based transparency: solid when focused, faded when the
  * user clicks away.
  */
@@ -114,6 +115,14 @@ export default function StealthTitlebar({ kind }: StealthTitlebarProps) {
       .catch(() => {});
   }, []);
 
+  // Exit just the compact overlay panels, restoring the normal window while
+  // leaving stealth (capture exclusion, no Dock/menu bar icon) on.
+  const exitCompact = useCallback(() => {
+    import("../../utils/compactMode")
+      .then(({ setCompactMode }) => setCompactMode(false))
+      .catch(() => {});
+  }, []);
+
   const label = kind === "chat" ? "Chat" : "Live Capture";
 
   return (
@@ -163,6 +172,12 @@ export default function StealthTitlebar({ kind }: StealthTitlebarProps) {
         </TitleButton>
         <TitleButton onClick={hide} title={"Hide this panel (\u2318\u21e7\\ to bring back)"}>
           <Minus size={13} />
+        </TitleButton>
+        <TitleButton
+          onClick={exitCompact}
+          title="Exit compact mode (keeps stealth on, restores the normal window)"
+        >
+          <AppWindow size={13} />
         </TitleButton>
         <TitleButton
           onClick={turnOffStealth}

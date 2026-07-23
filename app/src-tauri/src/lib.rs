@@ -82,9 +82,10 @@ fn set_ambient_count(count: u32, app_handle: tauri::AppHandle) {
 /// paths — the legacy `NSWindow.sharingType` flag plus the private
 /// `CGSSetWindowCaptureExcludeShape` window-server call that also defeats
 /// ScreenCaptureKit / browser `getDisplayMedia` (what CoderPad proctoring uses)
-/// — and (b) shows the non-activating overlay panel so Otto can be used without
-/// deactivating the browser (which would trip focus-loss detection). See
-/// `stealth.rs` for the caveats.
+/// — and (b) keeps the (still normal-sized) main window floating above other
+/// windows and off the Dock/menu bar. It does *not* switch Otto into the
+/// compact overlay panels — that's the separate `set_compact_mode` preference,
+/// which is only offered once stealth is on. See `stealth.rs` for the caveats.
 ///
 /// Must run on the main thread since it touches AppKit. No-op off macOS.
 #[tauri::command]
@@ -166,9 +167,7 @@ fn apply_hidden_from_capture(app: &tauri::AppHandle, hidden: bool) {
 
     // Exclude (or restore) the main window across every capture path: the
     // legacy `sharingType` flag and the private capture-exclude-shape that also
-    // hides the window from ScreenCaptureKit / browser screen sharing. (It is
-    // hidden while stealth is on, but staying excluded avoids any capture flash
-    // during the transition.)
+    // hides the window from ScreenCaptureKit / browser screen sharing.
     stealth::apply_capture_exclusion(app, "main", hidden);
 
     // Also hide Otto from the menu bar (tray) and Dock while hidden, so a
@@ -185,24 +184,66 @@ fn apply_hidden_from_capture(app: &tauri::AppHandle, hidden: bool) {
             let ns_app = NSApplication::sharedApplication(mtm);
             let _ = ns_app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         }
-        // Stealth on: the full app moves into the non-activating overlay panel.
-        // Bring up the panel first and only hide the normal (decorated, focus-
-        // stealing) main window if the panel actually showed — otherwise a panel
-        // failure would leave nothing visible at all.
+        // Stealth alone keeps the normal-sized main window around — just
+        // floating above other windows and off the Dock/menu bar — rather than
+        // switching to the compact overlay panels. Compact is a separate,
+        // stealth-gated preference applied via `set_compact_mode`.
+        let _ = window.set_always_on_top(true);
+    } else {
+        // Stealth off implies compact off too: dismiss the overlay panels
+        // regardless of their state and restore the normal main window. The
+        // caller also re-asserts foreground after a short delay since macOS may
+        // not redraw the Dock icon on the first attempt.
+        stealth::hide_overlay(app);
+        let _ = window.set_always_on_top(false);
+        force_foreground(app);
+    }
+}
+
+/// Toggle Otto's "compact" overlay UI on macOS — swaps the normal main window
+/// for two small, transparent, non-activating panels (Chat + Live Capture).
+/// Only meaningful while stealth mode is on (the frontend gates the setting on
+/// that), but this is otherwise independent of `set_hidden_from_capture` so
+/// stealth can run with the normal window when compact is off.
+///
+/// Must run on the main thread since it touches AppKit. No-op off macOS.
+#[tauri::command]
+fn set_compact_mode(compact: bool, app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        app.run_on_main_thread(move || apply_compact_mode(&handle, compact))
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (compact, app);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn apply_compact_mode(app: &tauri::AppHandle, compact: bool) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+
+    if compact {
+        // Bring up the overlay panels first and only hide the normal (decorated,
+        // focus-stealing) main window if they actually showed — otherwise a
+        // panel failure would leave nothing visible at all.
         match stealth::show_overlay(app, true) {
             Ok(()) => {
                 let _ = window.hide();
             }
             Err(e) => {
-                eprintln!("[stealth] overlay failed to show, keeping main window: {e}");
+                eprintln!("[stealth] compact overlay failed to show, keeping main window: {e}");
             }
         }
     } else {
-        // Stealth off: dismiss the panel and restore the main window. The caller
-        // also re-asserts foreground after a short delay since macOS may not
-        // redraw the Dock icon on the first attempt.
         stealth::hide_overlay(app);
-        force_foreground(app);
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
@@ -337,6 +378,7 @@ pub fn run() {
             kill_backend,
             set_ambient_count,
             set_hidden_from_capture,
+            set_compact_mode,
             set_dock_badge,
             show_stealth_overlay,
             hide_stealth_overlay,

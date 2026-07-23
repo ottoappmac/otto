@@ -436,23 +436,27 @@ On-device voice input. **Voice Mode** adds a mic button to chat and a hands-free
 | Kernel firewall (macOS pf) | Generates the `pf` rules + install command to copy into Terminal |
 | Audit log | Append-only JSONL of every engage / disengage / blocked attempt |
 
-**Stealth mode** — makes Otto invisible to screen-capture and screen-share tools and adds a focus-safe overlay, independent of Privacy Lock. Designed for using Otto alongside proctored/browser-based sessions (CoderPad, Google Meet, Zoom) without appearing in the recording or tripping "tabbed away" detection.
+**Stealth mode** — makes Otto invisible to screen-capture and screen-share tools, independent of Privacy Lock. Designed for using Otto alongside proctored/browser-based sessions (CoderPad, Google Meet, Zoom) without appearing in the recording or tripping "tabbed away" detection.
 
 | Control | Description |
 |---|---|
-| Turn on / off | Toggle stealth. When on, Otto's windows are excluded from screen capture and its menu bar + Dock icons disappear (it stays visible on your own display) |
-| Panel hotkey | `⌘⇧\` shows/hides the stealth panels from any app |
+| Turn on / off | Toggle stealth. When on, Otto's window is excluded from screen capture, its menu bar + Dock icons disappear, and it floats above other windows (it stays visible on your own display, and keeps its normal size and layout) |
 
-When on, two things happen:
+Turning stealth on does two things: **capture exclusion** — Otto's window is removed from every conformant capture path: the legacy CoreGraphics flag (`NSWindow.sharingType`) *and* the window-server capture-exclude shape that also hides it from **ScreenCaptureKit / browser screen sharing** (CoderPad, Google Meet, Zoom, Teams, OBS) — and **focus-driven fade**: the whole app fades to a configurable opacity (default 70%, adjustable via the slider below) whenever it loses focus (e.g. you click into your browser), then returns to solid the moment you click back, so it visually recedes without needing Compact mode. The fade level applies to Compact mode's panels too.
 
-1. **Capture exclusion** — Otto's window is removed from every conformant capture path: the legacy CoreGraphics flag (`NSWindow.sharingType`) *and* the window-server capture-exclude shape that also hides it from **ScreenCaptureKit / browser screen sharing** (CoderPad, Google Meet, Zoom, Teams, OBS).
-2. **Focus-safe panels** — the normal window is hidden and Otto moves into **two borderless, non-activating panels** (`NSPanel`s) you can move independently around the screen:
-   - **Chat** — a compact composer with an expand control to reveal more message history below it.
-   - **Live Capture** — audio transcription + screenshots, in its own window. Its **Ask Otto** hands the captured context to the Chat panel.
+> Uses a private macOS API for the capture exclusion, so behavior may change with future macOS updates, and Apple's own **QuickTime** plus a few blessed conferencing partners can still capture the window. While on there's no menu bar or Dock icon — reach Otto via its window or Compact mode's panels; turn stealth back off from Settings (or from either compact panel's power button). The preference persists across restarts and is re-applied automatically on launch.
 
-   Because the panels never activate Otto, reading or typing in them does **not** deactivate your browser, so a proctoring tab never fires a `blur` / focus-loss event. Each panel has a slim title bar to **drag** it, a button to summon the other panel, and a **power** button to turn stealth off. `⌘⇧\` shows/hides both.
+**Compact mode** — a separate preference, only offered once Stealth mode is on, that additionally swaps Otto's normal window for two small, transparent, focus-safe overlay panels you can move independently around the screen. Turning stealth off also turns compact off.
 
-> Uses a private macOS API for the capture exclusion, so behavior may change with future macOS updates, and Apple's own **QuickTime** plus a few blessed conferencing partners can still capture the window. While on there's no menu bar or Dock icon — reach Otto via the panels or the `⌘⇧\` hotkey; turn stealth back off from the power button on either panel (or from Settings). The preference persists across restarts and is re-applied automatically on launch.
+| Control | Description |
+|---|---|
+| Turn on / off | Toggle compact (disabled until Stealth mode is on). When on, the normal window is hidden and Otto moves into the panels below |
+| Panel hotkey | `⌘⇧\` shows/hides the compact panels from any app |
+
+- **Chat** — a compact composer with an expand control to reveal more message history below it.
+- **Live Capture** — audio transcription + screenshots, in its own window. Its **Ask Otto** hands the captured context to the Chat panel.
+
+Because the panels never activate Otto, reading or typing in them does **not** deactivate your browser, so a proctoring tab never fires a `blur` / focus-loss event. Each panel has a slim title bar to **drag** it, a button to summon the other panel, a button to exit compact (back to the normal window, stealth stays on), and a **power** button to turn stealth (and compact) off entirely. `⌘⇧\` shows/hides both panels.
 
 ---
 
