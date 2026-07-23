@@ -4,10 +4,14 @@
 //      NSWindow.sharingType flag plus the private CGSSetWindowCaptureExcludeShape
 //      call that also defeats ScreenCaptureKit / browser getDisplayMedia (what
 //      CoderPad's in-browser proctoring uses).
-//   2. Shows a non-activating overlay panel so Otto can be used without
-//      deactivating the browser (which would trip focus-loss "tabbed away"
-//      detection).
+//   2. Hides Otto's menu bar + Dock icons and keeps its (still normal-sized)
+//      window floating above others.
 // The preference is persisted locally and re-applied on startup.
+//
+// Stealth is intentionally decoupled from "compact" (`compactMode.ts`), the
+// small transparent overlay-panel UI — compact is a separate, stealth-gated
+// preference that's only offered once stealth is on, and is always turned off
+// alongside stealth here.
 //
 // Caveat: capture exclusion relies on a private macOS API. Apple's own
 // QuickTime and blessed conferencing partners can still capture the window;
@@ -46,6 +50,16 @@ export async function setHideFromScreenShare(hidden: boolean): Promise<void> {
     // ignore storage failures — still apply for this session
   }
   await applyHideFromScreenShare(hidden);
+  // Compact requires stealth, so turning stealth off always turns compact
+  // off too — regardless of where compact's own preference currently stands.
+  if (!hidden) {
+    try {
+      const { setCompactMode } = await import("./compactMode");
+      await setCompactMode(false);
+    } catch {
+      // outside Tauri — nothing to reconcile
+    }
+  }
   try {
     const { emit } = await import("@tauri-apps/api/event");
     await emit(STEALTH_CHANGED_EVENT, hidden);

@@ -24,10 +24,40 @@ html.stealth-window #root {
   transition: opacity 180ms ease-out;
 }
 html.stealth-window.stealth-unfocused #root {
-  opacity: 0.85;
+  opacity: var(--stealth-fade-opacity, 0.7);
 }
 @media (prefers-reduced-motion: reduce) {
   html.stealth-window #root {
+    transition: none;
+  }
+}
+
+/* Stealth mode on the main window (Compact mode off): same focus-driven fade
+   as the overlay panels above, minus the borderless-panel chrome (rounded
+   corners, shadow, outline) since this is still the normal decorated window.
+   Toggled in `App.tsx`; `.stealth-window` is reserved for the separate
+   overlay-panel webviews so the two never combine.
+
+   The main window is declared `transparent` in `tauri.conf.json` so this can
+   genuinely show the desktop through, not just blend with its own opaque
+   background — but `body` keeps its normal solid theme color (see `@layer
+   base` below) everywhere else, so the window looks like a completely normal
+   opaque app except in this exact state. */
+html.stealth-active #root {
+  opacity: 1;
+  transition: opacity 180ms ease-out;
+}
+html.stealth-active.stealth-unfocused {
+  background: transparent !important;
+}
+html.stealth-active.stealth-unfocused body {
+  background: transparent !important;
+}
+html.stealth-active.stealth-unfocused #root {
+  opacity: var(--stealth-fade-opacity, 0.7);
+}
+@media (prefers-reduced-motion: reduce) {
+  html.stealth-active #root {
     transition: none;
   }
 }

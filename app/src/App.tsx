@@ -46,16 +46,63 @@ export default function App() {
     return () => unlisten?.();
   }, [navigate]);
 
-  // Re-apply the saved stealth preference on startup so the native window state
-  // matches the user's choice. Only the main window drives this — the stealth
-  // panels are consumers of that state, not a source.
+  // Re-apply the saved stealth (and, if also saved, compact) preference on
+  // startup so the native window state matches the user's choice. Only the
+  // main window drives this — the stealth panels are consumers of that state,
+  // not a source. Compact only applies once stealth is confirmed on, since
+  // it's a stealth-gated preference.
   useEffect(() => {
     if (STEALTH) return;
     import("./utils/screenShareVisibility")
-      .then(({ getHideFromScreenShare, applyHideFromScreenShare }) => {
-        if (getHideFromScreenShare()) return applyHideFromScreenShare(true);
+      .then(async ({ getHideFromScreenShare, applyHideFromScreenShare }) => {
+        if (!getHideFromScreenShare()) return;
+        await applyHideFromScreenShare(true);
+        const { getCompactMode, applyCompactMode } = await import("./utils/compactMode");
+        if (getCompactMode()) await applyCompactMode(true);
       })
       .catch(() => {}); // no-op in non-Tauri environments (e.g. web dev)
+  }, []);
+
+  // Main window only: fade the whole app when it loses focus while Stealth
+  // mode is on — the same focus-driven transparency the compact overlay
+  // panels use (see `StealthTitlebar.tsx`'s `stealth-unfocused` toggle), so
+  // stealth alone (without Compact mode) still visually recedes when you
+  // click away, not just when it's shrunk into the small panels.
+  useEffect(() => {
+    if (STEALTH) return;
+    const root = document.documentElement;
+    let cancelled = false;
+    let unlistenFocus: (() => void) | undefined;
+    let disposeStealth: (() => void) | undefined;
+
+    import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) =>
+        getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          root.classList.toggle("stealth-unfocused", !focused);
+        }),
+      )
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlistenFocus = fn;
+      })
+      .catch(() => {});
+
+    import("./utils/screenShareVisibility")
+      .then(({ getHideFromScreenShare, onHideFromScreenShareChanged }) => {
+        if (cancelled) return;
+        root.classList.toggle("stealth-active", getHideFromScreenShare());
+        disposeStealth = onHideFromScreenShareChanged((hidden) =>
+          root.classList.toggle("stealth-active", hidden),
+        );
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unlistenFocus?.();
+      disposeStealth?.();
+      root.classList.remove("stealth-active", "stealth-unfocused");
+    };
   }, []);
 
   // Chat panel only: bridge cross-window hand-offs from the Live Capture panel

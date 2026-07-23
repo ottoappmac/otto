@@ -7,6 +7,11 @@ import { NotificationProvider } from "./context/NotificationContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { applyFontScaleToDocument, readStoredFontScale } from "./theme";
 import { stealthWindowKind } from "./utils/stealthWindow";
+import {
+  applyStealthFadeOpacity,
+  getStealthFadeOpacity,
+  onStealthFadeOpacityChanged,
+} from "./utils/stealthFadeOpacity";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/source-serif-4";
 import "./index.css";
@@ -14,10 +19,17 @@ import "./index.css";
 // Apply stored font scale before first paint to avoid flash
 applyFontScaleToDocument(readStoredFontScale());
 
-// Stealth mode runs Otto across two borderless, transparent, non-activating
-// panels — a Chat panel and a Live Capture panel. Tag the document so each
-// reads as a floating macOS panel (rounded corners, transparent background) and
-// so per-panel styling can differ.
+// Apply the stored stealth fade-opacity level (used by both the main window's
+// fade and the compact overlay panels' fade — see `index.css`'s
+// `.stealth-active` / `.stealth-window` rules) and keep it live-synced with
+// Settings, no matter which window the change came from.
+applyStealthFadeOpacity(getStealthFadeOpacity());
+onStealthFadeOpacityChanged(applyStealthFadeOpacity);
+
+// Compact mode (a stealth-gated preference) runs Otto across two borderless,
+// transparent, non-activating panels — a Chat panel and a Live Capture panel.
+// Tag the document so each reads as a floating macOS panel (rounded corners,
+// transparent background) and so per-panel styling can differ.
 const stealthKind = stealthWindowKind();
 if (stealthKind) {
   document.documentElement.classList.add("stealth-window", `stealth-${stealthKind}`);

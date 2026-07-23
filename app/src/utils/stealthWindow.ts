@@ -1,11 +1,13 @@
-// Stealth mode runs Otto in borderless, non-activating, capture-excluded
-// NSPanels (see `src-tauri/src/stealth.rs`). There are two such panels, each a
-// separate webview:
+// Compact mode (a stealth-gated preference, see `compactMode.ts`) runs Otto in
+// borderless, non-activating, capture-excluded NSPanels (see
+// `src-tauri/src/stealth.rs`). There are two such panels, each a separate
+// webview:
 //   • "overlay" — the Chat panel (compact composer + expandable history)
 //   • "capture" — the Live Capture panel (audio transcription + screenshots)
-// The normal app runs in the "main" window. We detect which window we're in by
-// the Tauri window label so each renders the right surface and skips
-// main-window-only startup side effects.
+// The normal app runs in the "main" window — including while stealth mode is
+// on but compact is off. We detect which window we're in by the Tauri window
+// label so each renders the right surface and skips main-window-only startup
+// side effects.
 //
 // We read the label synchronously from the internals Tauri injects before app
 // JS runs, so it's available at module-eval time and returns null in a plain

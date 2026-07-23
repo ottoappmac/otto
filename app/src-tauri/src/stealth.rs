@@ -10,11 +10,15 @@
 //!    ScreenCaptureKit capturers (this is what CoderPad's in-browser proctoring
 //!    uses). We apply both so every capture path is covered.
 //!
-//! 2. **Non-activating overlay panel.** A borderless, transparent
-//!    `NSPanel` (swizzled from a Tauri window via `tauri-nspanel`) with the
-//!    non-activating style mask. Because it never activates Otto, clicking or
-//!    typing in it does not deactivate the frontmost app, so the CoderPad
+//! 2. **Non-activating overlay panels.** Borderless, transparent `NSPanel`s
+//!    (swizzled from Tauri windows via `tauri-nspanel`) with the
+//!    non-activating style mask. Because they never activate Otto, clicking or
+//!    typing in them does not deactivate the frontmost app, so the CoderPad
 //!    browser tab never fires the `blur`/`visibilitychange` "focus lost" event.
+//!    This is the "compact mode" preference in `lib.rs` — separate from, and
+//!    only offered once the user has turned on, capability 1's capture
+//!    exclusion ("stealth mode"). Stealth alone keeps Otto's normal window
+//!    around; compact additionally swaps it for these panels.
 //!
 //! Caveat: `CGSSetWindowCaptureExcludeShape` is a private, undocumented API. It
 //! is App Store-ineligible and may change in future macOS releases. Apple's own
