@@ -245,6 +245,17 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
         required_secrets=("TEAMS_TENANT_ID", "TEAMS_CLIENT_ID", "TEAMS_CLIENT_SECRET"),
     ),
     BuiltinMCP(
+        id="atlassian",
+        name="Atlassian (Jira + Confluence)",
+        description=(
+            "Read + write tools over Atlassian Cloud's Jira and Confluence: "
+            "CQL/JQL search, page and issue CRUD, comments, spaces, "
+            "projects, and Jira workflow transitions."
+        ),
+        source_dir_name="atlassian",
+        required_secrets=("ATLASSIAN_URL", "ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN"),
+    ),
+    BuiltinMCP(
         id="microsoft-onedrive",
         name="OneDrive / SharePoint",
         description=(
