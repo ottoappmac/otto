@@ -1073,10 +1073,16 @@ export const api = {
     }),
   videoStatus: () =>
     request<import("../types").VideoRecordStatus>("/api/video/status"),
-  videoRecordStart: (sessionId: string, fps?: number) =>
+  /** Current screen as a JPEG. ``tick`` busts the cache so polling refetches. */
+  videoPreviewUrl: (tick: number) => `${API_BASE}/api/video/preview?t=${tick}`,
+  videoAudioDevices: () =>
+    request<{ devices: import("../types").VideoAudioDevice[] }>(
+      "/api/video/audio-devices",
+    ),
+  videoRecordStart: (sessionId: string, fps?: number, audio?: boolean) =>
     request<import("../types").VideoRecordResult>("/api/video/record/start", {
       method: "POST",
-      body: JSON.stringify({ session_id: sessionId, fps }),
+      body: JSON.stringify({ session_id: sessionId, fps, audio }),
     }),
   videoRecordStop: (sessionId: string) =>
     request<import("../types").VideoRecordResult>("/api/video/record/stop", {

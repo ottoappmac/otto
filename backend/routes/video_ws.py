@@ -10,12 +10,15 @@ Inbound (client → server):
   {"type": "stop"}
 
 Outbound (server → client):
-  {"type": "state", "state": "watching" | "idle"}
+  {"type": "state", "state": "watching" | "idle", "mode": "gemini" | "local"}
   {"type": "commentary", "text": ...}
+  {"type": "frame", "jpeg_b64": ...}
   {"type": "error", "message": ...}
 
-Realtime watching is Gemini-only; the route rejects a ``start`` when no
-Gemini API key is configured.
+With a Gemini key this streams to the Gemini Live API.  Without one it falls
+back to ``LocalLiveWatchSession``, which describes a batch of recent frames
+every few seconds using whatever vision model is configured — slower to
+react, but it keeps working on-device and under the privacy lock.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from backend.config import AppConfig
 from backend.video import recorder
+from backend.video.live_local import LocalLiveWatchSession, build_live_llm
 from backend.video.live_watcher import LiveWatchSession
 
 logger = logging.getLogger(__name__)
@@ -38,7 +42,7 @@ ws_router = APIRouter(tags=["video"])
 async def watch_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
 
-    session: LiveWatchSession | None = None
+    session: LiveWatchSession | LocalLiveWatchSession | None = None
     run_task: asyncio.Task | None = None
 
     async def _emit(event: dict) -> None:
@@ -57,27 +61,6 @@ async def watch_websocket(websocket: WebSocket) -> None:
                     await _emit({"type": "error", "message": "Already watching."})
                     continue
                 cfg = await AppConfig.aload()
-                try:
-                    from backend import privacy_lock
-
-                    if privacy_lock.is_engaged(cfg):
-                        await _emit({
-                            "type": "error",
-                            "message": "Privacy lock is engaged — realtime watching uses "
-                                       "Gemini (cloud) and is disabled. Disengage in "
-                                       "Settings \u2192 Privacy & Security.",
-                        })
-                        continue
-                except Exception:  # noqa: BLE001
-                    pass
-                api_key = (cfg.llm.google.api_key or "").strip()
-                if not api_key:
-                    await _emit({
-                        "type": "error",
-                        "message": "Realtime watching requires a Gemini API key "
-                                   "(Settings \u2192 LLM \u2192 Frontier \u2192 Google Gemini).",
-                    })
-                    continue
                 if not recorder.supported():
                     await _emit({
                         "type": "error",
@@ -85,18 +68,64 @@ async def watch_websocket(websocket: WebSocket) -> None:
                     })
                     continue
 
+                # Gemini is the cloud path, so the privacy lock rules it out
+                # and we fall through to the on-device batcher.
+                locked = False
+                try:
+                    from backend import privacy_lock
+
+                    locked = privacy_lock.is_engaged(cfg)
+                except Exception:  # noqa: BLE001
+                    pass
+                api_key = "" if locked else (cfg.llm.google.api_key or "").strip()
+
                 fps = float(msg.get("fps") or cfg.video.realtime_fps or 1.0)
                 include_audio = bool(msg.get("audio", cfg.video.include_audio))
                 prompt = str(msg.get("prompt") or "").strip()
+                max_side = int(cfg.video.frame_max_side or 1024)
+                preview = bool(cfg.video.live_preview)
 
-                session = LiveWatchSession(
-                    api_key=api_key,
-                    prompt=prompt,
-                    fps=fps,
-                    max_side=int(cfg.video.frame_max_side or 1024),
-                    include_audio=include_audio,
-                    on_event=_emit,
-                )
+                if api_key:
+                    session = LiveWatchSession(
+                        api_key=api_key,
+                        prompt=prompt,
+                        fps=fps,
+                        max_side=max_side,
+                        include_audio=include_audio,
+                        emit_frames=preview,
+                        on_event=_emit,
+                    )
+                    await _emit({"type": "mode", "mode": "gemini"})
+                else:
+                    # create_llm refuses cloud providers while the lock is on,
+                    # so this can only ever hand back a local model.
+                    llm = await build_live_llm(cfg)
+                    if llm is None:
+                        await _emit({
+                            "type": "error",
+                            "message": (
+                                "Live watching needs a vision-capable model, and the "
+                                "privacy lock rules out Gemini. Configure a local "
+                                "vision model, or disengage the lock in Settings "
+                                "\u2192 Privacy & Security."
+                            ) if locked else (
+                                "Live watching needs a vision-capable model. Add a "
+                                "Gemini API key for realtime watching, or configure a "
+                                "local vision model to watch in short batches."
+                            ),
+                        })
+                        continue
+                    session = LocalLiveWatchSession(
+                        llm=llm,
+                        prompt=prompt,
+                        fps=fps,
+                        max_side=max_side,
+                        batch_secs=int(cfg.video.live_batch_secs or 12),
+                        batch_frames=int(cfg.video.live_batch_frames or 4),
+                        emit_frames=preview,
+                        on_event=_emit,
+                    )
+                    await _emit({"type": "mode", "mode": "local"})
                 run_task = asyncio.create_task(session.run())
 
             elif mtype == "stop":

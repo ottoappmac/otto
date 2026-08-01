@@ -16,6 +16,7 @@ import {
   Folder,
   FolderOpen,
   Image as ImageIcon,
+  Video as VideoIcon,
 } from "lucide-react";
 import { artifactTypeFromPath, type ArtifactType } from "./ArtifactPanel";
 import { buildFileTree, type FileTreeNode, type SessionFileEntry } from "../../utils/fileTree";
@@ -86,9 +87,14 @@ export default function OutputFileGrid({
           type === "pdf" ? "text-red-400"
           : type === "csv" || type === "xlsx" ? "text-emerald-400"
           : type === "image" ? "text-purple-400"
+          : type === "video" ? "text-rose-400"
           : type === "json" ? "text-amber-400"
           : "text-blue-400";
-        const Icon = type === "image" ? ImageIcon : type === "json" ? FileJson : FileText;
+        const Icon =
+          type === "image" ? ImageIcon
+          : type === "video" ? VideoIcon
+          : type === "json" ? FileJson
+          : FileText;
         const path = node.file.path;
         return (
           <button

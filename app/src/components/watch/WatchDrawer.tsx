@@ -12,14 +12,20 @@ import {
   Send,
   Loader2,
   AlertTriangle,
+  MessageSquarePlus,
+  Mic,
   Trash2,
 } from "lucide-react";
 import { api } from "../../hooks/useApi";
 import { useWatch } from "../../hooks/useWatch";
 import { emitAskOtto } from "../../utils/askOttoBus";
-import type { CapturePermission } from "../../types";
+import { canSendAgentContext, emitAgentContext } from "../../utils/agentContextBus";
+import { notifySessionFilesChanged } from "../../utils/sessionFilesBus";
+import { formatFileSize } from "../../utils/formatFileSize";
+import type { CapturePermission, VideoAudioDevice } from "../../types";
 
 type SourceTab = "file" | "screen" | "youtube" | "live";
+type LiveToAgent = "off" | "on_stop" | "stream";
 
 const FPS_OPTIONS = [0.5, 1, 2, 5];
 
@@ -32,6 +38,15 @@ function openScreenSettings() {
     .catch(() => {
       /* best effort — no-op outside Tauri */
     });
+}
+
+/** Privacy lock arrives as a 403 with a JSON body; everything else is raw. */
+function describeSessionError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.includes("403") && msg.includes("privacy_lock")) {
+    return "Privacy lock is on, so a chat can't be started. Allow a provider in Settings → Privacy, or switch to a local model.";
+  }
+  return `Could not start a chat: ${msg}`;
 }
 
 interface WatchDrawerProps {
@@ -51,6 +66,9 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
   const [question, setQuestion] = useState("");
   const [fps, setFps] = useState(1);
   const [geminiConfigured, setGeminiConfigured] = useState(false);
+  const [livePreview, setLivePreview] = useState(true);
+  const [liveToAgent, setLiveToAgent] = useState<LiveToAgent>("off");
+  const [flushSecs, setFlushSecs] = useState(20);
 
   // File
   const [file, setFile] = useState<File | null>(null);
@@ -61,13 +79,19 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
   // YouTube
   const [youtubeUrl, setYoutubeUrl] = useState("");
 
-  // Screen recording
+  // Screen recording. The session is pinned when recording starts so that
+  // navigating away mid-recording doesn't strand the file.
   const [permission, setPermission] = useState<CapturePermission | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordedPath, setRecordedPath] = useState<string | null>(null);
+  const [recordedSize, setRecordedSize] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [recordAudio, setRecordAudio] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<VideoAudioDevice[]>([]);
+  const recordingSessionRef = useRef<string | null>(null);
 
   // Analyze
+  const [creatingSession, setCreatingSession] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +105,13 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
     if (!open) return;
     api
       .getSettings()
-      .then((s) => setGeminiConfigured(!!s.llm?.google?.api_key))
+      .then((s) => {
+        setGeminiConfigured(!!s.llm?.google?.api_key);
+        setLivePreview(s.video?.live_preview ?? true);
+        setLiveToAgent((s.video?.live_to_agent as LiveToAgent) ?? "off");
+        setFlushSecs(s.video?.live_agent_flush_secs ?? 20);
+        setRecordAudio(s.video?.record_audio ?? false);
+      })
       .catch(() => setGeminiConfigured(false));
     api
       .videoStatus()
@@ -111,29 +141,61 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
   useEffect(() => {
     if (open && tab === "screen") {
       api.videoPermission().then(setPermission).catch(() => {});
+      api.videoAudioDevices()
+        .then((r) => setAudioDevices(r.devices))
+        .catch(() => setAudioDevices([]));
     }
   }, [open, tab]);
+
+  // Preview what's being recorded. ffmpeg holds the capture device, so rather
+  // than tapping its output the backend grabs its own frame; a cache-busting
+  // query param is what actually drives the <img> to refetch.
+  const [previewTick, setPreviewTick] = useState(0);
+  useEffect(() => {
+    if (!open || tab !== "screen" || !recording || !livePreview) return;
+    const t = setInterval(() => setPreviewTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [open, tab, recording, livePreview]);
+
+  /**
+   * Resolve the session everything here writes into, starting a chat when
+   * none is open — videos, recordings and results all live inside a session,
+   * so the panel would otherwise be unusable from the home screen.
+   */
+  const ensureSession = useCallback(async (): Promise<string | null> => {
+    if (sessionId) return sessionId;
+    setCreatingSession(true);
+    try {
+      const created = await api.createSession({ agent_name: null });
+      navigate(`/chat/${created.id}`);
+      return created.id;
+    } catch (e) {
+      setError(describeSessionError(e));
+      return null;
+    } finally {
+      setCreatingSession(false);
+    }
+  }, [sessionId, navigate]);
 
   const handlePickFile = useCallback(async (f: File) => {
     setError(null);
     setResult(null);
     setUploadedPath(null);
     setFile(f);
-    if (!sessionId) {
-      setError("Open or start a chat first — the video is uploaded into the session.");
-      return;
-    }
     setUploading(true);
     try {
+      const sid = await ensureSession();
+      if (!sid) return;
       const path = `uploads/${f.name}`;
-      await api.uploadSessionFile(sessionId, path, f);
+      await api.uploadSessionFile(sid, path, f);
       setUploadedPath(`/${path}`);
+      notifySessionFilesChanged(sid);
     } catch (e) {
       setError(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setUploading(false);
     }
-  }, [sessionId]);
+  }, [ensureSession]);
 
   const currentSource = useCallback((): string | null => {
     if (tab === "file") return uploadedPath;
@@ -148,16 +210,14 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
       setError("Pick a video, record the screen, or paste a YouTube URL first.");
       return;
     }
-    if (!sessionId) {
-      setError("Open or start a chat first so results have somewhere to live.");
-      return;
-    }
     setAnalyzing(true);
     setError(null);
     setResult(null);
     try {
+      const sid = await ensureSession();
+      if (!sid) return;
       const res = await api.videoAnalyze({
-        session_id: sessionId,
+        session_id: sid,
         source,
         question: question.trim() || undefined,
       });
@@ -168,7 +228,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
     } finally {
       setAnalyzing(false);
     }
-  }, [currentSource, sessionId, question]);
+  }, [currentSource, ensureSession, question]);
 
   const handleSendToChat = useCallback(() => {
     const source = currentSource();
@@ -186,36 +246,77 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
   }, [currentSource, question, location.pathname, navigate, onClose]);
 
   const handleStartRecording = useCallback(async () => {
-    if (!sessionId) {
-      setError("Open or start a chat first — recordings are saved into the session.");
-      return;
-    }
     setError(null);
     setRecordedPath(null);
-    const res = await api.videoRecordStart(sessionId, fps);
+    setRecordedSize(null);
+    const sid = await ensureSession();
+    if (!sid) return;
+    const res = await api.videoRecordStart(sid, fps, recordAudio);
     if (res.error) {
       setError(res.error);
       return;
     }
+    recordingSessionRef.current = sid;
     setRecording(true);
-  }, [sessionId, fps]);
+  }, [ensureSession, fps, recordAudio]);
 
   const handleStopRecording = useCallback(async () => {
-    if (!sessionId) return;
-    const res = await api.videoRecordStop(sessionId);
+    const sid = recordingSessionRef.current ?? sessionId;
+    if (!sid) return;
+    const res = await api.videoRecordStop(sid);
+    recordingSessionRef.current = null;
     setRecording(false);
     if (res.error) {
       setError(res.error);
       return;
     }
-    if (res.virtual_path) setRecordedPath(res.virtual_path);
+    if (res.virtual_path) {
+      setRecordedPath(res.virtual_path);
+      setRecordedSize(res.size_bytes ?? null);
+      notifySessionFilesChanged(sid);
+    }
   }, [sessionId]);
+
+  // ── Handing live commentary to the agent ─────────────────────────────
+  // Commentary goes over the context channel, so it is folded into the next
+  // thing the user asks rather than starting a turn of its own. Only lines
+  // not yet handed over are sent.
+  const handedOverRef = useRef(0);
+
+  const flushCommentary = useCallback(() => {
+    const pending = live.commentary.slice(handedOverRef.current);
+    if (pending.length === 0) return;
+    handedOverRef.current = live.commentary.length;
+    emitAgentContext(
+      "While watching the screen I observed:\n\n" +
+        pending.map((c) => c.text).join("\n\n"),
+    );
+  }, [live.commentary]);
+
+  // Held in a ref so the flush timer isn't torn down on every new line.
+  const flushRef = useRef(flushCommentary);
+  flushRef.current = flushCommentary;
+
+  useEffect(() => {
+    if (liveToAgent !== "stream" || !live.watching) return;
+    const t = setInterval(() => flushRef.current(), Math.max(5, flushSecs) * 1000);
+    return () => clearInterval(t);
+  }, [liveToAgent, live.watching, flushSecs]);
+
+  // Both hand-off modes flush the tail when watching ends.
+  const wasWatchingRef = useRef(false);
+  useEffect(() => {
+    const was = wasWatchingRef.current;
+    wasWatchingRef.current = live.watching;
+    if (was && !live.watching && liveToAgent !== "off") flushRef.current();
+  }, [live.watching, liveToAgent]);
 
   const handleToggleLive = useCallback(() => {
     if (live.watching) {
       live.stop();
     } else {
       live.clear();
+      handedOverRef.current = 0;
       live.start({ prompt: livePrompt.trim() || undefined, fps: Math.min(1, fps) });
     }
   }, [live, livePrompt, fps]);
@@ -267,9 +368,9 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {!sessionId && (
-          <div className="flex items-start gap-2 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5">
-            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-            <span>Open or start a chat to record and analyse videos. You can still send a file/URL to a new chat.</span>
+          <div className="flex items-start gap-2 text-[11px] text-th-text-tertiary bg-th-surface/60 border border-th-border rounded-lg p-2.5">
+            <MessageSquarePlus size={13} className="shrink-0 mt-0.5" />
+            <span>No chat is open — a new one will be started, and the video and its results saved into it.</span>
           </div>
         )}
 
@@ -298,7 +399,8 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
             </button>
             {uploading && (
               <p className="text-[11px] text-th-text-muted flex items-center gap-1.5">
-                <Loader2 size={11} className="animate-spin" /> Uploading…
+                <Loader2 size={11} className="animate-spin" />
+                {creatingSession ? "Starting a chat…" : "Uploading…"}
               </p>
             )}
             {!uploading && uploadedPath && (
@@ -322,11 +424,30 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
                 </button>
               </div>
             )}
+            <label className="flex items-start gap-2 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={recordAudio}
+                disabled={recording}
+                onChange={(e) => setRecordAudio(e.target.checked)}
+                className="mt-0.5 accent-sky-500 disabled:opacity-40"
+              />
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-[12px] text-th-text-secondary group-hover:text-th-text-primary">
+                  <Mic size={12} className="shrink-0" /> Record audio
+                </span>
+                <span className="block text-[10px] text-th-text-muted leading-relaxed mt-0.5">
+                  {audioDevices.some((d) => d.is_loopback)
+                    ? "Captures what's playing via your loopback device."
+                    : "Captures your microphone. macOS can't record playback without a loopback device such as BlackHole."}
+                </span>
+              </span>
+            </label>
             {!recording ? (
               <button
                 type="button"
                 onClick={handleStartRecording}
-                disabled={!sessionId}
+                disabled={creatingSession}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-red-500/90 hover:bg-red-500 text-white text-[13px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Circle size={14} className="fill-current" /> Record screen
@@ -341,10 +462,37 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
                 Stop — {Math.floor(elapsed)}s
               </button>
             )}
+            {recording && livePreview && (
+              <div className="relative rounded-lg overflow-hidden border border-th-border bg-black/40 aspect-video">
+                <img
+                  src={api.videoPreviewUrl(previewTick)}
+                  alt="Screen recording preview"
+                  className="w-full h-full object-contain"
+                />
+                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 text-[9px] font-medium text-white uppercase tracking-wider">
+                  <Circle size={6} className="fill-red-500 text-red-500" />
+                  Recording
+                </span>
+              </div>
+            )}
             {recordedPath && (
-              <p className="text-[11px] text-emerald-400">
-                Recorded — ready to watch.
-              </p>
+              <a
+                href={sessionId ? api.getSessionFileUrl(sessionId, recordedPath.replace(/^\//, "")) : undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-th-border bg-th-surface/60 hover:bg-th-surface-hover transition-colors group"
+                title="Play the recording"
+              >
+                <Video size={13} className="shrink-0 text-rose-400" />
+                <span className="text-[12px] text-th-text-secondary group-hover:text-th-text-primary truncate flex-1 font-mono">
+                  {recordedPath.split("/").pop()}
+                </span>
+                {recordedSize !== null && (
+                  <span className="text-[10px] text-th-text-muted shrink-0">
+                    {formatFileSize(recordedSize)}
+                  </span>
+                )}
+              </a>
             )}
           </div>
         )}
@@ -371,9 +519,33 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
         {tab === "live" && (
           <div className="space-y-3">
             {!geminiConfigured && (
-              <div className="flex items-start gap-2 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5">
-                <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                <span>Realtime watching needs a Gemini API key (Settings → LLM → Frontier → Google Gemini).</span>
+              <div className="flex items-start gap-2 text-[11px] text-th-text-tertiary bg-th-surface/60 border border-th-border rounded-lg p-2.5">
+                <Radio size={13} className="shrink-0 mt-0.5" />
+                <span>
+                  Without a Gemini key this watches in short batches with your
+                  local model — it describes the last few seconds every so often
+                  rather than reacting instantly, and occupies the model while it
+                  does.
+                </span>
+              </div>
+            )}
+            {live.watching && livePreview && (
+              <div className="relative rounded-lg overflow-hidden border border-th-border bg-black/40 aspect-video">
+                {live.frame ? (
+                  <img
+                    src={live.frame}
+                    alt="Live screen preview"
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center text-[11px] text-th-text-muted">
+                    Waiting for the first frame…
+                  </div>
+                )}
+                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 text-[9px] font-medium text-white uppercase tracking-wider">
+                  <Circle size={6} className="fill-red-500 text-red-500" />
+                  {live.mode === "local" ? "Local" : "Gemini"}
+                </span>
               </div>
             )}
             <textarea
@@ -386,8 +558,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
             <button
               type="button"
               onClick={handleToggleLive}
-              disabled={!geminiConfigured}
-              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-[13px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-[13px] font-medium transition-all ${
                 live.watching
                   ? "bg-th-surface border border-th-border hover:bg-th-surface-hover text-th-text-primary"
                   : "bg-sky-500/90 hover:bg-sky-500 text-white"
@@ -399,6 +570,15 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
                 <><Radio size={14} /> Start live watching</>
               )}
             </button>
+            {liveToAgent !== "off" && (
+              <p className="text-[11px] text-th-text-muted">
+                {!canSendAgentContext()
+                  ? "Commentary can't reach the agent until a chat is open."
+                  : liveToAgent === "stream"
+                    ? `Commentary is passed to the agent every ${flushSecs}s as context, and folded into whatever you ask next.`
+                    : "Commentary is passed to the agent as context when you stop watching."}
+              </p>
+            )}
             {live.error && (
               <p className="text-[11px] text-red-400">{live.error}</p>
             )}
@@ -470,10 +650,10 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
               <button
                 type="button"
                 onClick={handleAnalyze}
-                disabled={analyzing || !currentSource() || !sessionId}
+                disabled={analyzing || creatingSession || !currentSource()}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-sky-500/90 hover:bg-sky-500 text-white text-[13px] font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {analyzing ? <Loader2 size={14} className="animate-spin" /> : <Video size={14} />}
+                {analyzing || creatingSession ? <Loader2 size={14} className="animate-spin" /> : <Video size={14} />}
                 Analyse
               </button>
               <button

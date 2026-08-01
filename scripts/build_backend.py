@@ -366,6 +366,7 @@ def _video_args() -> list[str]:
         "--hidden-import", "backend.video.gemini",
         "--hidden-import", "backend.video.recorder",
         "--hidden-import", "backend.video.live_watcher",
+        "--hidden-import", "backend.video.live_local",
         "--hidden-import", "backend.video_tools",
         "--hidden-import", "backend.routes.video",
         "--hidden-import", "backend.routes.video_ws",

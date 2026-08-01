@@ -20,12 +20,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Response
 
 from backend.capture import screen_capture as sc
 from backend.config import AppConfig
 from backend.session_manager import _session_files_dir
-from backend.video import recorder
+from backend.video import ingest, recorder
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +71,43 @@ async def video_status() -> dict[str, Any]:
     return recorder.manager.status()
 
 
+@router.get("/preview")
+async def video_preview() -> Response:
+    """A single JPEG of the screen right now, for the panel's live preview.
+
+    ffmpeg owns the capture device while recording, so rather than tapping its
+    output this grabs its own frame — the same call the live watchers use, so
+    the preview matches what a model would be shown. Polled by the client, so
+    it must never be cached.
+    """
+    cfg = await AppConfig.aload()
+    if not cfg.video.live_preview:
+        return Response(status_code=204)
+    frame = await asyncio.to_thread(
+        ingest.grab_screen_jpeg, int(cfg.video.frame_max_side or 1024),
+    )
+    if not frame:
+        return Response(status_code=204)
+    return Response(
+        content=frame,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/audio-devices")
+async def video_audio_devices() -> dict[str, Any]:
+    """avfoundation audio inputs available to record alongside the screen."""
+    devices = await asyncio.to_thread(recorder.list_devices)
+    return {"devices": devices["audio"]}
+
+
 @router.post("/record/start")
 async def video_record_start(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Begin recording the screen into the given session's sandbox.
 
-    Body: ``{session_id, fps?}``.
+    Body: ``{session_id, fps?, audio?}``.  ``audio`` overrides the configured
+    default for this one recording.
     """
     session_id = str(body.get("session_id") or "").strip()
     if not session_id:
@@ -83,9 +115,20 @@ async def video_record_start(body: dict[str, Any] = Body(...)) -> dict[str, Any]
     cfg = await AppConfig.aload()
     fps = float(body.get("fps") or 5.0)
     max_side = int(cfg.video.frame_max_side or 1280)
+
+    want_audio = bool(body.get("audio", cfg.video.record_audio))
+    audio_device = None
+    if want_audio:
+        audio_device = await asyncio.to_thread(
+            recorder.resolve_audio_device, cfg.video.record_audio_device or "",
+        )
+        if audio_device is None:
+            return {"error": "No audio input device is available to record."}
+
     dest = _recordings_dir(session_id)
     result = await asyncio.to_thread(
         recorder.manager.start, dest, fps=fps, max_side=max_side,
+        audio_device=audio_device,
     )
     if result.get("path"):
         result["virtual_path"] = _to_virtual(session_id, result["path"])

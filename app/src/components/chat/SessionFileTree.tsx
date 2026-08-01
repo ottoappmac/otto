@@ -19,6 +19,7 @@ import {
   FolderOpen,
   Image as ImageIcon,
   Trash2,
+  Video,
 } from "lucide-react";
 import { artifactTypeFromPath, type ArtifactType } from "./ArtifactPanel";
 import { formatFileSize } from "../../utils/formatFileSize";
@@ -39,10 +40,15 @@ function iconFor(type: ArtifactType | null) {
     type === "pdf" ? "text-red-400/70 group-hover:text-red-400"
     : type === "csv" || type === "xlsx" ? "text-emerald-400/70 group-hover:text-emerald-400"
     : type === "image" ? "text-purple-400/70 group-hover:text-purple-400"
+    : type === "video" ? "text-rose-400/70 group-hover:text-rose-400"
     : type === "json" ? "text-amber-400/70 group-hover:text-amber-400"
     : type ? "text-blue-400/70 group-hover:text-blue-400"
     : "text-th-text-muted group-hover:text-th-text-secondary";
-  const Icon = type === "image" ? ImageIcon : type === "json" ? FileJson : FileText;
+  const Icon =
+    type === "image" ? ImageIcon
+    : type === "video" ? Video
+    : type === "json" ? FileJson
+    : FileText;
   return { Icon, cls };
 }
 

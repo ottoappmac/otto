@@ -13,7 +13,7 @@ import ModelChooser from "../components/mlx/ModelChooser";
 import { OmlxModelPicker } from "../components/omlx/OmlxModelPicker";
 import { MemoryPanel, AmbientPanel } from "./MemoryPage";
 import VoiceModelChooser from "../components/voice/VoiceModelChooser";
-import type { AppSettings, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VoiceConfig } from "../types";
+import type { AppSettings, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
 
 const TABS = ["LLM", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Video", "Advanced", "Observability", "Privacy & Security", "About"] as const;
 type Tab = (typeof TABS)[number];
@@ -202,7 +202,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   exo: { enabled: false, mode: "prebuilt", prebuilt_url: "", repo_url: "https://github.com/exo-explore/exo.git", repo_ref: "v1.0.71", api_port: 52415, libp2p_port: 0, base_url: "", model_name: "", auto_start: false, auto_provision: true, no_terminal_wrap: false, min_nodes: 1, max_tokens: 8192, enable_thinking: false, sharding: "Pipeline", instance_meta: "MlxRing", remotes: [] },
   omlx: { enabled: false, api_port: 52414, base_url: "", model_name: "", auto_start: false, brew_tap: "jundot/omlx", brew_tap_url: "https://github.com/jundot/omlx", brew_formula: "omlx", cli_path: "", model_dirs: ["~/.cache/huggingface/hub"], max_context_window: 131072, thinking_enabled: false, max_tokens: 8192 },
   activity: { enabled: false, interval_secs: 5, retain_days: 30, exclude_apps: [], idle_threshold_secs: 60, min_span_secs: 5, max_span_secs: 300, context_max_chars: 500, field_val_max_chars: 200, browser_text_max_chars: 500, ax_walk_max_chars: 2000, ax_walk_max_depth: 5, max_db_mb: 500 },
-  video: { provider_preference: "follow_main", frame_rate: 1.0, media_resolution: "default", max_duration_secs: 1800, max_frames: 60, frames_per_request: 24, frame_max_side: 1024, include_audio: true, realtime_fps: 1.0, youtube_enabled: true, cache_transcripts: true, debug_save_frames: false },
+  video: { provider_preference: "follow_main", frame_rate: 1.0, media_resolution: "default", max_duration_secs: 1800, max_frames: 60, frames_per_request: 24, frame_max_side: 1024, include_audio: true, realtime_fps: 1.0, youtube_enabled: true, cache_transcripts: true, debug_save_frames: false, record_audio: false, record_audio_device: "", live_preview: true, live_to_agent: "off", live_agent_flush_secs: 20, live_batch_secs: 12, live_batch_frames: 4 },
   privacy: { enabled: false, local_only_providers: ["mlx", "omlx", "exo"], allowed_hosts: [], allow_loopback: true, allow_mdns: true, pf_anchor: "otto.privacy", engaged_at: "", audit_token: "" },
   auto_approve_commands: false,
   ambient_suggest_recurrence: false,
@@ -3435,6 +3435,13 @@ export default function SettingsPage() {
             youtube_enabled: true,
             cache_transcripts: true,
             debug_save_frames: false,
+            record_audio: false,
+            record_audio_device: "",
+            live_preview: true,
+            live_to_agent: "off",
+            live_agent_flush_secs: 20,
+            live_batch_secs: 12,
+            live_batch_frames: 4,
           };
           const v = settings.video ?? VIDEO_DEFAULTS;
           const setV = (patch: Partial<typeof VIDEO_DEFAULTS>) =>
@@ -3582,8 +3589,88 @@ export default function SettingsPage() {
                   }}
                 />
                 <p className="text-[11px] text-th-text-muted leading-relaxed">
-                  Realtime "live watching" streams the screen to Gemini Live and requires
-                  a Gemini API key. Gemini Live accepts at most 1 frame per second.
+                  With a Gemini API key, live watching streams the screen to Gemini
+                  Live, which accepts at most 1 frame per second. Without one it
+                  falls back to your local vision model, which describes a batch of
+                  recent frames every few seconds instead.
+                </p>
+              </div>
+            </Card>
+
+            <ScreenAudioSettings
+              recordAudio={!!v.record_audio}
+              device={v.record_audio_device ?? ""}
+              onChange={setV}
+            />
+
+            <Card title="Live watching" dot="bg-sky-400">
+              <div className="space-y-4">
+                <Toggle
+                  label="Show a preview of what's being watched"
+                  checked={!!v.live_preview}
+                  onChange={(val) => setV({ live_preview: val })}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  Mirrors each captured frame into the Watch panel so you can see
+                  exactly what the model is being shown, and confirm the right
+                  screen is being captured.
+                </p>
+                <SelectField
+                  label="Pass commentary to the agent"
+                  value={v.live_to_agent}
+                  onChange={(val) => setV({ live_to_agent: val })}
+                  options={[
+                    { value: "off", label: "Off — commentary stays in the Watch panel" },
+                    { value: "on_stop", label: "When I stop — hand over the whole session at once" },
+                    { value: "stream", label: "Live — hand over in chunks while watching" },
+                  ]}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  Commentary is passed as context, not as a message, so it never
+                  starts an agent turn on its own — it's folded into whatever you
+                  ask next, or injected into a run already in progress.
+                </p>
+                {v.live_to_agent === "stream" && (
+                  <InputField
+                    label="Seconds of commentary per hand-off"
+                    type="number"
+                    min={5}
+                    max={300}
+                    value={String(v.live_agent_flush_secs ?? 20)}
+                    onChange={(val) => {
+                      const n = Math.max(5, Math.min(300, parseInt(val) || 20));
+                      setV({ live_agent_flush_secs: n });
+                    }}
+                  />
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <InputField
+                    label="Local batch length (seconds)"
+                    type="number"
+                    min={3}
+                    max={120}
+                    value={String(v.live_batch_secs ?? 12)}
+                    onChange={(val) => {
+                      const n = Math.max(3, Math.min(120, parseInt(val) || 12));
+                      setV({ live_batch_secs: n });
+                    }}
+                  />
+                  <InputField
+                    label="Frames per local batch"
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={String(v.live_batch_frames ?? 4)}
+                    onChange={(val) => {
+                      const n = Math.max(1, Math.min(16, parseInt(val) || 4));
+                      setV({ live_batch_frames: n });
+                    }}
+                  />
+                </div>
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-1">
+                  Only used when watching without Gemini. Shorter batches react
+                  faster but interrupt the model more often; each batch occupies
+                  it for the length of one request.
                 </p>
               </div>
             </Card>
@@ -4786,6 +4873,71 @@ function OmlxQuickPanel({
       </p>
       </>)}
     </div>
+  );
+}
+
+/**
+ * Screen-recording audio controls. Split out because the device list has to
+ * be fetched, and the Video tab's body is a conditionally-evaluated IIFE
+ * where a hook can't live.
+ */
+function ScreenAudioSettings({
+  recordAudio,
+  device,
+  onChange,
+}: {
+  recordAudio: boolean;
+  device: string;
+  onChange: (patch: { record_audio?: boolean; record_audio_device?: string }) => void;
+}) {
+  const [devices, setDevices] = useState<VideoAudioDevice[]>([]);
+  useEffect(() => {
+    api.videoAudioDevices()
+      .then((r) => setDevices(r.devices))
+      .catch(() => setDevices([]));
+  }, []);
+  const hasLoopback = devices.some((d) => d.is_loopback);
+
+  return (
+    <Card title="Screen recording audio" dot="bg-neutral-400">
+      <div className="space-y-4">
+        <Toggle
+          label="Record audio with screen recordings"
+          checked={recordAudio}
+          onChange={(val) => onChange({ record_audio: val })}
+        />
+        <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+          Adds a sound track to the mp4, which is then transcribed when the
+          recording is analysed. Needs the Microphone permission on top of
+          Screen Recording.
+        </p>
+        {recordAudio && (
+          <>
+            <SelectField
+              label="Audio input"
+              value={device}
+              onChange={(val) => onChange({ record_audio_device: val })}
+              options={[
+                { value: "", label: hasLoopback ? "Automatic — prefer the loopback device" : "Automatic — first available input" },
+                ...devices.map((d) => ({
+                  value: d.index,
+                  label: d.is_loopback ? `${d.name} (captures playback)` : d.name,
+                })),
+              ]}
+            />
+            {!hasLoopback && (
+              <p className="text-xs text-amber-400 flex items-start gap-1.5">
+                <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                These are all microphones, so the recording will capture the room
+                rather than what the Mac is playing. macOS exposes no system-audio
+                input; installing a virtual loopback device such as BlackHole makes
+                one appear here.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
   );
 }
 

@@ -1347,10 +1347,24 @@ export interface VideoConfig {
   realtime_fps: number;
   /** Allow YouTube URL input (public videos only). */
   youtube_enabled: boolean;
+  /** Record a sound track alongside screen recordings. */
+  record_audio: boolean;
+  /** avfoundation audio device index; empty picks one automatically. */
+  record_audio_device: string;
   /** Keep the Whisper transcript in the session and reuse it. */
   cache_transcripts: boolean;
   /** Write sampled frames into the session's video-frames/ folder. */
   debug_save_frames: boolean;
+  /** Mirror captured frames back to the Watch panel while it watches. */
+  live_preview: boolean;
+  /** What to do with live commentary: "off" | "on_stop" | "stream". */
+  live_to_agent: string;
+  /** Seconds of commentary coalesced per hand-off in "stream" mode. */
+  live_agent_flush_secs: number;
+  /** Seconds per batch when live-watching without Gemini. */
+  live_batch_secs: number;
+  /** Frames per batch when live-watching without Gemini. */
+  live_batch_frames: number;
 }
 
 export interface OmlxConfig {
@@ -1723,6 +1737,8 @@ export interface VideoRecordStatus {
   path: string | null;
   elapsed_secs: number;
   fps: number;
+  /** Whether the active recording is capturing a sound track. */
+  audio?: boolean;
 }
 
 /** Result of POST /api/video/record/{start,stop}. */
@@ -1732,14 +1748,27 @@ export interface VideoRecordResult {
   fps?: number;
   duration_secs?: number;
   size_bytes?: number;
+  audio?: boolean;
   error?: string;
+}
+
+/** An avfoundation audio input, from GET /api/video/audio-devices. */
+export interface VideoAudioDevice {
+  index: string;
+  name: string;
+  /** Name looks like a virtual loopback, so it can capture playback. */
+  is_loopback: boolean;
 }
 
 /** One event from the /ws/watch realtime live-watching channel. */
 export interface WatchWSEvent {
-  type: "state" | "commentary" | "error" | "pong";
+  type: "state" | "mode" | "commentary" | "frame" | "error" | "pong";
   state?: "watching" | "idle";
+  /** Which path served the session: Gemini Live, or local frame batches. */
+  mode?: "gemini" | "local";
   text?: string;
+  /** Base64 JPEG of the frame just captured (live preview). */
+  jpeg_b64?: string;
   message?: string;
 }
 

@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import logging
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -24,28 +23,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_LIVE_MODEL = "gemini-2.0-flash-live-001"
 
 EventCb = Callable[[dict], Awaitable[None]]
-
-
-def _grab_screen_jpeg(max_side: int) -> Optional[bytes]:
-    """Capture the desktop and return a downscaled JPEG, or None."""
-    from backend.capture import screen_capture as sc
-    from backend.video import ingest
-
-    result = sc.capture("desktop")
-    b64 = result.get("image_b64") if isinstance(result, dict) else None
-    if not b64:
-        return None
-    try:
-        from PIL import Image
-
-        raw = base64.b64decode(b64)
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=80)
-        return ingest.downscale_jpeg(buf.getvalue(), max_side)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("live frame encode failed: %s", exc)
-        return None
 
 
 class LiveWatchSession:
@@ -60,6 +37,7 @@ class LiveWatchSession:
         fps: float = 1.0,
         max_side: int = 1024,
         include_audio: bool = False,
+        emit_frames: bool = False,
         on_event: EventCb,
     ) -> None:
         self.api_key = api_key
@@ -69,6 +47,7 @@ class LiveWatchSession:
         self.fps = max(0.1, min(1.0, float(fps)))
         self.max_side = int(max_side)
         self.include_audio = include_audio
+        self.emit_frames = emit_frames
         self.on_event = on_event
         self._stop = asyncio.Event()
 
@@ -116,9 +95,11 @@ class LiveWatchSession:
             await self.on_event({"type": "state", "state": "idle"})
 
     async def _send_frames(self, session, types) -> None:
+        from backend.video import ingest
+
         interval = 1.0 / self.fps
         while not self._stop.is_set():
-            frame = await asyncio.to_thread(_grab_screen_jpeg, self.max_side)
+            frame = await asyncio.to_thread(ingest.grab_screen_jpeg, self.max_side)
             if frame:
                 try:
                     await session.send_realtime_input(
@@ -126,6 +107,11 @@ class LiveWatchSession:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("send frame failed: %s", exc)
+                if self.emit_frames:
+                    await self.on_event({
+                        "type": "frame",
+                        "jpeg_b64": base64.standard_b64encode(frame).decode(),
+                    })
             await asyncio.sleep(interval)
 
     async def _receive(self, session) -> None:

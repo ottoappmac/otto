@@ -1,15 +1,17 @@
 /**
- * useWatch — connects to /ws/watch for realtime "live watching" of the
- * screen via Gemini Live.
+ * useWatch — connects to /ws/watch for "live watching" of the screen.
  *
- * The backend streams screen frames (and optional mic audio) to Gemini and
- * relays the model's running text commentary back over the socket. This hook
- * exposes a simple start/stop API plus the accumulated commentary.
+ * The backend captures screen frames and relays a running text commentary
+ * back over the socket, either from Gemini Live (realtime) or from a local
+ * vision model describing a batch of frames every few seconds — `mode` says
+ * which. When the live preview is enabled it also relays each captured frame
+ * so the panel can show what the model is being shown.
  *
  * Usage:
  *   const w = useWatch({ enabled: open });
  *   w.start({ prompt, fps, audio }); w.stop();
  *   w.commentary  — accumulated commentary lines
+ *   w.frame       — data URL of the most recent frame, if previewing
  *   w.watching    — true while a live session is active
  */
 
@@ -39,7 +41,11 @@ export interface StartWatchParams {
 export interface UseWatchReturn {
   connected: boolean;
   watching: boolean;
+  /** Which backend served the session, known once watching starts. */
+  mode: "gemini" | "local" | null;
   commentary: WatchCommentaryLine[];
+  /** Data URL of the latest captured frame, when the preview is on. */
+  frame: string | null;
   error: string | null;
   start: (params?: StartWatchParams) => void;
   stop: () => void;
@@ -50,7 +56,9 @@ export interface UseWatchReturn {
 export function useWatch({ enabled = false }: UseWatchOptions = {}): UseWatchReturn {
   const [connected, setConnected] = useState(false);
   const [watching, setWatching] = useState(false);
+  const [mode, setMode] = useState<"gemini" | "local" | null>(null);
   const [commentary, setCommentary] = useState<WatchCommentaryLine[]>([]);
+  const [frame, setFrame] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -107,6 +115,13 @@ export function useWatch({ enabled = false }: UseWatchOptions = {}): UseWatchRet
       switch (event.type) {
         case "state":
           setWatching(event.state === "watching");
+          if (event.state !== "watching") setFrame(null);
+          break;
+        case "mode":
+          setMode(event.mode ?? null);
+          break;
+        case "frame":
+          if (event.jpeg_b64) setFrame(`data:image/jpeg;base64,${event.jpeg_b64}`);
           break;
         case "commentary":
           if (event.text) {
@@ -151,6 +166,7 @@ export function useWatch({ enabled = false }: UseWatchOptions = {}): UseWatchRet
       teardownSocket();
       setConnected(false);
       setWatching(false);
+      setFrame(null);
     }
     return () => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
@@ -168,6 +184,7 @@ export function useWatch({ enabled = false }: UseWatchOptions = {}): UseWatchRet
   const stop = useCallback(() => {
     send({ type: "stop" });
     setWatching(false);
+    setFrame(null);
   }, [send]);
   const clear = useCallback(() => setCommentary([]), []);
   const clearError = useCallback(() => setError(null), []);
@@ -175,7 +192,9 @@ export function useWatch({ enabled = false }: UseWatchOptions = {}): UseWatchRet
   return {
     connected,
     watching,
+    mode,
     commentary,
+    frame,
     error,
     start,
     stop,

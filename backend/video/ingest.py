@@ -323,6 +323,30 @@ def download_youtube(url: str, dest_dir: str | Path, *, max_height: int = 720) -
     return p
 
 
+def grab_screen_jpeg(max_side: int) -> Optional[bytes]:
+    """Capture the desktop and return a downscaled JPEG, or None.
+
+    Shared by every live-watching path (Gemini, the local frame batcher and
+    the panel's preview) so they all see byte-identical frames.
+    """
+    from backend.capture import screen_capture as sc
+
+    result = sc.capture("desktop")
+    b64 = result.get("image_b64") if isinstance(result, dict) else None
+    if not b64:
+        return None
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return downscale_jpeg(buf.getvalue(), max_side)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("screen frame encode failed: %s", exc)
+        return None
+
+
 def downscale_jpeg(jpeg_bytes: bytes, max_side: int) -> bytes:
     """Return a JPEG re-encoded with the longest side capped at *max_side*."""
     try:

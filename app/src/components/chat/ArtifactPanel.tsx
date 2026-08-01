@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Globe, RefreshCw, Image as ImageIcon, FileJson, FileCode2 } from "lucide-react";
+import { X, ExternalLink, FileText, Globe, RefreshCw, Image as ImageIcon, FileJson, FileCode2, Video } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -7,7 +7,7 @@ import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 
 export type ArtifactType =
-  | "html" | "md" | "pdf" | "docx" | "txt" | "csv" | "xlsx" | "image" | "json" | "code";
+  | "html" | "md" | "pdf" | "docx" | "txt" | "csv" | "xlsx" | "image" | "video" | "json" | "code";
 
 export interface Artifact {
   path: string;       // virtual path, e.g. "output/report.html"
@@ -43,6 +43,7 @@ export function artifactTypeFromPath(path: string): ArtifactType | null {
   if (p.endsWith(".xlsx")) return "xlsx";
   if (p.endsWith(".json")) return "json";
   if (/\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/.test(p)) return "image";
+  if (/\.(mp4|m4v|mov|webm)$/.test(p)) return "video";
   if (CODE_EXT_RE.test(p)) return "code";
   return null;
 }
@@ -295,12 +296,14 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
     artifact.type === "pdf"  ? "text-red-400"  :
     artifact.type === "xlsx" || artifact.type === "csv" ? "text-emerald-400" :
     artifact.type === "image" ? "text-purple-400" :
+    artifact.type === "video" ? "text-rose-400" :
     artifact.type === "json" ? "text-amber-400" :
     artifact.type === "code" ? "text-sky-400" :
     "text-th-text-secondary";
   const Icon =
     artifact.type === "html" ? Globe :
     artifact.type === "image" ? ImageIcon :
+    artifact.type === "video" ? Video :
     artifact.type === "json" ? FileJson :
     artifact.type === "code" ? FileCode2 :
     FileText;
@@ -370,6 +373,15 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
               src={artifact.fileUrl}
               alt={filename}
               className="max-w-full max-h-full object-contain rounded-lg border border-th-border bg-white"
+            />
+          </div>
+        ) : artifact.type === "video" ? (
+          <div className="h-full overflow-auto flex items-center justify-center p-6 bg-th-inset-bg/40">
+            <video
+              key={artifact.fileUrl}
+              src={artifact.fileUrl}
+              controls
+              className="max-w-full max-h-full rounded-lg border border-th-border bg-black"
             />
           </div>
         ) : loading ? (

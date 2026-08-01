@@ -934,6 +934,35 @@ class VideoConfig(BaseModel):
     realtime_fps: float = 1.0
     # Allow passing YouTube URLs (public videos only).
     youtube_enabled: bool = True
+    # Record a sound track alongside screen recordings.  Off by default: it
+    # needs the Microphone permission on top of Screen Recording, and what it
+    # captures is an *input* — the mic, unless a virtual loopback device is
+    # installed.  See backend.video.recorder.
+    record_audio: bool = False
+    # avfoundation audio device index to record.  Empty means "pick one":
+    # a loopback device if one exists, else the first input.
+    record_audio_device: str = ""
+    # Mirror the frames being captured back to the Watch panel so you can see
+    # exactly what the model is being shown while it watches.
+    live_preview: bool = True
+    # What to do with live commentary:
+    #   "off"     — it stays in the Watch panel and is discarded on close.
+    #   "on_stop" — the whole session's commentary is handed to the agent once,
+    #               when you stop watching.
+    #   "stream"  — commentary is handed over in chunks while you watch.
+    # Both non-off modes go through the session's *context* channel rather than
+    # sending messages, so they never kick off an agent turn on their own; the
+    # notes are folded into whatever you ask next (or injected mid-run when the
+    # agent is already working).
+    live_to_agent: str = "off"  # "off" | "on_stop" | "stream"
+    # Seconds of commentary to coalesce before handing a chunk to the agent in
+    # "stream" mode.  Pushing every fragment would bury the conversation.
+    live_agent_flush_secs: int = 20
+    # Non-Gemini providers have no realtime video API, so live watching falls
+    # back to describing a small batch of recent frames every few seconds.
+    # Longer batches cost less and read better; shorter ones react faster.
+    live_batch_secs: int = 12
+    live_batch_frames: int = 4
     # Keep the Whisper transcript in the session's ``transcripts/`` folder and
     # reuse it instead of re-transcribing.  Transcription dominates the cost of
     # the frame path (frame sampling is milliseconds), so this is on by default.

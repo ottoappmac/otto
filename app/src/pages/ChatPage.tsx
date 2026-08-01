@@ -27,6 +27,8 @@ import { CRON_PRESETS } from "../types";
 import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJob, SessionInfo, WSMessage } from "../types";
 import { useVoice } from "../hooks/useVoice";
 import { onAskOtto } from "../utils/askOttoBus";
+import { subscribeSessionFiles } from "../utils/sessionFilesBus";
+import { onAgentContext } from "../utils/agentContextBus";
 import type { AskPayload } from "../utils/askOttoBus";
 import type { AskImage } from "../types";
 import logoDark from "../assets/logo-dark.png";
@@ -619,6 +621,15 @@ export default function ChatPage() {
     api.listSessionFiles(sid).then(setSessionFiles).catch(() => {});
   }, []);
 
+  // Surfaces outside the chat (the Watch panel) write into the session
+  // sandbox without an agent turn to trigger the usual reload.
+  useEffect(
+    () => subscribeSessionFiles((sid) => {
+      if (sid === currentSessionId) refreshSessionFiles(sid);
+    }),
+    [currentSessionId, refreshSessionFiles],
+  );
+
   const handleMessage = useCallback((msg: WSMessage) => {
     const sid = sessionIdRef.current ?? "";
     if (msg.type === "done") {
@@ -782,6 +793,13 @@ export default function ChatPage() {
   useEffect(() => {
     setWsConnected(connected);
   }, [connected, setWsConnected]);
+
+  // Live commentary from the Watch panel arrives as context rather than as a
+  // message, so narrating a screen never starts a turn on its own.
+  useEffect(
+    () => onAgentContext((text) => { sendContext(text); }),
+    [sendContext],
+  );
 
   const prevConnected = useRef(false);
   useEffect(() => {
