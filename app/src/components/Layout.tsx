@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import TranscribeDrawer from "./transcribe/TranscribeDrawer";
+import WatchDrawer from "./watch/WatchDrawer";
 import StealthTitlebar from "./stealth/StealthTitlebar";
 import { ConnectionBanner } from "./ConnectionBanner";
 import AmbientNotificationBanner from "./ambient/AmbientNotificationBanner";
@@ -10,6 +11,7 @@ import { useAmbientHints } from "../hooks/useAmbientHints";
 import { useNotification } from "../context/NotificationContext";
 import { onPendingRoute, nativeNotify } from "../utils/nativeNotify";
 import { closeTranscribePanel, isTranscribePanelOpen, subscribeTranscribePanel } from "../utils/transcribePanel";
+import { closeWatchPanel, isWatchPanelOpen, subscribeWatchPanel } from "../utils/watchPanel";
 import { isStealthWindow } from "../utils/stealthWindow";
 import type { AmbientHint } from "../types";
 
@@ -56,6 +58,11 @@ export default function Layout() {
   // driven by the Sidebar's "Transcribe" nav item via a shared module store.
   const [showTranscribe, setShowTranscribe] = useState(isTranscribePanelOpen);
   useEffect(() => subscribeTranscribePanel(setShowTranscribe), []);
+
+  // Video "Watch" side panel — mounted once here so its live-watch WebSocket
+  // and any in-progress screen recording persist across route changes.
+  const [showWatch, setShowWatch] = useState(isWatchPanelOpen);
+  useEffect(() => subscribeWatchPanel(setShowWatch), []);
 
 
   const { pendingCount: _pendingCount, markSeen } = useAmbientHints(
@@ -135,6 +142,8 @@ export default function Layout() {
           In stealth mode Live Capture is its own separate panel/window, so this
           docked drawer is only for the normal (main) window. */}
       {!STEALTH && <TranscribeDrawer open={showTranscribe} onClose={closeTranscribePanel} />}
+
+      {!STEALTH && <WatchDrawer open={showWatch} onClose={closeWatchPanel} />}
 
       {!STEALTH && <Sidebar />}
 

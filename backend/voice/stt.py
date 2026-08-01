@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -28,8 +30,46 @@ _HALLUCINATIONS: frozenset[str] = frozenset({
 })
 
 
+# Words that, on their own, only ever show up in Whisper's near-silence filler.
+# A transcript built entirely from these is a hallucination no matter how they
+# are arranged — something the exact-string set above cannot express, since it
+# misses rearrangements like "you Thank you.".  Requiring *every* token to be
+# filler keeps real speech safe: one ordinary word is enough to pass.
+_FILLER_TOKENS: frozenset[str] = frozenset({
+    "a", "again", "bye", "for", "goodbye", "much", "next", "please", "see",
+    "so", "soon", "subscribe", "thank", "thanks", "the", "time", "to",
+    "video", "watching", "you",
+})
+
+# Whisper loops a single token when fed non-speech audio (traffic noise, music),
+# emitting things like "Sm Sm Sm …" hundreds of times.  Flag a transcript when
+# one token accounts for at least this share of it.  Using the dominant token's
+# share rather than a unique/total ratio keeps the test scale-invariant: a long
+# genuine transcript repeats function words but none of them dominate.
+_REPETITION_DOMINANCE = 0.5
+_MIN_REPETITION_TOKENS = 6
+
+
+def _tokenise(text: str) -> list[str]:
+    return [t for t in re.split(r"[^\w']+", text.lower()) if t]
+
+
+def _is_degenerate_repetition(tokens: list[str]) -> bool:
+    if len(tokens) < _MIN_REPETITION_TOKENS:
+        return False
+    _, count = Counter(tokens).most_common(1)[0]
+    return count / len(tokens) >= _REPETITION_DOMINANCE
+
+
 def _is_hallucination(text: str) -> bool:
-    return text.strip().lower() in _HALLUCINATIONS
+    if text.strip().lower() in _HALLUCINATIONS:
+        return True
+    tokens = _tokenise(text)
+    if not tokens:
+        return True
+    if _is_degenerate_repetition(tokens):
+        return True
+    return all(t in _FILLER_TOKENS for t in tokens)
 
 
 # ---------------------------------------------------------------------------

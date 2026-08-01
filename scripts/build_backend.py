@@ -331,6 +331,47 @@ def _embedding_args() -> list[str]:
     ]
 
 
+def _video_args() -> list[str]:
+    """Video understanding ("watch video") stack.
+
+    Every member here is imported **lazily** (inside functions / route
+    handlers) so PyInstaller's static bytecode walk never reaches them —
+    they must be hinted explicitly or the packaged app crashes the first
+    time the feature is used:
+
+    - ``langchain_google_genai`` / ``google.genai`` — the Gemini provider
+      (``deep_agent.model_factory.create_llm``) and native video path
+      (``backend.video.gemini``, ``backend.video.live_watcher``) import
+      these inside functions.  ``google.auth`` is a hard runtime dep of
+      the genai SDK's client construction, so it's collected too.
+    - ``imageio_ffmpeg`` — ships a **static ffmpeg binary as package
+      data** used to sample frames and record the screen; ``--collect-all``
+      is required so that binary lands in the bundle (a bare hidden-import
+      would ship the Python shim without the executable).
+    - ``yt_dlp`` — downloads public YouTube videos for the frame-based
+      path; imported lazily in ``backend.video.ingest``.
+
+    The ``backend.video.*`` hidden-imports cover the two submodules only
+    reached through function-level imports (``gemini`` via
+    ``backend.video_tools`` and ``live_watcher`` via the WS route).
+    """
+    return [
+        "--collect-all", "langchain_google_genai",
+        "--collect-all", "google.genai",
+        "--collect-all", "google.auth",
+        "--collect-all", "imageio_ffmpeg",
+        "--collect-all", "yt_dlp",
+        "--hidden-import", "backend.video",
+        "--hidden-import", "backend.video.ingest",
+        "--hidden-import", "backend.video.gemini",
+        "--hidden-import", "backend.video.recorder",
+        "--hidden-import", "backend.video.live_watcher",
+        "--hidden-import", "backend.video_tools",
+        "--hidden-import", "backend.routes.video",
+        "--hidden-import", "backend.routes.video_ws",
+    ]
+
+
 def _evaluation_args() -> list[str]:
     """DeepEval end-of-run evaluation stack (``tools.evaluation`` + ``eval_runner``).
 
@@ -465,6 +506,7 @@ def _build_pyinstaller_command(build_name: str) -> list[str]:
         *_mlx_args(),
         *_embedding_args(),
         *_evaluation_args(),
+        *_video_args(),
         *_exclude_args(),
         str(BACKEND_ENTRY),
     ]

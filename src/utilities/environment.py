@@ -87,6 +87,12 @@ class Environment:
     OPENAI_AZURE_DEPLOYMENT = ""
     OPENAI_MAX_TOKENS = "16384"
     OPENAI_TEMPERATURE = "0.0"
+    # Google Gemini (Generative Language API) — native video understanding
+    GOOGLE_API_KEY = ""
+    GOOGLE_MODEL_NAME = "gemini-2.5-flash"
+    GOOGLE_MEDIA_RESOLUTION = "default"  # "default" | "low"
+    GOOGLE_MAX_TOKENS = "16384"
+    GOOGLE_TEMPERATURE = "0.0"
     # Anthropic Claude
     ANTHROPIC_API_KEY = ""
     ANTHROPIC_MODEL_NAME = "claude-sonnet-4-6"
@@ -579,6 +585,38 @@ class Environment:
     def get_openai_temperature(cls) -> float:
         """Get temperature for OpenAI model (0.0 = deterministic)."""
         return float(os.getenv("OPENAI_TEMPERATURE", cls.OPENAI_TEMPERATURE))
+
+    @classmethod
+    def get_google_api_key(cls) -> str:
+        """Get Google Gemini API key (Generative Language API)."""
+        return os.getenv("GOOGLE_API_KEY", cls.GOOGLE_API_KEY)
+
+    @classmethod
+    def get_google_model_name(cls) -> str:
+        """Get Gemini model name (e.g. gemini-2.5-flash, gemini-2.5-pro)."""
+        return os.getenv("GOOGLE_MODEL_NAME", cls.GOOGLE_MODEL_NAME) or cls.GOOGLE_MODEL_NAME
+
+    @classmethod
+    def get_google_media_resolution(cls) -> str:
+        """Get Gemini media resolution for video/image input: 'default' | 'low'."""
+        val = os.getenv("GOOGLE_MEDIA_RESOLUTION", cls.GOOGLE_MEDIA_RESOLUTION).lower().strip()
+        return val if val in ("default", "low") else "default"
+
+    @classmethod
+    def get_google_max_tokens(cls) -> int:
+        """Get max output tokens for Gemini responses."""
+        try:
+            return int(os.getenv("GOOGLE_MAX_TOKENS", cls.GOOGLE_MAX_TOKENS) or cls.GOOGLE_MAX_TOKENS)
+        except ValueError:
+            return int(cls.GOOGLE_MAX_TOKENS)
+
+    @classmethod
+    def get_google_temperature(cls) -> float:
+        """Get temperature for Gemini (0.0 = deterministic)."""
+        try:
+            return float(os.getenv("GOOGLE_TEMPERATURE", cls.GOOGLE_TEMPERATURE) or cls.GOOGLE_TEMPERATURE)
+        except ValueError:
+            return float(cls.GOOGLE_TEMPERATURE)
 
     @classmethod
     def get_llm_provider(cls) -> str:

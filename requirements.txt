@@ -16,6 +16,8 @@ langchain-cohere>=0.3.0
 langchain-anthropic>=0.3.0
 langchain-aws>=0.2.0
 langchain-openai>=0.3.0  # exo provider — generic ChatOpenAI client against /v1
+langchain-google-genai>=2.0.0  # Google Gemini — native video understanding provider
+google-genai>=1.0.0  # Gemini SDK (File API uploads + Live API realtime video)
 langgraph>=0.2.0
 langgraph-checkpoint-sqlite>=2.0.0
 deepagents
@@ -100,3 +102,7 @@ APScheduler>=3.10.0,<4
 
 # Credential vault — wraps macOS Keychain / Linux Secret Service / Windows Credential Manager
 keyring>=25.0.0
+
+# Video understanding — frame sampling / screen recording (bundled ffmpeg) + YouTube download
+imageio-ffmpeg>=0.5.0
+yt-dlp>=2024.0.0

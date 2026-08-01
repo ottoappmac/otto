@@ -40,6 +40,7 @@ def _openai_temperature(model_name: str, default: float = 0.0) -> float:
             return 1.0
     return default
 
+
 router = APIRouter(prefix="/api", tags=["settings"])
 
 
@@ -367,6 +368,29 @@ async def test_llm_connection(req: TestConnectionRequest):
                 success=False,
                 message=f"oMLX reachable but '{model_id}' is not registered. Download it via the oMLX setup screen.",
             )
+        if req.provider == "google":
+            # The form sends the placeholder when the key is unchanged —
+            # fall back to the saved (vault-hydrated) key in that case.
+            api_key = (req.api_key or "").strip()
+            if not api_key or api_key == _REDACTED_PLACEHOLDER:
+                app_cfg = await AppConfig.aload()
+                api_key = app_cfg.llm.google.api_key
+            if not api_key:
+                return TestConnectionResponse(
+                    success=False,
+                    message="Google Gemini API key is required.",
+                )
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            from langchain_core.messages import HumanMessage
+
+            model_name_g = req.model_name or "gemini-2.5-flash"
+            llm = ChatGoogleGenerativeAI(
+                model=model_name_g,
+                google_api_key=api_key,
+                temperature=0.0,
+            )
+            await llm.ainvoke([HumanMessage(content="Reply with OK")])
+            return TestConnectionResponse(success=True, message="Connected successfully")
         if req.provider == "exo":
             model_id = (req.model_name or "").strip()
             if not model_id:

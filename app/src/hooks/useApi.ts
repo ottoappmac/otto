@@ -1063,6 +1063,37 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ mode, window_id: windowId, last_hash: lastHash }),
     }),
+
+  // ── Video understanding ("watch video") ──────────────────────────
+  videoPermission: () =>
+    request<import("../types").CapturePermission>("/api/video/permission"),
+  videoPromptPermission: () =>
+    request<import("../types").CapturePermission>("/api/video/permission/prompt", {
+      method: "POST",
+    }),
+  videoStatus: () =>
+    request<import("../types").VideoRecordStatus>("/api/video/status"),
+  videoRecordStart: (sessionId: string, fps?: number) =>
+    request<import("../types").VideoRecordResult>("/api/video/record/start", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, fps }),
+    }),
+  videoRecordStop: (sessionId: string) =>
+    request<import("../types").VideoRecordResult>("/api/video/record/stop", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId }),
+    }),
+  videoAnalyze: (params: {
+    session_id: string;
+    source: string;
+    question?: string;
+    start_time?: string;
+    end_time?: string;
+  }) =>
+    request<{ result?: string; error?: string }>("/api/video/analyze", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
 };
 
 export interface ActivityRow {

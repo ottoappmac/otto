@@ -627,6 +627,16 @@ export interface OpenAIConfig {
   temperature: number;
 }
 
+/** Google Gemini — the native-video provider (files, YouTube URLs, custom FPS). */
+export interface GoogleConfig {
+  api_key: string;
+  model_name: string;
+  /** "default" (higher fidelity) or "low" (cheaper — multi-hour clips). */
+  media_resolution: string;
+  max_tokens: number;
+  temperature: number;
+}
+
 /** Optional friendly name for a cached Hub repo (shown in pickers). */
 export interface MlxBookmark {
   repo_id: string;
@@ -811,6 +821,7 @@ export interface LLMConfig {
   provider: string;
   anthropic: AnthropicConfig;
   openai: OpenAIConfig;
+  google: GoogleConfig;
   mlx: MlxHfConfig;
 }
 
@@ -1314,6 +1325,34 @@ export interface ActivityConfig {
   max_db_mb: number;
 }
 
+/** Video understanding ("watch video") settings. */
+export interface VideoConfig {
+  /** "follow_main" (active chat provider) or "google" (force Gemini native). */
+  provider_preference: string;
+  /** Frames sampled per second (Gemini fps hint + ffmpeg sampling). */
+  frame_rate: number;
+  /** Gemini media resolution: "default" | "low". */
+  media_resolution: string;
+  /** Max clip length analysed (seconds). 0 = no limit. */
+  max_duration_secs: number;
+  /** Max frames sent in the frame-based (non-Gemini) path. */
+  max_frames: number;
+  /** Frames per model request; above this the clip is analysed in batches. */
+  frames_per_request: number;
+  /** Longest-side cap (px) for sampled/streamed frames. */
+  frame_max_side: number;
+  /** Include the audio track (Gemini native audio; else Whisper transcript). */
+  include_audio: boolean;
+  /** Frames per second for realtime live watching (Gemini Live caps at 1). */
+  realtime_fps: number;
+  /** Allow YouTube URL input (public videos only). */
+  youtube_enabled: boolean;
+  /** Keep the Whisper transcript in the session and reuse it. */
+  cache_transcripts: boolean;
+  /** Write sampled frames into the session's video-frames/ folder. */
+  debug_save_frames: boolean;
+}
+
 export interface OmlxConfig {
   enabled: boolean;
   api_port: number;
@@ -1551,6 +1590,7 @@ export interface AppSettings {
   exo: ExoConfig;
   omlx: OmlxConfig;
   activity: ActivityConfig;
+  video: VideoConfig;
   privacy: PrivacyConfig;
   auto_approve_commands: boolean;
   ambient_suggest_recurrence: boolean;
@@ -1674,6 +1714,33 @@ export interface CapturePermission {
   /** true / false / null (unknown). */
   granted: boolean | null;
   can_prompt: boolean;
+}
+
+/** Result of GET /api/video/status. */
+export interface VideoRecordStatus {
+  supported: boolean;
+  recording: boolean;
+  path: string | null;
+  elapsed_secs: number;
+  fps: number;
+}
+
+/** Result of POST /api/video/record/{start,stop}. */
+export interface VideoRecordResult {
+  path?: string;
+  virtual_path?: string;
+  fps?: number;
+  duration_secs?: number;
+  size_bytes?: number;
+  error?: string;
+}
+
+/** One event from the /ws/watch realtime live-watching channel. */
+export interface WatchWSEvent {
+  type: "state" | "commentary" | "error" | "pong";
+  state?: "watching" | "idle";
+  text?: string;
+  message?: string;
 }
 
 /** Result of POST /api/capture/screen. */
