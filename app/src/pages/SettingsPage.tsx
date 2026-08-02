@@ -3506,6 +3506,7 @@ export default function SettingsPage() {
                   checked={!!v.include_audio}
                   onChange={(val) => setV({ include_audio: val })}
                 />
+                {v.include_audio && <SpeechModelNotice />}
                 <Toggle
                   label="Allow YouTube URLs (public videos only)"
                   checked={!!v.youtube_enabled}
@@ -4938,6 +4939,27 @@ function ScreenAudioSettings({
         )}
       </div>
     </Card>
+  );
+}
+
+/** Warns when a video's audio track would be skipped for want of Whisper. */
+function SpeechModelNotice() {
+  const [state, setState] = useState<{ model: string; ready: boolean } | null>(null);
+  useEffect(() => {
+    api.videoSpeechModel().then(setState).catch(() => setState(null));
+  }, []);
+
+  if (!state || state.ready) return null;
+  return (
+    <p className="text-xs text-amber-400 flex items-start gap-1.5 -mt-2">
+      <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+      <span>
+        The speech model (<span className="font-mono">{state.model}</span>) isn't
+        downloaded, so analysis will describe the picture and skip the sound
+        rather than pause for a multi-gigabyte download. Fetch it under Voice →
+        Speech to Text → Model.
+      </span>
+    </p>
   );
 }
 

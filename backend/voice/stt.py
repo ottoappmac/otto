@@ -86,6 +86,11 @@ def configure(model_id: str) -> None:
     _model_id = model_id
 
 
+def current_model_id() -> str:
+    """The model repo transcription would use right now."""
+    return _model_id
+
+
 def _get_lock() -> asyncio.Lock:
     global _lock
     if _lock is None:

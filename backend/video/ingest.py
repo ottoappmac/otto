@@ -248,6 +248,32 @@ def extract_audio_pcm16(
         return b""
 
 
+def speech_model_id() -> str:
+    """The Whisper repo the video path would transcribe with."""
+    try:
+        from backend.voice import stt
+
+        return stt.current_model_id()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def speech_model_ready() -> bool:
+    """True when that model is already in the local HuggingFace cache.
+
+    Worth checking before transcribing: ``mlx_whisper.transcribe`` downloads
+    on demand, so on a machine that has never enabled Voice the first video
+    analysis would otherwise stall for a gigabyte or more with nothing on
+    screen to explain the wait.  Voice gates its own capture the same way.
+    """
+    try:
+        from backend.voice import stt
+
+        return stt.is_model_ready(stt.current_model_id())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def transcribe_video_audio(
     path: str | Path,
     *,

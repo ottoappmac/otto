@@ -1079,6 +1079,9 @@ export const api = {
     request<{ devices: import("../types").VideoAudioDevice[] }>(
       "/api/video/audio-devices",
     ),
+  /** Is the Whisper model for a video's audio track downloaded yet? */
+  videoSpeechModel: () =>
+    request<{ model: string; ready: boolean }>("/api/video/speech-model"),
   videoRecordStart: (sessionId: string, fps?: number, audio?: boolean) =>
     request<import("../types").VideoRecordResult>("/api/video/record/start", {
       method: "POST",

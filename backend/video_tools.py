@@ -44,6 +44,13 @@ _DEFAULT_PROMPT = (
     "and anything notable. If the user asked a specific question, answer it."
 )
 
+_MISSING_SPEECH_MODEL_NOTE = (
+    "_Note: this is a description of the video only — the audio was not "
+    "transcribed because the speech model ({model}) has not been downloaded "
+    "yet. Download it under Settings → Voice → Speech to Text → Model to "
+    "include speech next time._"
+)
+
 
 def _resolve_local_path(source: str, files_dir: Path) -> Optional[Path]:
     """Resolve a session-relative or absolute video path safely, or None."""
@@ -251,12 +258,23 @@ async def _run_frames(config: Any, frame_vision_llm: Optional[BaseChatModel],
         )
 
     transcript = ""
+    audio_note = ""
     if video_cfg.include_audio:
         duration = await asyncio.to_thread(ingest.ffprobe_duration_secs, path)
         cache = _transcript_cache_path(files_dir, path, start, end, duration)
         cached = _read_cached_transcript(cache, path) if video_cfg.cache_transcripts else None
         if cached is not None:
             transcript = cached
+        elif not await asyncio.to_thread(ingest.speech_model_ready):
+            # Transcribing here would fetch the model mid-analysis with no way
+            # to report progress. Watch the visuals now and let the user decide
+            # whether to spend the download. Deliberately not cached — there is
+            # nothing to remember, and an empty cache entry would mark the clip
+            # as transcribed and suppress audio on every later run.
+            audio_note = _MISSING_SPEECH_MODEL_NOTE.format(
+                model=ingest.speech_model_id() or "the speech model",
+            )
+            logger.info("skipping video transcription — speech model not downloaded")
         else:
             transcript = await ingest.transcribe_video_audio(
                 path, start_secs=start, end_secs=end,
@@ -278,13 +296,15 @@ async def _run_frames(config: Any, frame_vision_llm: Optional[BaseChatModel],
     batch = max(1, int(video_cfg.frames_per_request or 24))
     try:
         if len(frames) <= batch:
-            return await _ask_one_pass(frame_vision_llm, prompt, frames, fps, transcript)
-        return await _ask_in_batches(
-            frame_vision_llm, prompt, frames, fps, transcript, batch,
-        )
+            answer = await _ask_one_pass(frame_vision_llm, prompt, frames, fps, transcript)
+        else:
+            answer = await _ask_in_batches(
+                frame_vision_llm, prompt, frames, fps, transcript, batch,
+            )
     except Exception as exc:  # noqa: BLE001
         logger.warning("frame-based video understanding failed: %s", exc)
         return f"[Video understanding failed: {exc}]"
+    return f"{answer}\n\n{audio_note}" if audio_note else answer
 
 
 async def _invoke_text(llm: BaseChatModel, content: list[dict]) -> str:

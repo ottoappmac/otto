@@ -102,6 +102,18 @@ async def video_audio_devices() -> dict[str, Any]:
     return {"devices": devices["audio"]}
 
 
+@router.get("/speech-model")
+async def video_speech_model() -> dict[str, Any]:
+    """Whether the Whisper model the audio track needs is already downloaded.
+
+    Analysis skips the transcript rather than blocking on a multi-gigabyte
+    fetch, so Settings uses this to warn before the user relies on audio.
+    """
+    model = await asyncio.to_thread(ingest.speech_model_id)
+    ready = await asyncio.to_thread(ingest.speech_model_ready)
+    return {"model": model, "ready": ready}
+
+
 @router.post("/record/start")
 async def video_record_start(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Begin recording the screen into the given session's sandbox.
