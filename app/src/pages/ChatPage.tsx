@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Square, ChevronUp, ChevronRight, FileText, Download, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Trash2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff, Image as ImageIcon, FileJson } from "lucide-react";
+import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { AgentGraph } from "../components/chat/AgentGraph";
@@ -12,6 +12,8 @@ import { ThinkingIndicator } from "../components/chat/ThinkingIndicator";
 import type { Artifact, ArtifactType } from "../components/chat/ArtifactPanel";
 import { ModelPicker } from "../components/chat/ModelPicker";
 import SessionStatsPanel from "../components/chat/SessionStatsPanel";
+import SessionFileTree from "../components/chat/SessionFileTree";
+import OutputFileGrid from "../components/chat/OutputFileGrid";
 import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
 import { formatFileSize } from "../utils/formatFileSize";
 import { mergeToolMessages } from "../utils/mergeToolMessages";
@@ -25,6 +27,8 @@ import { CRON_PRESETS } from "../types";
 import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJob, SessionInfo, WSMessage } from "../types";
 import { useVoice } from "../hooks/useVoice";
 import { onAskOtto } from "../utils/askOttoBus";
+import { subscribeSessionFiles } from "../utils/sessionFilesBus";
+import { onAgentContext } from "../utils/agentContextBus";
 import type { AskPayload } from "../utils/askOttoBus";
 import type { AskImage } from "../types";
 import logoDark from "../assets/logo-dark.png";
@@ -617,6 +621,15 @@ export default function ChatPage() {
     api.listSessionFiles(sid).then(setSessionFiles).catch(() => {});
   }, []);
 
+  // Surfaces outside the chat (the Watch panel) write into the session
+  // sandbox without an agent turn to trigger the usual reload.
+  useEffect(
+    () => subscribeSessionFiles((sid) => {
+      if (sid === currentSessionId) refreshSessionFiles(sid);
+    }),
+    [currentSessionId, refreshSessionFiles],
+  );
+
   const handleMessage = useCallback((msg: WSMessage) => {
     const sid = sessionIdRef.current ?? "";
     if (msg.type === "done") {
@@ -780,6 +793,13 @@ export default function ChatPage() {
   useEffect(() => {
     setWsConnected(connected);
   }, [connected, setWsConnected]);
+
+  // Live commentary from the Watch panel arrives as context rather than as a
+  // message, so narrating a screen never starts a turn on its own.
+  useEffect(
+    () => onAgentContext((text) => { sendContext(text); }),
+    [sendContext],
+  );
 
   const prevConnected = useRef(false);
   useEffect(() => {
@@ -1848,33 +1868,11 @@ export default function ChatPage() {
             <p className="text-[10px] uppercase tracking-wider font-semibold text-th-text-muted mb-2">
               Output files
             </p>
-            <div className="grid grid-cols-5 gap-2">
-              {viewableSessionFiles.map((f) => {
-                const vt = getViewType(f.path)!;
-                const name = f.path.split("/").pop() ?? f.path;
-                const iconCls =
-                  vt === "pdf"  ? "text-red-400" :
-                  vt === "csv" || vt === "xlsx" ? "text-emerald-400" :
-                  vt === "image" ? "text-purple-400" :
-                  vt === "json" ? "text-amber-400" :
-                  "text-blue-400";
-                const FileIcon = vt === "image" ? ImageIcon : vt === "json" ? FileJson : FileText;
-                return (
-                  <button
-                    key={f.path}
-                    onClick={() => handleOpenArtifact(f.path, api.getSessionFileUrl(currentSessionId!, f.path), vt)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-th-border bg-th-bg-secondary hover:bg-th-surface-hover hover:border-th-border-strong transition-colors cursor-pointer group text-left min-w-0"
-                    title={f.path}
-                  >
-                    <FileIcon size={12} className={`shrink-0 ${iconCls}`} />
-                    <span className="text-xs font-medium text-th-text-secondary group-hover:text-th-text-primary transition-colors truncate flex-1">
-                      {name}
-                    </span>
-                    <ExternalLink size={10} className="text-th-text-muted group-hover:text-blue-400 transition-colors shrink-0" />
-                  </button>
-                );
-              })}
-            </div>
+            <OutputFileGrid
+              files={viewableSessionFiles}
+              fileUrl={(p) => api.getSessionFileUrl(currentSessionId!, p)}
+              onOpenArtifact={handleOpenArtifact}
+            />
           </div>
         )}
         {errorMessages.length > 0 && (
@@ -1929,60 +1927,24 @@ export default function ChatPage() {
           </div>
           {showFiles && (
             <div className="mt-1.5 mb-1 space-y-1 max-h-40 overflow-y-auto">
-              {visibleSessionFiles.map((f) => {
-                const vt = getViewType(f.path);
-                const isViewable = vt !== null;
-                const iconCls = vt === "pdf"  ? "text-red-400/70 group-hover:text-red-400"
-                  : vt === "csv" || vt === "xlsx" ? "text-emerald-400/70 group-hover:text-emerald-400"
-                  : vt === "image" ? "text-purple-400/70 group-hover:text-purple-400"
-                  : vt === "json" ? "text-amber-400/70 group-hover:text-amber-400"
-                  : isViewable ? "text-blue-400/70 group-hover:text-blue-400"
-                  : "text-th-text-muted group-hover:text-th-text-secondary";
-                const FileIcon = vt === "image" ? ImageIcon : vt === "json" ? FileJson : FileText;
-                return (
-                <div
-                  key={f.path}
-                  className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-th-surface-hover transition-colors group ${isViewable ? "cursor-pointer" : "cursor-default"}`}
-                  onClick={isViewable ? () => handleOpenArtifact(f.path, api.getSessionFileUrl(currentSessionId!, f.path), vt!) : undefined}
-                >
-                  <FileIcon size={13} className={`shrink-0 ${iconCls}`} />
-                  <span className="text-xs text-th-text-secondary truncate flex-1 font-mono">{f.path}</span>
-                  <span className="text-[10px] text-th-text-muted shrink-0">{formatFileSize(f.size)}</span>
-                  {isViewable && (
-                    <span className="text-[10px] text-th-text-muted group-hover:text-blue-400 transition-colors shrink-0 font-medium">
-                      Open ↗
-                    </span>
-                  )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); api.openSessionFilesFolder(currentSessionId!, f.path).catch((e) => console.warn("Failed to open folder:", e)); }}
-                    className="text-th-text-muted hover:text-th-text-secondary transition-colors shrink-0"
-                    title="Show in folder"
-                  >
-                    <FolderOpen size={12} />
-                  </button>
-                  {downloadedFile === f.path ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium shrink-0"><CheckCircle2 size={12} /> Downloaded</span>
-                  ) : (
-                    <a
-                      href={api.getSessionFileUrl(currentSessionId!, f.path)}
-                      download
-                      onClick={(e) => { e.stopPropagation(); setDownloadedFile(f.path); setTimeout(() => setDownloadedFile((prev) => prev === f.path ? null : prev), 3000); }}
-                      className="text-th-text-muted hover:text-th-text-secondary transition-colors shrink-0"
-                      title="Download"
-                    >
-                      <Download size={12} />
-                    </a>
-                  )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); api.deleteSessionFile(currentSessionId!, f.path).then(() => setSessionFiles((prev) => prev.filter((x) => x.path !== f.path))); }}
-                    className="text-th-text-muted hover:text-red-400 transition-colors shrink-0"
-                    title="Delete"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-                );
-              })}
+              <SessionFileTree
+                files={visibleSessionFiles}
+                fileUrl={(p) => api.getSessionFileUrl(currentSessionId!, p)}
+                downloadedFile={downloadedFile}
+                onOpenArtifact={handleOpenArtifact}
+                onReveal={(p) =>
+                  api.openSessionFilesFolder(currentSessionId!, p)
+                    .catch((e) => console.warn("Failed to open folder:", e))
+                }
+                onDownload={(p) => {
+                  setDownloadedFile(p);
+                  setTimeout(() => setDownloadedFile((prev) => (prev === p ? null : prev)), 3000);
+                }}
+                onDelete={(p) =>
+                  api.deleteSessionFile(currentSessionId!, p)
+                    .then(() => setSessionFiles((prev) => prev.filter((x) => x.path !== p)))
+                }
+              />
             </div>
           )}
         </div>

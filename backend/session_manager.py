@@ -369,6 +369,19 @@ def _maybe_file_attachment_filename(model: Any) -> Any | None:
     return maybe_for_model(model)
 
 
+def _maybe_file_attachment_limit(model: Any) -> Any | None:
+    """Return a ``FileAttachmentLimitMiddleware`` for OpenAI-compatible models.
+
+    See :mod:`middleware.file_attachment_limit` for why the running total of
+    ``read_file`` attachments across the *whole* conversation needs to stay
+    under a small cap — some servers (e.g. oMLX) reject the request outright
+    once it's exceeded, even for turns with no new attachments.
+    """
+    from middleware.file_attachment_limit import maybe_for_model
+
+    return maybe_for_model(model)
+
+
 def _maybe_react_shim(model: Any) -> Any | None:
     """Return a ReAct-shim middleware instance when *model* lacks native tool calling.
 
@@ -742,6 +755,13 @@ def _build_gp_subagent(
     if file_attachment_filename is not None:
         middleware.append(file_attachment_filename)
 
+    # Cap the running total of read_file attachments so servers that count
+    # them across the whole conversation (e.g. oMLX) don't reject the
+    # request once a session has read more than a handful of files.
+    file_attachment_limit = _maybe_file_attachment_limit(model)
+    if file_attachment_limit is not None:
+        middleware.append(file_attachment_limit)
+
     # Last-resort context-window enforcement.  Appended at the END so it
     # runs innermost — sees the request after every other middleware
     # (including deepagents' hardcoded Todo/Filesystem/SubAgents stack)
@@ -885,6 +905,10 @@ def _build_named_agent_subagent(
     file_attachment_filename = _maybe_file_attachment_filename(model)
     if file_attachment_filename is not None:
         middleware.append(file_attachment_filename)
+
+    file_attachment_limit = _maybe_file_attachment_limit(model)
+    if file_attachment_limit is not None:
+        middleware.append(file_attachment_limit)
 
     ctx_trunc = _maybe_context_truncation(model)
     if ctx_trunc is not None:
@@ -1839,6 +1863,7 @@ class SessionManager:
         from backend.agent_management_tools import build_management_tools
         from backend.ask_user_tools import build_ask_user_tools
         from backend.file_tools import build_file_tools
+        from backend.video_tools import build_video_tools
         from backend.activity_tools import build_activity_tools
         from backend.recap_tools import build_recap_tools
         from backend.ambient_tools import build_ambient_tools
@@ -1966,6 +1991,15 @@ class SessionManager:
         schedule_tools = build_schedule_tools()
         trigger_tools = build_trigger_tools(agent_name=agent_name)
         file_tools = build_file_tools(files_dir, vision_llm=_file_vision_llm)
+        # watch_video lets the agent watch uploaded/recorded/YouTube videos.
+        # The frame-based fallback path needs a vision-capable model: the main
+        # model when it natively sees images, else the MLX VLM fallback (None
+        # when neither is available — the tool then routes to Gemini or reports
+        # that no vision model is configured).
+        _frame_vision_llm = llm if _main_supports_vision else _file_vision_llm
+        video_tools = build_video_tools(
+            files_dir, config=config, frame_vision_llm=_frame_vision_llm,
+        )
         # Activity tools query the local activity timeline DB.  Always
         # included — the tools themselves return "no data" when the
         # tracker is disabled, so the model can recognise the situation
@@ -2141,6 +2175,7 @@ class SessionManager:
                 + settings_tools
                 + privacy_tools
                 + file_tools
+                + video_tools
                 + activity_tools
                 + recap_tools
                 + ambient_tools
@@ -2253,6 +2288,7 @@ class SessionManager:
                 + settings_tools
                 + privacy_tools
                 + file_tools
+                + video_tools
                 + activity_tools
                 + recap_tools
                 + ambient_tools
@@ -2389,6 +2425,18 @@ class SessionManager:
             extra_middleware.append(orchestrator_file_attachment_filename)
             logger.info(
                 "File-attachment filename fix enabled for main orchestrator (model=%s)",
+                type(graph_llm).__name__,
+            )
+
+        # Cap the running total of read_file attachments across the whole
+        # conversation so servers that count them cumulatively (e.g. oMLX)
+        # don't reject requests once a session has read more than a
+        # handful of files. See middleware.file_attachment_limit.
+        orchestrator_file_attachment_limit = _maybe_file_attachment_limit(graph_llm)
+        if orchestrator_file_attachment_limit is not None:
+            extra_middleware.append(orchestrator_file_attachment_limit)
+            logger.info(
+                "File-attachment limit fix enabled for main orchestrator (model=%s)",
                 type(graph_llm).__name__,
             )
 

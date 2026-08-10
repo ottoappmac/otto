@@ -627,6 +627,16 @@ export interface OpenAIConfig {
   temperature: number;
 }
 
+/** Google Gemini — the native-video provider (files, YouTube URLs, custom FPS). */
+export interface GoogleConfig {
+  api_key: string;
+  model_name: string;
+  /** "default" (higher fidelity) or "low" (cheaper — multi-hour clips). */
+  media_resolution: string;
+  max_tokens: number;
+  temperature: number;
+}
+
 /** Optional friendly name for a cached Hub repo (shown in pickers). */
 export interface MlxBookmark {
   repo_id: string;
@@ -811,6 +821,7 @@ export interface LLMConfig {
   provider: string;
   anthropic: AnthropicConfig;
   openai: OpenAIConfig;
+  google: GoogleConfig;
   mlx: MlxHfConfig;
 }
 
@@ -1314,6 +1325,48 @@ export interface ActivityConfig {
   max_db_mb: number;
 }
 
+/** Video understanding ("watch video") settings. */
+export interface VideoConfig {
+  /** "follow_main" (active chat provider) or "google" (force Gemini native). */
+  provider_preference: string;
+  /** Frames sampled per second (Gemini fps hint + ffmpeg sampling). */
+  frame_rate: number;
+  /** Gemini media resolution: "default" | "low". */
+  media_resolution: string;
+  /** Max clip length analysed (seconds). 0 = no limit. */
+  max_duration_secs: number;
+  /** Max frames sent in the frame-based (non-Gemini) path. */
+  max_frames: number;
+  /** Frames per model request; above this the clip is analysed in batches. */
+  frames_per_request: number;
+  /** Longest-side cap (px) for sampled/streamed frames. */
+  frame_max_side: number;
+  /** Include the audio track (Gemini native audio; else Whisper transcript). */
+  include_audio: boolean;
+  /** Frames per second for realtime live watching (Gemini Live caps at 1). */
+  realtime_fps: number;
+  /** Allow YouTube URL input (public videos only). */
+  youtube_enabled: boolean;
+  /** Record a sound track alongside screen recordings. */
+  record_audio: boolean;
+  /** avfoundation audio device index; empty picks one automatically. */
+  record_audio_device: string;
+  /** Keep the Whisper transcript in the session and reuse it. */
+  cache_transcripts: boolean;
+  /** Write sampled frames into the session's video-frames/ folder. */
+  debug_save_frames: boolean;
+  /** Mirror captured frames back to the Watch panel while it watches. */
+  live_preview: boolean;
+  /** What to do with live commentary: "off" | "on_stop" | "stream". */
+  live_to_agent: string;
+  /** Seconds of commentary coalesced per hand-off in "stream" mode. */
+  live_agent_flush_secs: number;
+  /** Seconds per batch when live-watching without Gemini. */
+  live_batch_secs: number;
+  /** Frames per batch when live-watching without Gemini. */
+  live_batch_frames: number;
+}
+
 export interface OmlxConfig {
   enabled: boolean;
   api_port: number;
@@ -1551,6 +1604,7 @@ export interface AppSettings {
   exo: ExoConfig;
   omlx: OmlxConfig;
   activity: ActivityConfig;
+  video: VideoConfig;
   privacy: PrivacyConfig;
   auto_approve_commands: boolean;
   ambient_suggest_recurrence: boolean;
@@ -1674,6 +1728,48 @@ export interface CapturePermission {
   /** true / false / null (unknown). */
   granted: boolean | null;
   can_prompt: boolean;
+}
+
+/** Result of GET /api/video/status. */
+export interface VideoRecordStatus {
+  supported: boolean;
+  recording: boolean;
+  path: string | null;
+  elapsed_secs: number;
+  fps: number;
+  /** Whether the active recording is capturing a sound track. */
+  audio?: boolean;
+}
+
+/** Result of POST /api/video/record/{start,stop}. */
+export interface VideoRecordResult {
+  path?: string;
+  virtual_path?: string;
+  fps?: number;
+  duration_secs?: number;
+  size_bytes?: number;
+  audio?: boolean;
+  error?: string;
+}
+
+/** An avfoundation audio input, from GET /api/video/audio-devices. */
+export interface VideoAudioDevice {
+  index: string;
+  name: string;
+  /** Name looks like a virtual loopback, so it can capture playback. */
+  is_loopback: boolean;
+}
+
+/** One event from the /ws/watch realtime live-watching channel. */
+export interface WatchWSEvent {
+  type: "state" | "mode" | "commentary" | "frame" | "error" | "pong";
+  state?: "watching" | "idle";
+  /** Which path served the session: Gemini Live, or local frame batches. */
+  mode?: "gemini" | "local";
+  text?: string;
+  /** Base64 JPEG of the frame just captured (live preview). */
+  jpeg_b64?: string;
+  message?: string;
 }
 
 /** Result of POST /api/capture/screen. */

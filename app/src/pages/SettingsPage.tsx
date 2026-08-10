@@ -13,9 +13,9 @@ import ModelChooser from "../components/mlx/ModelChooser";
 import { OmlxModelPicker } from "../components/omlx/OmlxModelPicker";
 import { MemoryPanel, AmbientPanel } from "./MemoryPage";
 import VoiceModelChooser from "../components/voice/VoiceModelChooser";
-import type { AppSettings, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VoiceConfig } from "../types";
+import type { AppSettings, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
 
-const TABS = ["LLM", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Advanced", "Observability", "Privacy & Security", "About"] as const;
+const TABS = ["LLM", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Video", "Advanced", "Observability", "Privacy & Security", "About"] as const;
 type Tab = (typeof TABS)[number];
 
 const LLM_SUBTABS = ["Model Provider", "Standard", "Turbo", "Cluster", "Frontier"] as const;
@@ -160,6 +160,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     provider: "anthropic",
     anthropic: { model_provider: "anthropic", api_key: "", model_name: "claude-sonnet-4-6", bedrock_region: "us-east-1", bedrock_auth_mode: "keys", aws_access_key_id: "", aws_secret_access_key: "", max_tokens: 8192, thinking_enabled: false, thinking_budget: 2048, tool_efficient: true },
     openai: { model_provider: "openai", api_key: "", azure_api_key: "", model_name: "gpt-4o", azure_endpoint: "", azure_api_version: "2024-12-01-preview", azure_deployment: "", max_tokens: 16384, temperature: 0.0 },
+    google: { api_key: "", model_name: "gemini-2.5-flash", media_resolution: "default", max_tokens: 16384, temperature: 0.0 },
     mlx: {
       hf_llm_model_id: "mlx-community/quantized-gemma-2b-it",
       hf_vlm_model_id: "",
@@ -201,6 +202,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   exo: { enabled: false, mode: "prebuilt", prebuilt_url: "", repo_url: "https://github.com/exo-explore/exo.git", repo_ref: "v1.0.71", api_port: 52415, libp2p_port: 0, base_url: "", model_name: "", auto_start: false, auto_provision: true, no_terminal_wrap: false, min_nodes: 1, max_tokens: 8192, enable_thinking: false, sharding: "Pipeline", instance_meta: "MlxRing", remotes: [] },
   omlx: { enabled: false, api_port: 52414, base_url: "", model_name: "", auto_start: false, brew_tap: "jundot/omlx", brew_tap_url: "https://github.com/jundot/omlx", brew_formula: "omlx", cli_path: "", model_dirs: ["~/.cache/huggingface/hub"], max_context_window: 131072, thinking_enabled: false, max_tokens: 8192 },
   activity: { enabled: false, interval_secs: 5, retain_days: 30, exclude_apps: [], idle_threshold_secs: 60, min_span_secs: 5, max_span_secs: 300, context_max_chars: 500, field_val_max_chars: 200, browser_text_max_chars: 500, ax_walk_max_chars: 2000, ax_walk_max_depth: 5, max_db_mb: 500 },
+  video: { provider_preference: "follow_main", frame_rate: 1.0, media_resolution: "default", max_duration_secs: 1800, max_frames: 60, frames_per_request: 24, frame_max_side: 1024, include_audio: true, realtime_fps: 1.0, youtube_enabled: true, cache_transcripts: true, debug_save_frames: false, record_audio: false, record_audio_device: "", live_preview: true, live_to_agent: "off", live_agent_flush_secs: 20, live_batch_secs: 12, live_batch_frames: 4 },
   privacy: { enabled: false, local_only_providers: ["mlx", "omlx", "exo"], allowed_hosts: [], allow_loopback: true, allow_mdns: true, pf_anchor: "otto.privacy", engaged_at: "", audit_token: "" },
   auto_approve_commands: false,
   ambient_suggest_recurrence: false,
@@ -378,6 +380,8 @@ export default function SettingsPage() {
             ...DEFAULT_SETTINGS.llm,
             ...(s.llm ?? {}),
             anthropic: { ...DEFAULT_SETTINGS.llm.anthropic, ...(s.llm?.anthropic ?? {}) },
+            openai: { ...DEFAULT_SETTINGS.llm.openai, ...(s.llm?.openai ?? {}) },
+            google: { ...DEFAULT_SETTINGS.llm.google, ...(s.llm?.google ?? {}) },
             mlx: { ...mlx, mlx_bookmarks: mlx.mlx_bookmarks ?? [] },
           },
         };
@@ -520,6 +524,10 @@ export default function SettingsPage() {
 
   const updateOpenAIField = (field: keyof OpenAIConfig, value: string | number | boolean) => {
     setSettings((s) => ({ ...s, llm: { ...s.llm, openai: { ...s.llm.openai, [field]: value } } }));
+  };
+
+  const updateGoogleField = (field: keyof GoogleConfig, value: string | number | boolean) => {
+    setSettings((s) => ({ ...s, llm: { ...s.llm, google: { ...s.llm.google, [field]: value } } }));
   };
 
   const updateMlxField = (field: string, value: string) => {
@@ -1451,7 +1459,7 @@ export default function SettingsPage() {
                       { value: "frontier" as const, name: "Frontier",  tag: "Cloud API",   ring: "ring-sky-500/40",      bg: "bg-sky-500/10",     border: "border-sky-500/40",     tagCls: "bg-sky-500/20 border-sky-500/30 text-sky-400",            downloaded: 0 },
                     ]).map(({ value, name, tag, ring, bg, border, tagCls, downloaded }) => {
                       const current =
-                        settings.llm.provider === "anthropic" || settings.llm.provider === "openai"
+                        settings.llm.provider === "anthropic" || settings.llm.provider === "openai" || settings.llm.provider === "google"
                           ? "frontier"
                           : settings.llm.provider;
                       const selected = current === value;
@@ -1500,7 +1508,7 @@ export default function SettingsPage() {
                   )}
                 </div>
 
-                {(settings.llm.provider === "anthropic" || settings.llm.provider === "openai") && (
+                {(settings.llm.provider === "anthropic" || settings.llm.provider === "openai" || settings.llm.provider === "google") && (
                   <>
                     <SelectField
                       label="Frontier model source"
@@ -1513,6 +1521,7 @@ export default function SettingsPage() {
                       options={[
                         { value: "anthropic", label: "Anthropic (API or Bedrock)" },
                         { value: "openai", label: "OpenAI (API or Azure)" },
+                        { value: "google", label: "Google Gemini (native video)" },
                       ]}
                     />
 
@@ -1557,6 +1566,30 @@ export default function SettingsPage() {
                         <p className="text-[11px] text-th-text-muted leading-relaxed">
                           Click <em>Fetch models</em> to list available models. Configure API key
                           and advanced settings under the{" "}
+                          <button
+                            type="button"
+                            onClick={() => setLlmSubTab("Frontier")}
+                            className="underline hover:text-th-text-primary"
+                          >
+                            Frontier
+                          </button>{" "}
+                          sub-tab.
+                        </p>
+                      </div>
+                    )}
+
+                    {settings.llm.provider === "google" && (
+                      <div className="space-y-2">
+                        <InputField
+                          label="Gemini model"
+                          value={settings.llm.google.model_name}
+                          onChange={(v) => updateGoogleField("model_name", v)}
+                          placeholder="gemini-2.5-flash"
+                        />
+                        <p className="text-[11px] text-th-text-muted leading-relaxed">
+                          Gemini is the only provider with native video understanding
+                          (files, YouTube URLs, custom frame rate). Configure the API key
+                          and video resolution under the{" "}
                           <button
                             type="button"
                             onClick={() => setLlmSubTab("Frontier")}
@@ -1704,6 +1737,10 @@ export default function SettingsPage() {
                       if (o.model_provider === "openai" && !o.api_key) warnings.push("OpenAI API key is required — set it under Frontier → OpenAI.");
                       if (o.model_provider === "azure" && !o.azure_endpoint) warnings.push("Azure OpenAI endpoint is required — set it under Frontier → OpenAI.");
                       if (!o.model_name) warnings.push("Select or enter a model name.");
+                    } else if (settings.llm.provider === "google") {
+                      const g = settings.llm.google;
+                      if (!g.api_key) warnings.push("Gemini API key is required — set it under Frontier → Google Gemini.");
+                      if (!g.model_name) warnings.push("Enter a Gemini model name (e.g. gemini-2.5-flash).");
                     } else {
                       const a = settings.llm.anthropic;
                       if (a.model_provider === "anthropic" && !a.api_key) warnings.push("Anthropic API key is required — set it under Frontier → Anthropic.");
@@ -1917,6 +1954,54 @@ export default function SettingsPage() {
                   onChange={(v) => updateOpenAIField("temperature", parseFloat(v) || 0.0)}
                   type="number"
                 />
+              </div>
+            </Card>
+
+            <Card title="Google Gemini (native video)" dot="bg-amber-400">
+              <div className="space-y-4">
+                <p className="text-xs text-th-text-tertiary">
+                  Credentials for Google Gemini. Gemini is the only provider with
+                  native video understanding — used automatically by the Watch Video
+                  feature (files, YouTube URLs, custom frame rate). Also selectable as
+                  the default chat model.
+                </p>
+                <SecretField
+                  label="API Key"
+                  value={settings.llm.google.api_key}
+                  onChange={(v) => updateGoogleField("api_key", v)}
+                  placeholder="AI..."
+                />
+                <InputField
+                  label="Model"
+                  value={settings.llm.google.model_name}
+                  onChange={(v) => updateGoogleField("model_name", v)}
+                  placeholder="gemini-2.5-flash"
+                />
+                <SelectField
+                  label="Video / image resolution"
+                  value={settings.llm.google.media_resolution}
+                  onChange={(v) => updateGoogleField("media_resolution", v)}
+                  options={[
+                    { value: "default", label: "Default — higher fidelity (~300 tokens/sec)" },
+                    { value: "low", label: "Low — cheaper, multi-hour clips (~100 tokens/sec)" },
+                  ]}
+                />
+                <InputField
+                  label="Max Tokens"
+                  value={String(settings.llm.google.max_tokens)}
+                  onChange={(v) => updateGoogleField("max_tokens", parseInt(v) || 16384)}
+                  type="number"
+                />
+                <InputField
+                  label="Temperature"
+                  value={String(settings.llm.google.temperature)}
+                  onChange={(v) => updateGoogleField("temperature", parseFloat(v) || 0.0)}
+                  type="number"
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed">
+                  Get a key from Google AI Studio. YouTube URL input supports public
+                  videos only (free tier: up to 8 hours/day).
+                </p>
               </div>
             </Card>
             </div>
@@ -3336,6 +3421,289 @@ export default function SettingsPage() {
           <VoiceSettingsPanel settings={settings} setSettings={setSettings} onSave={persistSettings} />
         )}
 
+        {tab === "Video" && (() => {
+          const VIDEO_DEFAULTS = {
+            provider_preference: "follow_main",
+            frame_rate: 1.0,
+            media_resolution: "default",
+            max_duration_secs: 1800,
+            max_frames: 60,
+            frames_per_request: 24,
+            frame_max_side: 1024,
+            include_audio: true,
+            realtime_fps: 1.0,
+            youtube_enabled: true,
+            cache_transcripts: true,
+            debug_save_frames: false,
+            record_audio: false,
+            record_audio_device: "",
+            live_preview: true,
+            live_to_agent: "off",
+            live_agent_flush_secs: 20,
+            live_batch_secs: 12,
+            live_batch_frames: 4,
+          };
+          const v = settings.video ?? VIDEO_DEFAULTS;
+          const setV = (patch: Partial<typeof VIDEO_DEFAULTS>) =>
+            setSettings((s) => ({
+              ...s,
+              video: { ...VIDEO_DEFAULTS, ...(s.video ?? {}), ...patch },
+            }));
+          const geminiKeySet = !!settings.llm.google?.api_key;
+          return (
+          <div className="space-y-6 max-w-2xl">
+            <Card title="Watch video" dot="bg-sky-400">
+              <div className="space-y-4">
+                <p className="text-xs text-th-text-tertiary leading-relaxed">
+                  Lets Otto watch videos on your behalf — uploaded files, a recording
+                  of your screen, or online (YouTube) videos. Gemini watches video
+                  natively (frames + audio + timestamps); other providers sample frames
+                  with ffmpeg and attach an on-device transcript.
+                </p>
+                <SelectField
+                  label="Video model"
+                  value={v.provider_preference}
+                  onChange={(val) => setV({ provider_preference: val })}
+                  options={[
+                    { value: "follow_main", label: "Follow main provider" },
+                    { value: "google", label: "Prefer Gemini (native video)" },
+                  ]}
+                />
+                {v.provider_preference === "google" && !geminiKeySet && (
+                  <p className="text-xs text-amber-400 flex items-center gap-1.5">
+                    <AlertTriangle size={12} />
+                    No Gemini API key set — add one under LLM → Frontier → Google Gemini.
+                    Falls back to frame extraction until then.
+                  </p>
+                )}
+                <InputField
+                  label="Frame rate (frames sampled per second)"
+                  type="number"
+                  min={0.1}
+                  max={30}
+                  step={0.1}
+                  value={String(v.frame_rate ?? 1.0)}
+                  onChange={(val) => {
+                    const n = Math.max(0.1, Math.min(30, parseFloat(val) || 1.0));
+                    setV({ frame_rate: n });
+                  }}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  1 fps suits most content. Lower for long/static video (lectures);
+                  higher for fast action. Higher rates cost more tokens.
+                </p>
+                <SelectField
+                  label="Gemini resolution"
+                  value={v.media_resolution}
+                  onChange={(val) => setV({ media_resolution: val })}
+                  options={[
+                    { value: "default", label: "Default — higher fidelity (~300 tokens/sec)" },
+                    { value: "low", label: "Low — cheaper, multi-hour clips (~100 tokens/sec)" },
+                  ]}
+                />
+                <Toggle
+                  label="Include audio (transcript + audio reasoning)"
+                  checked={!!v.include_audio}
+                  onChange={(val) => setV({ include_audio: val })}
+                />
+                {v.include_audio && <SpeechModelNotice />}
+                <Toggle
+                  label="Allow YouTube URLs (public videos only)"
+                  checked={!!v.youtube_enabled}
+                  onChange={(val) => setV({ youtube_enabled: val })}
+                />
+                <Toggle
+                  label="Save transcripts and reuse them"
+                  checked={!!v.cache_transcripts}
+                  onChange={(val) => setV({ cache_transcripts: val })}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  Keeps each clip's transcript in the session's transcripts/ folder
+                  so re-analysing it skips transcription — the slow part of the
+                  frame path. Turn off to leave nothing on disk.
+                </p>
+              </div>
+            </Card>
+
+            <Card title="Limits & realtime" dot="bg-neutral-400">
+              <div className="space-y-4">
+                <InputField
+                  label="Max clip length (seconds, 0 = no limit)"
+                  type="number"
+                  min={0}
+                  max={21600}
+                  value={String(v.max_duration_secs ?? 1800)}
+                  onChange={(val) => {
+                    const n = Math.max(0, Math.min(21600, parseInt(val) || 0));
+                    setV({ max_duration_secs: n });
+                  }}
+                />
+                <InputField
+                  label="Max frames (frame-based providers)"
+                  type="number"
+                  min={1}
+                  max={512}
+                  value={String(v.max_frames ?? 60)}
+                  onChange={(val) => {
+                    const n = Math.max(1, Math.min(512, parseInt(val) || 60));
+                    setV({ max_frames: n });
+                  }}
+                />
+                <InputField
+                  label="Frames per model request"
+                  type="number"
+                  min={1}
+                  max={512}
+                  value={String(v.frames_per_request ?? 24)}
+                  onChange={(val) => {
+                    const n = Math.max(1, Math.min(512, parseInt(val) || 24));
+                    setV({ frames_per_request: n });
+                  }}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  Above this, the clip is walked in order and each batch carries a
+                  running summary, so no single request can blow a context limit.
+                  Local servers reject on image count rather than payload size —
+                  lower this if a long video fails, rather than reducing max frames.
+                </p>
+                <InputField
+                  label="Frame longest side (px)"
+                  type="number"
+                  min={128}
+                  max={4096}
+                  value={String(v.frame_max_side ?? 1024)}
+                  onChange={(val) => {
+                    const n = Math.max(128, Math.min(4096, parseInt(val) || 1024));
+                    setV({ frame_max_side: n });
+                  }}
+                />
+                <InputField
+                  label="Realtime frame rate (fps, live watching — max 1)"
+                  type="number"
+                  min={0.1}
+                  max={1}
+                  step={0.1}
+                  value={String(v.realtime_fps ?? 1.0)}
+                  onChange={(val) => {
+                    const n = Math.max(0.1, Math.min(1, parseFloat(val) || 1.0));
+                    setV({ realtime_fps: n });
+                  }}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed">
+                  With a Gemini API key, live watching streams the screen to Gemini
+                  Live, which accepts at most 1 frame per second. Without one it
+                  falls back to your local vision model, which describes a batch of
+                  recent frames every few seconds instead.
+                </p>
+              </div>
+            </Card>
+
+            <ScreenAudioSettings
+              recordAudio={!!v.record_audio}
+              device={v.record_audio_device ?? ""}
+              onChange={setV}
+            />
+
+            <Card title="Live watching" dot="bg-sky-400">
+              <div className="space-y-4">
+                <Toggle
+                  label="Show a preview of what's being watched"
+                  checked={!!v.live_preview}
+                  onChange={(val) => setV({ live_preview: val })}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  Mirrors each captured frame into the Watch panel so you can see
+                  exactly what the model is being shown, and confirm the right
+                  screen is being captured.
+                </p>
+                <SelectField
+                  label="Pass commentary to the agent"
+                  value={v.live_to_agent}
+                  onChange={(val) => setV({ live_to_agent: val })}
+                  options={[
+                    { value: "off", label: "Off — commentary stays in the Watch panel" },
+                    { value: "on_stop", label: "When I stop — hand over the whole session at once" },
+                    { value: "stream", label: "Live — hand over in chunks while watching" },
+                  ]}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  Commentary is passed as context, not as a message, so it never
+                  starts an agent turn on its own — it's folded into whatever you
+                  ask next, or injected into a run already in progress.
+                </p>
+                {v.live_to_agent === "stream" && (
+                  <InputField
+                    label="Seconds of commentary per hand-off"
+                    type="number"
+                    min={5}
+                    max={300}
+                    value={String(v.live_agent_flush_secs ?? 20)}
+                    onChange={(val) => {
+                      const n = Math.max(5, Math.min(300, parseInt(val) || 20));
+                      setV({ live_agent_flush_secs: n });
+                    }}
+                  />
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <InputField
+                    label="Local batch length (seconds)"
+                    type="number"
+                    min={3}
+                    max={120}
+                    value={String(v.live_batch_secs ?? 12)}
+                    onChange={(val) => {
+                      const n = Math.max(3, Math.min(120, parseInt(val) || 12));
+                      setV({ live_batch_secs: n });
+                    }}
+                  />
+                  <InputField
+                    label="Frames per local batch"
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={String(v.live_batch_frames ?? 4)}
+                    onChange={(val) => {
+                      const n = Math.max(1, Math.min(16, parseInt(val) || 4));
+                      setV({ live_batch_frames: n });
+                    }}
+                  />
+                </div>
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-1">
+                  Only used when watching without Gemini. Shorter batches react
+                  faster but interrupt the model more often; each batch occupies
+                  it for the length of one request.
+                </p>
+              </div>
+            </Card>
+
+            <Card title="Debugging" dot="bg-neutral-400">
+              <div className="space-y-4">
+                <Toggle
+                  label="Save sampled frames to the session"
+                  checked={!!v.debug_save_frames}
+                  onChange={(val) => setV({ debug_save_frames: val })}
+                />
+                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                  Writes the exact frames the model was shown into the session's
+                  video-frames/ folder, alongside a manifest with their timestamps
+                  and the transcript. Useful for telling a bad frame sample apart
+                  from a bad answer.
+                </p>
+                {v.debug_save_frames && (
+                  <p className="text-xs text-amber-400 flex items-start gap-1.5">
+                    <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                    Adds roughly {Math.round((v.max_frames ?? 60) * 0.15)} MB per
+                    analysis and never cleans up. Frames of a screen recording are
+                    screenshots of your desktop, which are otherwise discarded the
+                    moment the analysis finishes.
+                  </p>
+                )}
+              </div>
+            </Card>
+          </div>
+          );
+        })()}
+
         {tab === "Advanced" && (
           <div className="space-y-6 max-w-2xl">
             <Card title="Setup wizard" dot="bg-th-tab-active-bg">
@@ -4509,6 +4877,92 @@ function OmlxQuickPanel({
   );
 }
 
+/**
+ * Screen-recording audio controls. Split out because the device list has to
+ * be fetched, and the Video tab's body is a conditionally-evaluated IIFE
+ * where a hook can't live.
+ */
+function ScreenAudioSettings({
+  recordAudio,
+  device,
+  onChange,
+}: {
+  recordAudio: boolean;
+  device: string;
+  onChange: (patch: { record_audio?: boolean; record_audio_device?: string }) => void;
+}) {
+  const [devices, setDevices] = useState<VideoAudioDevice[]>([]);
+  useEffect(() => {
+    api.videoAudioDevices()
+      .then((r) => setDevices(r.devices))
+      .catch(() => setDevices([]));
+  }, []);
+  const hasLoopback = devices.some((d) => d.is_loopback);
+
+  return (
+    <Card title="Screen recording audio" dot="bg-neutral-400">
+      <div className="space-y-4">
+        <Toggle
+          label="Record audio with screen recordings"
+          checked={recordAudio}
+          onChange={(val) => onChange({ record_audio: val })}
+        />
+        <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+          Adds a sound track to the mp4, which is then transcribed when the
+          recording is analysed. Needs the Microphone permission on top of
+          Screen Recording.
+        </p>
+        {recordAudio && (
+          <>
+            <SelectField
+              label="Audio input"
+              value={device}
+              onChange={(val) => onChange({ record_audio_device: val })}
+              options={[
+                { value: "", label: hasLoopback ? "Automatic — prefer the loopback device" : "Automatic — first available input" },
+                ...devices.map((d) => ({
+                  value: d.index,
+                  label: d.is_loopback ? `${d.name} (captures playback)` : d.name,
+                })),
+              ]}
+            />
+            {!hasLoopback && (
+              <p className="text-xs text-amber-400 flex items-start gap-1.5">
+                <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                These are all microphones, so the recording will capture the room
+                rather than what the Mac is playing. macOS exposes no system-audio
+                input; installing a virtual loopback device such as BlackHole makes
+                one appear here.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** Warns when a video's audio track would be skipped for want of Whisper. */
+function SpeechModelNotice() {
+  const [state, setState] = useState<{ model: string; ready: boolean } | null>(null);
+  useEffect(() => {
+    api.videoSpeechModel().then(setState).catch(() => setState(null));
+  }, []);
+
+  if (!state || state.ready) return null;
+  return (
+    <p className="text-xs text-amber-400 flex items-start gap-1.5 -mt-2">
+      <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+      <span>
+        The speech model (<span className="font-mono">{state.model}</span>) isn't
+        downloaded, so analysis will describe the picture and skip the sound
+        rather than pause for a multi-gigabyte download. Fetch it under Voice →
+        Speech to Text → Model.
+      </span>
+    </p>
+  );
+}
+
 function Card({ title, dot, children }: { title?: string; dot?: string; children: React.ReactNode }) {
   return (
     <div className="bg-th-card-bg border border-th-card-border rounded-xl p-6 shadow-sm h-full">
@@ -4518,11 +4972,11 @@ function Card({ title, dot, children }: { title?: string; dot?: string; children
   );
 }
 
-function InputField({ label, value, onChange, placeholder, type = "text", min, max }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; min?: number; max?: number }) {
+function InputField({ label, value, onChange, placeholder, type = "text", min, max, step }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; min?: number; max?: number; step?: number }) {
   return (
     <div>
       <label className="block text-sm font-medium text-th-text-tertiary mb-2">{label}</label>
-      <input className="w-full px-4 py-2.5 bg-th-input-bg border border-th-input-border rounded-lg text-th-text-primary placeholder-th-text-muted focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300/30 transition-all text-sm" type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} min={min} max={max} />
+      <input className="w-full px-4 py-2.5 bg-th-input-bg border border-th-input-border rounded-lg text-th-text-primary placeholder-th-text-muted focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300/30 transition-all text-sm" type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} min={min} max={max} step={step} />
     </div>
   );
 }

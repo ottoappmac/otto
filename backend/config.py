@@ -45,6 +45,7 @@ _SECRET_FIELDS: tuple[tuple[str, str], ...] = (
     ("llm.anthropic.aws_secret_access_key", "aws_secret_access_key"),
     ("llm.openai.api_key", "openai_api_key"),
     ("llm.openai.azure_api_key", "azure_api_key"),
+    ("llm.google.api_key", "google_api_key"),
     ("llm.mlx.hf_token", "hf_token"),
     ("observability.langsmith.api_key", "langsmith_api_key"),
     ("omlx.admin_api_key", "omlx_admin_api_key"),
@@ -188,6 +189,27 @@ class OpenAIConfig(BaseModel):
     azure_endpoint: str = ""
     azure_api_version: str = "2024-12-01-preview"
     azure_deployment: str = ""
+    max_tokens: int = 16384
+    temperature: float = 0.0
+
+
+class GoogleConfig(BaseModel):
+    """Google Gemini (Generative Language API) settings.
+
+    Gemini is the only provider with native video understanding (video
+    files, YouTube URLs, custom frame-rate sampling, native audio), so it
+    powers the "watch video" feature's fast path.  For text/agent use it
+    behaves like any other cloud chat model.
+
+    ``media_resolution`` trades cost for fidelity on video/image input:
+    ``"low"`` (~100 tokens/sec of video) lets Gemini process multi-hour
+    clips in a single request; ``"default"`` (~300 tokens/sec) keeps more
+    visual detail.  ``"default"`` here means "let the model decide".
+    """
+
+    api_key: str = ""
+    model_name: str = "gemini-2.5-flash"
+    media_resolution: str = "default"  # "default" | "low"
     max_tokens: int = 16384
     temperature: float = 0.0
 
@@ -355,6 +377,7 @@ class LLMConfig(BaseModel):
     provider: str = "anthropic"
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    google: GoogleConfig = Field(default_factory=GoogleConfig)
     mlx: MlxHfConfig = Field(default_factory=MlxHfConfig)
 
 
@@ -860,6 +883,97 @@ class MemoryConfig(BaseModel):
         return self.inject_realtime or self.inject_enabled
 
 
+class VideoConfig(BaseModel):
+    """Video understanding ("watch video") settings.
+
+    Otto can watch three kinds of input on the user's behalf: uploaded
+    video files, a recording of the screen, and online (YouTube) videos.
+
+    Two provider paths exist:
+
+    - **Gemini (native)** — the video (or YouTube URL) is sent directly to
+      Gemini, which samples frames + audio itself.  ``frame_rate`` maps to
+      Gemini's ``videoMetadata.fps``; ``media_resolution`` trades cost for
+      fidelity.
+    - **Frame-based (OpenAI / Anthropic / local MLX)** — Otto samples
+      frames with ffmpeg at ``frame_rate`` (capped at ``max_frames``) and
+      transcribes the audio with the on-device Whisper stack, then sends
+      the frames + transcript as a normal multimodal message.
+
+    ``provider_preference`` chooses which model handles video:
+    ``"follow_main"`` uses the active chat provider; ``"google"`` forces
+    Gemini whenever a Gemini API key is configured (best quality), falling
+    back to the frame path when it is not.
+    """
+
+    provider_preference: str = "follow_main"  # "follow_main" | "google"
+    # Frames sampled per second.  1.0 is Gemini's default and works well
+    # for most content; lower for long/static video (lectures), higher for
+    # fast action.  Applies to both the Gemini fps hint and ffmpeg sampling.
+    frame_rate: float = 1.0
+    # Gemini media resolution for video/image tokens: "default" | "low".
+    media_resolution: str = "default"
+    # Hard ceiling on how long a single clip may be analysed (seconds).
+    # Guards against runaway token cost.  0 = no limit.
+    max_duration_secs: int = 1800
+    # Hard ceiling on frames sent in the frame-based path (protects
+    # non-Gemini providers from oversized image arrays).
+    max_frames: int = 60
+    # Frames per model request.  Above this the clip is walked in order, each
+    # batch carrying a running summary, so no single request grows large enough
+    # to trip a context limit or oMLX's prefill memory guard — which rejects on
+    # image *count*, not payload size.
+    frames_per_request: int = 24
+    # Longest-side cap (px) for sampled/streamed frames.
+    frame_max_side: int = 1024
+    # Include the audio track in understanding.  Gemini uses native audio;
+    # the frame path attaches a Whisper transcript.
+    include_audio: bool = True
+    # Frames per second streamed during realtime "live watching".  Gemini
+    # Live accepts at most 1 FPS, so this is clamped to <= 1.0.
+    realtime_fps: float = 1.0
+    # Allow passing YouTube URLs (public videos only).
+    youtube_enabled: bool = True
+    # Record a sound track alongside screen recordings.  Off by default: it
+    # needs the Microphone permission on top of Screen Recording, and what it
+    # captures is an *input* — the mic, unless a virtual loopback device is
+    # installed.  See backend.video.recorder.
+    record_audio: bool = False
+    # avfoundation audio device index to record.  Empty means "pick one":
+    # a loopback device if one exists, else the first input.
+    record_audio_device: str = ""
+    # Mirror the frames being captured back to the Watch panel so you can see
+    # exactly what the model is being shown while it watches.
+    live_preview: bool = True
+    # What to do with live commentary:
+    #   "off"     — it stays in the Watch panel and is discarded on close.
+    #   "on_stop" — the whole session's commentary is handed to the agent once,
+    #               when you stop watching.
+    #   "stream"  — commentary is handed over in chunks while you watch.
+    # Both non-off modes go through the session's *context* channel rather than
+    # sending messages, so they never kick off an agent turn on their own; the
+    # notes are folded into whatever you ask next (or injected mid-run when the
+    # agent is already working).
+    live_to_agent: str = "off"  # "off" | "on_stop" | "stream"
+    # Seconds of commentary to coalesce before handing a chunk to the agent in
+    # "stream" mode.  Pushing every fragment would bury the conversation.
+    live_agent_flush_secs: int = 20
+    # Non-Gemini providers have no realtime video API, so live watching falls
+    # back to describing a small batch of recent frames every few seconds.
+    # Longer batches cost less and read better; shorter ones react faster.
+    live_batch_secs: int = 12
+    live_batch_frames: int = 4
+    # Keep the Whisper transcript in the session's ``transcripts/`` folder and
+    # reuse it instead of re-transcribing.  Transcription dominates the cost of
+    # the frame path (frame sampling is milliseconds), so this is on by default.
+    cache_transcripts: bool = True
+    # Write the sampled frames to the session's ``video-frames/`` folder so you
+    # can see exactly what the model was shown.  Off by default: a capped run is
+    # ~9 MB, it accumulates on every analysis, and frames of a screen recording
+    # are desktop screenshots that would otherwise never touch disk.
+    debug_save_frames: bool = False
+
+
 class ActivityConfig(BaseModel):
     """User activity timeline tracker.
 
@@ -1165,6 +1279,7 @@ class AppConfig(BaseModel):
     exo: ExoConfig = Field(default_factory=ExoConfig)
     omlx: OmlxConfig = Field(default_factory=OmlxConfig)
     activity: ActivityConfig = Field(default_factory=ActivityConfig)
+    video: VideoConfig = Field(default_factory=VideoConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     setup: SetupState = Field(default_factory=SetupState)
     setup_chat: SetupChatConfig = Field(default_factory=SetupChatConfig)
@@ -1544,6 +1659,7 @@ class AppConfig(BaseModel):
 
         a = self.llm.anthropic
         o = self.llm.openai
+        g = self.llm.google
         m = self.llm.mlx
 
         def _anthropic_block() -> dict[str, str]:
@@ -1644,7 +1760,7 @@ class AppConfig(BaseModel):
                 env["HF_TOKEN"] = ""
                 env["HF_HUB_CACHE"] = ""
                 _clear_mlx()
-        elif self.llm.provider in ("omlx", "exo", "cohere"):
+        elif self.llm.provider in ("omlx", "exo", "cohere", "google"):
             # Local-server and non-Anthropic cloud providers.  Only populate
             # the Anthropic block when the user has valid Anthropic credentials
             # (e.g. for memory consolidation with llm_family="frontier" or an
@@ -1773,6 +1889,23 @@ class AppConfig(BaseModel):
         env["OMLX_CLI_PATH"] = ox.cli_path
         env["OMLX_THINKING"] = "true" if ox.thinking_enabled else "false"
         env["OMLX_MAX_TOKENS"] = str(ox.max_tokens)
+
+        # Google Gemini.  Populate whenever a key is present (so video
+        # understanding can use Gemini even when the main chat provider is
+        # something else) or when Gemini is the active provider.  Cleared
+        # otherwise so the Settings UI stays authoritative.
+        if g.api_key.strip() or self.llm.provider == "google":
+            env["GOOGLE_API_KEY"] = g.api_key
+            env["GOOGLE_MODEL_NAME"] = g.model_name
+            env["GOOGLE_MEDIA_RESOLUTION"] = g.media_resolution
+            env["GOOGLE_MAX_TOKENS"] = str(g.max_tokens)
+            env["GOOGLE_TEMPERATURE"] = str(g.temperature)
+        else:
+            env["GOOGLE_API_KEY"] = ""
+            env["GOOGLE_MODEL_NAME"] = ""
+            env["GOOGLE_MEDIA_RESOLUTION"] = ""
+            env["GOOGLE_MAX_TOKENS"] = ""
+            env["GOOGLE_TEMPERATURE"] = ""
 
         return env
 

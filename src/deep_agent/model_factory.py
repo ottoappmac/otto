@@ -6,7 +6,8 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 from langchain_core.language_models import BaseChatModel
 
@@ -460,6 +461,25 @@ def create_llm(provider: str) -> BaseChatModel:
             temperature=0.0,
         )
 
+    if provider == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        model_name = Environment.get_google_model_name()
+        api_key = Environment.get_google_api_key()
+        max_tokens = Environment.get_google_max_tokens()
+        logger.info("Google Gemini LLM: model=%s", model_name)
+        if not api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY is empty. Set your Gemini API key in "
+                "Settings → LLM → Frontier (Gemini)."
+            )
+        return ChatGoogleGenerativeAI(
+            model=model_name,
+            temperature=Environment.get_google_temperature(),
+            max_output_tokens=max_tokens,
+            google_api_key=api_key,
+        )
+
     if provider == "mlx":
         from middleware.react_wrapper import MLXReActWrapper
 
@@ -809,10 +829,59 @@ def _mlx_is_vision_model(model_path: str) -> bool:
         return bool(_VLM_NAME_RE.search(model_path))
 
 
-_CLOUD_VISION_PROVIDERS: frozenset[str] = frozenset({"anthropic", "openai"})
+_CLOUD_VISION_PROVIDERS: frozenset[str] = frozenset({"anthropic", "openai", "google"})
 _VLM_NAME_RE = re.compile(
     r"\bvl\b|vision|llava|paligemma|moondream|internvl", re.IGNORECASE,
 )
+
+
+def _cached_orgs_for(name: str) -> list[str]:
+    """Orgs in the local HF cache that publish a repo directory called *name*."""
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    orgs: list[str] = []
+    try:
+        for d in Path(HF_HUB_CACHE).glob(f"models--*--{name}"):
+            org, _, repo = d.name[len("models--"):].partition("--")
+            if org and repo == name:
+                orgs.append(org)
+    except Exception:
+        return []
+    return orgs
+
+
+def _hf_repo_id_candidates(model_id: str) -> list[str]:
+    """Return plausible HF repo ids (``org/name``) for *model_id*.
+
+    oMLX reports models under one of three id forms (see
+    ``omlx_provisioner._resolve_omlx_model_id``): the HF repo id, the
+    ``org--name`` double-dash form it derives from the hub cache, or a bare
+    directory name.  ``huggingface_hub`` accepts only the first — it raises
+    ``HFValidationError`` on ``--`` — so the other two are translated here.
+    """
+    mid = (model_id or "").strip()
+    if not mid:
+        return []
+    if "/" in mid:
+        return [mid]
+    if "--" in mid:
+        org, _, name = mid.partition("--")
+        return [f"{org}/{name}"] if org and name else []
+    return [f"{org}/{mid}" for org in _cached_orgs_for(mid)]
+
+
+def _cached_config_path(model_id: str) -> Optional[str]:
+    """Locate a cached ``config.json`` for *model_id*, or None."""
+    from huggingface_hub import try_to_load_from_cache
+
+    for repo_id in _hf_repo_id_candidates(model_id):
+        try:
+            path = try_to_load_from_cache(repo_id, "config.json")
+        except Exception:
+            continue
+        if isinstance(path, str):
+            return path
+    return None
 
 
 def _config_declares_vision(model_id: str) -> bool:
@@ -825,10 +894,8 @@ def _config_declares_vision(model_id: str) -> bool:
     the config isn't cached or can't be parsed.
     """
     try:
-        from huggingface_hub import try_to_load_from_cache
-
-        path = try_to_load_from_cache(model_id, "config.json")
-        if not isinstance(path, str):
+        path = _cached_config_path(model_id)
+        if path is None:
             return False
         with open(path, encoding="utf-8") as fh:
             cfg = json.load(fh)
