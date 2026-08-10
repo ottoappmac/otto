@@ -18,6 +18,7 @@ import {
 } from "../../utils/highRiskCommands";
 import { api } from "../../hooks/useApi";
 import { getToolLabel } from "../../utils/toolLabels";
+import { CopyButton } from "../ui/CopyButton";
 import { artifactTypeFromPath } from "./ArtifactPanel";
 import type { ArtifactType } from "./ArtifactPanel";
 
@@ -159,17 +160,24 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
       );
     }
 
+    const { files, folders, urls, text: plainUserText } = parseUserAttachments(message.content);
+
     return (
       <div className="flex justify-end group/msg">
         <div className="relative max-w-[75%] min-w-0">
-          {canEdit && !editing && (
-            <button
-              onClick={() => { setEditText(message.content); setEditing(true); setTimeout(() => editRef.current?.focus(), 50); }}
-              className="absolute -left-8 top-2.5 opacity-0 group-hover/msg:opacity-100 transition-opacity text-th-text-muted hover:text-th-text-primary"
-              title="Edit & resend"
-            >
-              <Pencil size={13} />
-            </button>
+          {!editing && (
+            <div className="absolute -left-8 top-1.5 flex flex-col items-center gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+              {canEdit && (
+                <button
+                  onClick={() => { setEditText(message.content); setEditing(true); setTimeout(() => editRef.current?.focus(), 50); }}
+                  className="p-1 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover transition-colors"
+                  title="Edit & resend"
+                >
+                  <Pencil size={13} />
+                </button>
+              )}
+              <CopyButton text={plainUserText || message.content} title="Copy message" className="p-1" />
+            </div>
           )}
           <div className="bg-th-surface-hover border border-th-border rounded-2xl rounded-br-sm px-4 py-3">
             {editing ? (
@@ -201,7 +209,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                 </div>
               </div>
             ) : (() => {
-              const { files, folders, urls, text } = parseUserAttachments(message.content);
+              const text = plainUserText;
               const hasAttachments = files.length > 0 || folders.length > 0 || urls.length > 0;
               return (
                 <>
@@ -317,7 +325,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
     const thought = rawThought && !/^done\b/i.test(rawThought.trim()) ? rawThought.trim() : undefined;
     const stats = message.metadata?.stats as MlxStats | undefined;
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 group/msg">
         {thought && (
           <details className="ml-11 group">
             <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-th-text-muted hover:text-th-text-tertiary inline-flex items-center gap-1 list-none select-none [&::-webkit-details-marker]:hidden">
@@ -381,6 +389,15 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                 <StatsChip stats={stats} />
               </div>
             )}
+            <div className="mt-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity">
+              <CopyButton
+                text={message.content}
+                title="Copy response"
+                size={12}
+                label="Copy"
+                className="px-1.5 py-1 text-[11px]"
+              />
+            </div>
           </div>
         </div>
       </div>

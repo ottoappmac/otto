@@ -46,6 +46,8 @@ import { RunTimeline } from "../components/runs/RunTimeline";
 import { AgentGraph } from "../components/chat/AgentGraph";
 import { BreakdownBar } from "../components/runs/BreakdownBar";
 import { StatCard } from "../components/runs/StatCard";
+import { CopyButton } from "../components/ui/CopyButton";
+import { copyImage, copyText } from "../utils/clipboard";
 import { getSourceIcon, getSourceLabel, getProviderIcon } from "../utils/entityIcons";
 import { familyChipClasses } from "../utils/subagentModelChip";
 import { WS_BASE } from "../config/apiBase";
@@ -233,6 +235,18 @@ function FilesTab({
                   <span className="text-[10px] text-th-text-muted/60">
                     {new Date(f.modified_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
+                  {(isPreviewable(f.path) || isImage(f.path)) && (
+                    <CopyButton
+                      onCopy={async () => {
+                        if (isImage(f.path)) return copyImage(downloadUrl, downloadUrl);
+                        const res = await fetch(downloadUrl);
+                        if (!res.ok) return false;
+                        return copyText(await res.text());
+                      }}
+                      title={isImage(f.path) ? "Copy image" : "Copy file contents"}
+                      className="opacity-0 group-hover:opacity-100"
+                    />
+                  )}
                   <a
                     href={downloadUrl}
                     download={name}
