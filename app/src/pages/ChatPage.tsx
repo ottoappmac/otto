@@ -15,7 +15,10 @@ import SessionStatsPanel from "../components/chat/SessionStatsPanel";
 import SessionFileTree from "../components/chat/SessionFileTree";
 import OutputFileGrid from "../components/chat/OutputFileGrid";
 import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
+import { CopyButton } from "../components/ui/CopyButton";
+import { copyText } from "../utils/clipboard";
 import { formatFileSize } from "../utils/formatFileSize";
+import { formatChatTranscript } from "../utils/chatTranscript";
 import { mergeToolMessages } from "../utils/mergeToolMessages";
 import { familyChipClasses } from "../utils/subagentModelChip";
 import { screenHighRiskCommand } from "../utils/highRiskCommands";
@@ -1785,6 +1788,14 @@ export default function ChatPage() {
               <ArrowLeft size={13} />
               <span>Run <span className="font-mono text-th-text-muted/60">#{currentSessionId.slice(0, 8)}</span></span>
             </button>
+          )}
+          {sessionMessages.length > 0 && (
+            <CopyButton
+              onCopy={() => copyText(formatChatTranscript(sessionMessages))}
+              title="Copy the whole conversation as markdown"
+              label="Copy chat"
+              className="text-xs px-2.5 py-1.5 border border-transparent hover:border-th-border"
+            />
           )}
           {currentSessionId && sessionMessages.length > 0 && (
             <button

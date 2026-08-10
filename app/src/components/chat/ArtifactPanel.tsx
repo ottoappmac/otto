@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X, ExternalLink, FileText, Globe, RefreshCw, Image as ImageIcon, FileJson, FileCode2, Video } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import { CopyButton } from "../ui/CopyButton";
+import { copyImage, copyText } from "../../utils/clipboard";
 
 export type ArtifactType =
   | "html" | "md" | "pdf" | "docx" | "txt" | "csv" | "xlsx" | "image" | "video" | "json" | "code";
@@ -46,6 +48,19 @@ export function artifactTypeFromPath(path: string): ArtifactType | null {
   if (/\.(mp4|m4v|mov|webm)$/.test(p)) return "video";
   if (CODE_EXT_RE.test(p)) return "code";
   return null;
+}
+
+/** Flatten spreadsheet rows to TSV so they paste as cells into a spreadsheet. */
+function rowsToTsv(rows: string[][]): string {
+  return rows
+    .map((row) => row.map((cell) => String(cell ?? "").replace(/[\t\r\n]+/g, " ")).join("\t"))
+    .join("\n");
+}
+
+/** Strip markup from rendered HTML (docx conversions) to get copyable text. */
+function htmlToPlainText(html: string): string {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +152,13 @@ export function MdViewerModal({ artifact, onClose }: MdViewerModalProps) {
             {filename}
           </span>
           <div className="flex items-center gap-1 shrink-0">
+            <CopyButton
+              text={content}
+              title="Copy file contents"
+              size={14}
+              disabled={loading || Boolean(error)}
+              className="p-1.5"
+            />
             <a
               href={artifact.fileUrl}
               target="_blank"
@@ -290,6 +312,44 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
     return () => { cancelled = true; };
   }, [artifact.fileUrl, artifact.type]);
 
+  // Binary previews have no text body, so the copy button hands over the image
+  // itself (or the file link) rather than file contents.
+  const copiesLink = artifact.type === "pdf" || artifact.type === "video";
+  const copyTitle =
+    artifact.type === "image" ? "Copy image" :
+    copiesLink ? "Copy file link" :
+    "Copy file contents";
+
+  const copyArtifact = useCallback(async (): Promise<boolean> => {
+    switch (artifact.type) {
+      case "image":
+        return copyImage(artifact.fileUrl, artifact.fileUrl);
+      case "pdf":
+      case "video":
+        return copyText(artifact.fileUrl);
+      case "html": {
+        // The iframe renders the file directly, so the source is never in state.
+        const res = await fetch(artifact.fileUrl);
+        if (!res.ok) return false;
+        return copyText(await res.text());
+      }
+      case "md":
+        return copyText(mdContent ?? "");
+      case "txt":
+      case "code":
+        return copyText(plainText ?? "");
+      case "json":
+        return copyText(jsonText ?? "");
+      case "csv":
+      case "xlsx":
+        return copyText(sheetRows ? rowsToTsv(sheetRows) : "");
+      case "docx":
+        return copyText(docxHtml ? htmlToPlainText(docxHtml) : "");
+      default:
+        return false;
+    }
+  }, [artifact.fileUrl, artifact.type, docxHtml, jsonText, mdContent, plainText, sheetRows]);
+
   const filename = artifact.path.split("/").pop() ?? artifact.path;
   const iconColor =
     artifact.type === "html" ? "text-blue-400" :
@@ -326,6 +386,12 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
               <RefreshCw size={13} />
             </button>
           )}
+          <CopyButton
+            onCopy={copyArtifact}
+            title={copyTitle}
+            disabled={loading || Boolean(error)}
+            className="p-1.5"
+          />
           {!artifact.fileUrl.startsWith("data:") && (
             <a
               href={artifact.fileUrl}
