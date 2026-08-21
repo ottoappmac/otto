@@ -485,6 +485,11 @@ class MCPServerConfig(BaseModel):
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    # HTTP/SSE request headers as templates, e.g.
+    # ``{"Authorization": "Bearer ${SNOWFLAKE_PAT_TOKEN}"}``.
+    # Placeholders are expanded from the credential vault at connect
+    # time; literal tokens must not be stored here.
+    headers: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
     auto_start: bool = False
     excluded_tools: list[str] = Field(default_factory=list)

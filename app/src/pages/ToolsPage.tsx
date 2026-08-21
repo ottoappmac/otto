@@ -528,19 +528,70 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
   return <div className="h-full flex flex-col">{content}</div>;
 }
 
+// Key/value editor for HTTP/SSE request headers (e.g. Authorization
+// Bearer tokens, X-Api-Key). Values are sent to the backend on
+// save — literal tokens get extracted into the OS keychain and
+// replaced with a ``${NAME}`` template server-side, so re-opening this
+// dialog shows the placeholder rather than the live secret.
+function HeaderRows({ rows, onChange }: { rows: { name: string; value: string }[]; onChange: (rows: { name: string; value: string }[]) => void }) {
+  const update = (i: number, field: "name" | "value", val: string) => {
+    const next = rows.slice();
+    next[i] = { ...next[i], [field]: val };
+    onChange(next);
+  };
+  const remove = (i: number) => onChange(rows.filter((_, idx) => idx !== i));
+  const add = () => onChange([...rows, { name: "", value: "" }]);
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-th-text-tertiary mb-2">Headers (optional)</label>
+      <div className="space-y-2">
+        {rows.map((row, i) => (
+          <div key={i} className="flex gap-2">
+            <input
+              className="w-2/5 px-3 py-2 bg-th-input-bg border border-th-input-border rounded-lg text-th-text-primary placeholder-th-text-muted focus:outline-none focus:border-blue-400 transition-all text-sm"
+              value={row.name}
+              onChange={(e) => update(i, "name", e.target.value)}
+              placeholder="Authorization"
+            />
+            <input
+              className="flex-1 px-3 py-2 bg-th-input-bg border border-th-input-border rounded-lg text-th-text-primary placeholder-th-text-muted focus:outline-none focus:border-blue-400 transition-all text-sm"
+              value={row.value}
+              onChange={(e) => update(i, "value", e.target.value)}
+              placeholder="Bearer sk-live-..."
+            />
+            <button type="button" onClick={() => remove(i)} className="px-2 text-th-text-muted hover:text-red-400 transition-colors"><Trash2 size={16} /></button>
+          </div>
+        ))}
+      </div>
+      <button type="button" onClick={add} className="mt-2 inline-flex items-center gap-1 text-xs text-th-text-tertiary hover:text-th-text-primary transition-colors"><Plus size={12} /> Add header</button>
+      <p className="text-[11px] text-th-text-muted mt-1.5">Values are stored in the OS keychain, never in plain config — e.g. a Snowflake PAT as <code>Authorization</code> / <code>Bearer &lt;token&gt;</code>.</p>
+    </div>
+  );
+}
+
+function headerRowsToObject(rows: { name: string; value: string }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const { name, value } of rows) {
+    if (name.trim() && value.trim()) out[name.trim()] = value.trim();
+  }
+  return out;
+}
+
 function AddMCPDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
   const [name, setName] = useState("");
   const [transport, setTransport] = useState("streamable_http");
   const [url, setUrl] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
+  const [headerRows, setHeaderRows] = useState<{ name: string; value: string }[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const handleAdd = async () => { setSaving(true); try { const cleanCommand = command.trim().replace(/^["']+|["']+$/g, ""); await api.addMCPServer({ name, transport, url: transport !== "stdio" ? url : null, command: transport === "stdio" ? cleanCommand || null : null, args: transport === "stdio" ? args.split(/\s+/).filter(Boolean) : [] }); onAdded(); } finally { setSaving(false); } };
+  const handleAdd = async () => { setSaving(true); try { const cleanCommand = command.trim().replace(/^["']+|["']+$/g, ""); await api.addMCPServer({ name, transport, url: transport !== "stdio" ? url : null, command: transport === "stdio" ? cleanCommand || null : null, args: transport === "stdio" ? args.split(/\s+/).filter(Boolean) : [], headers: transport !== "stdio" ? headerRowsToObject(headerRows) : {} }); onAdded(); } finally { setSaving(false); } };
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-8">
-      <div className="bg-th-card-bg border border-th-card-border rounded-2xl w-full max-w-lg p-6 shadow-2xl">
+      <div className="bg-th-card-bg border border-th-card-border rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-th-text-primary">Add MCP Server</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-th-surface-hover text-th-text-muted hover:text-th-text-secondary transition-colors"><X size={20} /></button>
@@ -557,6 +608,7 @@ function AddMCPDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () =
           </div>
           {transport !== "stdio" && <Field label="URL" value={url} onChange={setUrl} placeholder="http://localhost:3000/mcp" />}
           {transport === "stdio" && (<><Field label="Command (no quotes needed)" value={command} onChange={setCommand} placeholder="npx" /><Field label="Arguments (space-separated)" value={args} onChange={setArgs} placeholder="@modelcontextprotocol/server-github" /></>)}
+          {transport !== "stdio" && <HeaderRows rows={headerRows} onChange={setHeaderRows} />}
         </div>
         <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-th-border">
           <button className="px-4 py-2 bg-th-inset-bg border border-th-border text-th-text-tertiary hover:text-th-text-primary rounded-lg text-sm font-medium transition-colors" onClick={onClose}>Cancel</button>
@@ -574,6 +626,9 @@ function EditMCPDialog({ server, onClose, onSaved }: { server: MCPServerStatus; 
   const [port, setPort] = useState(server.port != null ? String(server.port) : "");
   const [command, setCommand] = useState(server.command ?? "");
   const [args, setArgs] = useState((server.args ?? []).join(" "));
+  const [headerRows, setHeaderRows] = useState<{ name: string; value: string }[]>(
+    () => Object.entries(server.headers ?? {}).map(([name, value]) => ({ name, value })),
+  );
   const [saving, setSaving] = useState(false);
 
   const [autoStart, setAutoStart] = useState(server.auto_start);
@@ -591,6 +646,7 @@ function EditMCPDialog({ server, onClose, onSaved }: { server: MCPServerStatus; 
         port: (hasLocalProcess && parsedPort) ? parsedPort : null,
         command: (transport === "stdio" || hasLocalProcess) ? cleanCommand || null : null,
         args: (transport === "stdio" || hasLocalProcess) ? args.split(/\s+/).filter(Boolean) : [],
+        headers: transport !== "stdio" ? headerRowsToObject(headerRows) : {},
         auto_start: autoStart,
       });
       onSaved();
@@ -601,7 +657,7 @@ function EditMCPDialog({ server, onClose, onSaved }: { server: MCPServerStatus; 
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-8">
-      <div className="bg-th-card-bg border border-th-card-border rounded-2xl w-full max-w-lg p-6 shadow-2xl">
+      <div className="bg-th-card-bg border border-th-card-border rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-th-text-primary">Edit MCP Server</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-th-surface-hover text-th-text-muted hover:text-th-text-secondary transition-colors"><X size={20} /></button>
@@ -633,6 +689,7 @@ function EditMCPDialog({ server, onClose, onSaved }: { server: MCPServerStatus; 
             </div>
           )}
           {(transport === "stdio" || hasLocalProcess) && (<><Field label="Command (no quotes needed — spaces in paths are OK)" value={command} onChange={setCommand} placeholder="Auto-detected if left empty" /><Field label="Arguments (space-separated)" value={args} onChange={setArgs} placeholder="run testserver" /></>)}
+          {transport !== "stdio" && <HeaderRows rows={headerRows} onChange={setHeaderRows} />}
           {hasLocalProcess && (
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} className="w-4 h-4 rounded border-th-border bg-th-input-bg text-th-text-primary focus:ring-blue-400" />
@@ -765,6 +822,7 @@ function EditJsonDialog({ servers, onClose, onSaved }: { servers: MCPServerStatu
       } else {
         entry.url = srv.url ?? "";
         if (srv.transport !== "streamable_http") entry.transport = srv.transport;
+        if (srv.headers && Object.keys(srv.headers).length > 0) entry.headers = srv.headers;
       }
       obj[srv.name] = entry;
     }

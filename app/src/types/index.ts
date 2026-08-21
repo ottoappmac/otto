@@ -152,6 +152,10 @@ export interface MCPServerStatus {
   // for legacy / paste-a-string MCPs so the frontend can read this
   // field unconditionally without null-checking.
   auth?: MCPAuthStatus;
+  // HTTP/SSE header templates such as
+  // ``{ Authorization: "Bearer ${SNOWFLAKE_PAT_TOKEN}" }``. Placeholders
+  // only — never the live token.
+  headers?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------

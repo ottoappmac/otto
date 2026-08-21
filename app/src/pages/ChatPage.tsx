@@ -29,6 +29,7 @@ import { useVoice } from "../hooks/useVoice";
 import { onAskOtto } from "../utils/askOttoBus";
 import { subscribeSessionFiles } from "../utils/sessionFilesBus";
 import { onAgentContext } from "../utils/agentContextBus";
+import { buildFileTree } from "../utils/fileTree";
 import type { AskPayload } from "../utils/askOttoBus";
 import type { AskImage } from "../types";
 import logoDark from "../assets/logo-dark.png";
@@ -220,10 +221,16 @@ export default function ChatPage() {
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
+  // "@file" mention dropdown — lists files/folders from the current
+  // session's own output directory so the user can reference one inline.
+  const [atOpen, setAtOpen] = useState(false);
+  const [atFilter, setAtFilter] = useState("");
+  const [atIndex, setAtIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<InlineUrlInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashRef = useRef<HTMLDivElement>(null);
+  const atRef = useRef<HTMLDivElement>(null);
   const msgIdRef = useRef(0);
   const pendingMemoryTopicsRef = useRef<string[] | null>(null);
   const sendingRef = useRef(false);
@@ -333,6 +340,28 @@ export default function ChatPage() {
     };
   }, [clearSession]);
 
+  // Classify absolute OS filesystem paths into files vs. folders and queue
+  // them for symlinking into the session (see `createSessionLink` in the
+  // send flow). Shared by Tauri drag-drop below and by pasting a
+  // Finder-copied file/folder (`onPastePaths` on `InlineUrlInput`) — both
+  // hand us real paths rather than Blob content, which is the only way to
+  // represent a pasted/dropped *folder* at all.
+  const addDroppedPaths = (paths: string[]) => {
+    const folders: string[] = [];
+    const filePaths: string[] = [];
+    paths.forEach((p) => {
+      // Heuristic: if the last path segment contains a ".", treat as file
+      const basename = p.replace(/\\/g, "/").split("/").pop() ?? p;
+      if (basename.includes(".")) {
+        filePaths.push(p);
+      } else {
+        folders.push(p);
+      }
+    });
+    if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
+    if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+  };
+
   // Tauri intercepts OS-level file/folder drops before they reach the browser's
   // ondrop event. Use the Tauri window API to handle them properly.
   // The unlisten function is returned asynchronously, so we use a `cancelled`
@@ -349,19 +378,7 @@ export default function ChatPage() {
         setIsDragging(false);
       } else if (payload.type === "drop" && payload.paths) {
         setIsDragging(false);
-        const folders: string[] = [];
-        const filePaths: string[] = [];
-        payload.paths.forEach((p) => {
-          // Heuristic: if the last path segment contains a ".", treat as file
-          const basename = p.replace(/\\/g, "/").split("/").pop() ?? p;
-          if (basename.includes(".")) {
-            filePaths.push(p);
-          } else {
-            folders.push(p);
-          }
-        });
-        if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
-        if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+        addDroppedPaths(payload.paths);
       }
     }).then((fn) => {
       if (cancelled) fn(); // cleanup already ran — unregister immediately
@@ -1543,6 +1560,18 @@ export default function ChatPage() {
       }
       if (e.key === "Escape") { e.preventDefault(); setSlashOpen(false); return; }
     }
+    if (atOpen) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setAtIndex((i) => Math.min(i + 1, atItems.length - 1)); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setAtIndex((i) => Math.max(i - 1, 0)); return; }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const pick = atItems[clampedAtIndex];
+        if (pick) handleAtSelect(pick.path);
+        else setAtOpen(false);
+        return;
+      }
+      if (e.key === "Escape") { e.preventDefault(); setAtOpen(false); return; }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (isStreaming && input.trim()) {
@@ -1603,6 +1632,58 @@ export default function ChatPage() {
     () => sessionFiles.filter(f => !f.path.startsWith("large_tool_results/")),
     [sessionFiles],
   );
+
+  // "@mention" candidates: attachments the user just dropped/pasted but
+  // hasn't sent yet (only a basename is known — they aren't linked into the
+  // session dir until `handleSend` runs) listed ahead of files already in
+  // this run's own output directory (flattened from the session file tree,
+  // folders-before-files, same order `SessionFileTree` uses).
+  const atPendingEntries = useMemo(() => {
+    const basename = (p: string) => p.replace(/\\/g, "/").split("/").pop() ?? p;
+    return [
+      ...pendingFiles.map((f) => ({ path: f.name, isDir: false, pending: true as const })),
+      ...pendingFilePaths.map((p) => ({ path: basename(p), isDir: false, pending: true as const })),
+      ...pendingFolders.map((p) => ({ path: basename(p), isDir: true, pending: true as const })),
+    ];
+  }, [pendingFiles, pendingFilePaths, pendingFolders]);
+
+  const atSessionEntries = useMemo(() => {
+    const out: { path: string; isDir: boolean; pending: false }[] = [];
+    const walk = (nodes: ReturnType<typeof buildFileTree>) => {
+      for (const node of nodes) {
+        out.push({ path: node.path, isDir: !node.file, pending: false });
+        if (node.children.length > 0) walk(node.children);
+      }
+    };
+    walk(buildFileTree(visibleSessionFiles));
+    return out;
+  }, [visibleSessionFiles]);
+
+  const atEntries = useMemo(
+    () => [...atPendingEntries, ...atSessionEntries],
+    [atPendingEntries, atSessionEntries],
+  );
+
+  const atItems = useMemo(() => {
+    const q = atFilter.trim().toLowerCase();
+    const matches = q ? atEntries.filter((e) => e.path.toLowerCase().includes(q)) : atEntries;
+    return matches.slice(0, 30);
+  }, [atEntries, atFilter]);
+  const clampedAtIndex = Math.max(0, Math.min(atIndex, atItems.length - 1));
+
+  useEffect(() => {
+    if (atOpen && atRef.current) {
+      const active = atRef.current.querySelectorAll("button")[clampedAtIndex];
+      active?.scrollIntoView({ block: "nearest" });
+    }
+  }, [atOpen, clampedAtIndex]);
+
+  const handleAtSelect = (path: string) => {
+    inputRef.current?.replaceMention(`@${path} `);
+    setAtOpen(false);
+    setAtFilter("");
+    setAtIndex(0);
+  };
 
   const getViewType = artifactTypeFromPath;
 
@@ -2057,6 +2138,47 @@ export default function ChatPage() {
               ))}
             </div>
           )}
+          {atOpen && atItems.length > 0 && (
+            <div ref={atRef} className="absolute bottom-full left-0 mb-2 w-80 max-h-64 overflow-y-auto bg-th-card-bg border border-th-border rounded-lg shadow-xl z-50">
+              {atItems.map((item, i) => {
+                // Section headers: once right before the first item of each
+                // group (pending attachments always come first, see atEntries).
+                const showHeader = i === 0 || item.pending !== atItems[i - 1].pending;
+                return (
+                  <div key={`${item.pending ? "pending" : "run"}:${item.path}:${i}`}>
+                    {showHeader && (
+                      <div className="px-3 py-2 border-b border-th-border">
+                        <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">
+                          {item.pending ? "Attached (not sent yet)" : "Files in this run"}
+                        </span>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleAtSelect(item.path)}
+                      onMouseEnter={() => setAtIndex(i)}
+                      className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2 ${
+                        i === clampedAtIndex
+                          ? "bg-th-tab-active-bg text-th-tab-active-fg"
+                          : "text-th-text-tertiary hover:bg-th-surface-hover hover:text-th-text-primary"
+                      }`}
+                    >
+                      {item.isDir ? (
+                        <Folder size={13} className="shrink-0 text-sky-400/70" />
+                      ) : (
+                        <FileText size={13} className="shrink-0 text-th-text-muted" />
+                      )}
+                      <span className="truncate font-mono text-xs flex-1">{item.path}</span>
+                      {item.pending && (
+                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400/80">
+                          not sent
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <InlineUrlInput
             ref={inputRef}
             className={`w-full pl-10 pr-12 py-3 bg-th-input-bg border rounded-2xl text-th-text-primary focus:outline-none transition-all min-h-[46px] max-h-[200px] overflow-y-auto cursor-text text-sm leading-5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
@@ -2078,6 +2200,13 @@ export default function ChatPage() {
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             onPasteFiles={(files) => { addFiles(files); return true; }}
+            onPastePaths={(paths) => { addDroppedPaths(paths); return true; }}
+            onMentionChange={(query) => {
+              if (query === null) { setAtOpen(false); return; }
+              setAtOpen(true);
+              setAtFilter(query);
+              setAtIndex(0);
+            }}
           />
           <button
             className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg flex items-center justify-center text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed`}

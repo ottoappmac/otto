@@ -141,6 +141,8 @@ class MCPServerStatus(BaseModel):
     os_supported: bool = True
     server_type: str = "generic"
     context_cache_active: bool = False
+    # HTTP/SSE header templates (placeholders only, never token values).
+    headers: dict[str, str] = Field(default_factory=dict)
     # Agent-built MCP plumbing.  ``generated`` flags servers authored by
     # the agent's mcp_builder pipeline; the UI uses it to (a) badge them
     # as "Agent-built" and (b) route delete through the registry which
@@ -172,6 +174,11 @@ class MCPServerAddRequest(BaseModel):
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    # HTTP/SSE request headers from the "Add/Edit MCP Server" form.  Values
+    # may be literal tokens (extracted into the vault and replaced with a
+    # ``${NAME}`` template server-side) or an existing ``${NAME}`` template
+    # copied back unchanged from a previous read.  Ignored for stdio.
+    headers: dict[str, str] = Field(default_factory=dict)
     auto_start: bool = False
 
 

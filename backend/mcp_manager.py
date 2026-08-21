@@ -607,6 +607,32 @@ def _harden_generated_command(
     return wrapped[0], list(wrapped[1:])
 
 
+def _resolve_http_headers(config: MCPServerConfig) -> dict[str, str] | None:
+    """Build request headers for streamable_http / SSE MCP connections.
+
+    Templates on ``config.headers`` win.  Otherwise a single
+    ``Authorization: Bearer <token>`` header is synthesized from the
+    first hydrated ``required_secrets`` entry using ``auth.header_name``
+    / ``auth.token_prefix``.
+    """
+    from backend.mcp_headers import (
+        expand_header_templates,
+        fallback_auth_header,
+    )
+
+    secrets = _hydrate_secrets(config)
+    templates = dict(config.headers or {})
+    if templates:
+        return expand_header_templates(templates, secrets)
+    auth = config.auth
+    return fallback_auth_header(
+        header_name=(auth.header_name if auth else "Authorization") or "Authorization",
+        token_prefix=(auth.token_prefix if auth else "Bearer ") or "",
+        required_secrets=list(config.required_secrets or []),
+        secrets=secrets,
+    )
+
+
 def _hydrate_secrets(config: MCPServerConfig) -> dict[str, str]:
     """Pull credentials from the vault and return a subprocess env dict.
 
@@ -1243,6 +1269,18 @@ class MCPManager:
                 self._connections[config.id] = conn
                 return conn
 
+        if config.transport in ("streamable_http", "sse") and config.required_secrets:
+            hydrated = _hydrate_static_secrets(config)
+            missing = [n for n in config.required_secrets if n not in hydrated]
+            if missing:
+                conn.error = (
+                    f"missing credential(s): {', '.join(missing)} — "
+                    "set them in Tools → Credentials before connecting"
+                )
+                logger.warning("MCP %s: %s", config.name, conn.error)
+                self._connections[config.id] = conn
+                return conn
+
         try:
             if config.builtin or config.id in ("playwright-mcp",):
                 tools = await self._load_builtin(config, conn)
@@ -1262,8 +1300,14 @@ class MCPManager:
             # login is something the user has to do, not a transient
             # network failure to back off from.
             from backend.auth import NeedsLoginError as _NLE
+            from backend.mcp_headers import MissingHeaderSecret as _MHS
 
-            if isinstance(exc, _NLE):
+            if isinstance(exc, _MHS):
+                conn.error = (
+                    f"missing credential {exc.args[0]!r} required for HTTP auth"
+                )
+                logger.warning("MCP %s: %s", config.name, conn.error)
+            elif isinstance(exc, _NLE):
                 conn.error = (
                     f"needs_login ({exc.kind}) — open Settings → "
                     f"Credentials → Login for this server"
@@ -1363,6 +1407,9 @@ class MCPManager:
 
         if config.transport == "streamable_http" and effective_url:
             connection = {"transport": "streamable_http", "url": effective_url}
+            http_headers = _resolve_http_headers(config)
+            if http_headers:
+                connection["headers"] = http_headers
         elif config.transport == "stdio" and config.command:
             # Hydrate any required_secrets from the credential vault into
             # the subprocess env at spawn time.  Values come from macOS
@@ -1418,6 +1465,9 @@ class MCPManager:
             }
         elif config.transport == "sse" and config.url:
             connection = {"transport": "sse", "url": config.url}
+            http_headers = _resolve_http_headers(config)
+            if http_headers:
+                connection["headers"] = http_headers
         else:
             raise ValueError(f"Invalid MCP config for {config.name}: transport={config.transport}")
 

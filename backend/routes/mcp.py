@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from backend.config import AppConfig, MCPServerConfig
+from backend.mcp_headers import ingest_http_headers, store_ingested_secrets
 from backend.mcp_manager import reset_circuit_breaker
 from backend.schemas import MCPAuthStatus, MCPServerAddRequest, MCPServerStatus
 from backend.state import mcp_mgr, session_mgr
@@ -132,6 +133,7 @@ def _status_for(srv: MCPServerConfig, *, os_supported: bool) -> dict:
         os_supported=os_supported,
         server_type=conn.server_type if conn else "generic",
         context_cache_active=conn.context_cache_active if conn else False,
+        headers=dict(srv.headers or {}),
         generated=srv.generated,
         required_secrets=list(srv.required_secrets),
         missing_secrets=_missing_secrets(srv),
@@ -160,6 +162,11 @@ async def add_mcp_server(req: MCPServerAddRequest):
     if any(s.id == server_id for s in cfg.mcp_servers):
         return JSONResponse(status_code=409, content={"error": f"Server '{server_id}' already exists"})
 
+    templates, secret_names, vault_vals = ({}, [], {})
+    if req.transport != "stdio" and req.headers:
+        templates, secret_names, vault_vals = ingest_http_headers(server_id, {"headers": req.headers})
+        store_ingested_secrets(server_id, vault_vals)
+
     new_server = MCPServerConfig(
         id=server_id,
         name=req.name,
@@ -169,6 +176,8 @@ async def add_mcp_server(req: MCPServerAddRequest):
         command=req.command,
         args=req.args,
         env=req.env,
+        headers=templates,
+        required_secrets=secret_names,
         enabled=True,
         auto_start=req.auto_start,
         builtin=False,
@@ -191,6 +200,20 @@ async def update_mcp_server(server_id: str, req: MCPServerAddRequest):
             srv.args = req.args
             srv.env = req.env
             srv.auto_start = req.auto_start
+            # Headers only apply to HTTP/SSE transports; this dialog fully
+            # owns the header-derived slice of required_secrets (any literal
+            # values get re-extracted to the vault, keyed the same way as
+            # the JSON import path so re-saving an unchanged template is a
+            # no-op).
+            if req.transport != "stdio":
+                templates, secret_names, vault_vals = ingest_http_headers(
+                    server_id, {"headers": req.headers or {}},
+                )
+                store_ingested_secrets(server_id, vault_vals)
+                srv.headers = templates
+                srv.required_secrets = secret_names
+            else:
+                srv.headers = {}
             await cfg.asave()
             await mcp_mgr.disconnect(server_id)
             return {"status": "updated", "id": server_id}
@@ -269,6 +292,8 @@ async def export_mcp_servers():
             entry["url"] = srv.url or ""
             if srv.transport != "streamable_http":
                 entry["transport"] = srv.transport
+            if srv.headers:
+                entry["headers"] = srv.headers
         servers[srv.name] = entry
     return {"mcpServers": servers}
 
@@ -301,6 +326,11 @@ async def import_mcp_servers(payload: dict):
         has_command = bool(spec.get("command"))
         transport = spec.get("transport", "stdio" if has_command else "streamable_http")
 
+        templates, secret_names, vault_vals = ({}, [], {})
+        if transport != "stdio":
+            templates, secret_names, vault_vals = ingest_http_headers(server_id, spec)
+            store_ingested_secrets(server_id, vault_vals)
+
         new_srv = MCPServerConfig(
             id=server_id,
             name=name,
@@ -309,6 +339,8 @@ async def import_mcp_servers(payload: dict):
             command=spec.get("command"),
             args=spec.get("args", []),
             env=spec.get("env", {}),
+            headers=templates,
+            required_secrets=secret_names,
             enabled=True,
             auto_start=False,
             builtin=False,

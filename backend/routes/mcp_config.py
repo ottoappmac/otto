@@ -7,6 +7,7 @@ import re
 from fastapi import APIRouter
 
 from backend.config import AppConfig, MCPServerConfig
+from backend.mcp_headers import ingest_http_headers, store_ingested_secrets
 from backend.state import mcp_mgr
 
 router = APIRouter(prefix="/api", tags=["mcp"])
@@ -51,6 +52,11 @@ async def save_mcp_servers_json(payload: dict):
             errors.append(f"'{name}': {transport} transport requires 'url'")
             continue
 
+        templates, secret_names, vault_vals = ({}, [], {})
+        if transport != "stdio":
+            templates, secret_names, vault_vals = ingest_http_headers(server_id, spec)
+            store_ingested_secrets(server_id, vault_vals)
+
         new_entries.append(MCPServerConfig(
             id=server_id,
             name=name,
@@ -59,6 +65,8 @@ async def save_mcp_servers_json(payload: dict):
             command=spec.get("command"),
             args=spec.get("args", []),
             env=spec.get("env", {}),
+            headers=templates,
+            required_secrets=secret_names,
             enabled=True,
             auto_start=False,
             builtin=False,
