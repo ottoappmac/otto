@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -28,6 +29,12 @@ import {
 export interface InlineUrlInputHandle {
   focus: () => void;
   el: HTMLDivElement | null;
+  /**
+   * Replace the currently active "@mention" token (tracked internally since
+   * the last `onMentionChange` callback) with `text`, then park the caret
+   * right after it. No-op if there's no active mention.
+   */
+  replaceMention: (text: string) => void;
 }
 
 interface Props {
@@ -36,6 +43,23 @@ interface Props {
   onKeyDown?: (e: React.KeyboardEvent<HTMLDivElement>) => void;
   /** Called with any files present on a paste. Return true if handled. */
   onPasteFiles?: (files: File[]) => boolean;
+  /**
+   * Called with absolute filesystem paths found on a paste (e.g. Cmd+C on a
+   * file/folder in Finder, then Cmd+V here). Checked before `onPasteFiles`
+   * so a pasted folder is treated as a real directory reference instead of
+   * falling through to `getAsFile()`, which returns a 0-byte `File` for
+   * directories. Return true if handled.
+   */
+  onPastePaths?: (paths: string[]) => boolean;
+  /**
+   * Called with the text typed so far whenever the caret sits inside an
+   * in-progress "@mention" token (an "@" at the start of the text or right
+   * after whitespace, followed by a run of non-whitespace up to the caret),
+   * or `null` once the caret leaves that token. Lets the caller drive a
+   * file-mention dropdown without this component knowing what a mention
+   * resolves to.
+   */
+  onMentionChange?: (query: string | null) => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -61,6 +85,34 @@ function findUrls(text: string): UrlToken[] {
     out.push({ start: m.index, end: m.index + url.length, url });
   }
   return out;
+}
+
+/**
+ * Extract absolute filesystem paths from a `text/uri-list` clipboard
+ * payload. Per the HTML Standard's OS-specific pasteboard mapping, macOS's
+ * `public.file-url` pasteboard type (what Finder puts on the clipboard for
+ * Cmd+C on a file *or folder*) is exposed to web content as `text/uri-list`
+ * `file://` entries — this is present alongside the plain "file" clipboard
+ * item whose `getAsFile()` yields a 0-byte blob for directories, since the
+ * File API has no way to represent directory contents.
+ */
+function fileUrisToPaths(uriList: string): string[] {
+  return uriList
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#") && line.startsWith("file://"))
+    .map((uri) => {
+      try {
+        let path = decodeURIComponent(new URL(uri).pathname);
+        // file:///C:/Users/... -> pathname is "/C:/Users/...";
+        // strip the leading slash so Windows drive-letter paths work too.
+        if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
+        return path;
+      } catch {
+        return null;
+      }
+    })
+    .filter((p): p is string => !!p);
 }
 
 function displayUrl(url: string): string {
@@ -109,6 +161,30 @@ function currentChipRanges(root: HTMLElement): Array<[number, number]> {
 function rangesEqual(a: Array<[number, number]>, b: Array<[number, number]>): boolean {
   if (a.length !== b.length) return false;
   return a.every((r, i) => r[0] === b[i][0] && r[1] === b[i][1]);
+}
+
+/**
+ * Find an in-progress "@mention" token ending exactly at the caret — an "@"
+ * preceded by start-of-text or whitespace, followed by a run of
+ * non-whitespace characters up to the caret. Mirrors how Cursor's own
+ * @-mentions trigger, and (like an email address) an "@" preceded by a
+ * non-space character never counts as the start of a mention.
+ */
+function findMentionAtCaret(text: string, caret: number): { start: number; end: number; query: string } | null {
+  let i = caret - 1;
+  while (i >= 0) {
+    const ch = text[i];
+    if (ch === "@") {
+      const before = text[i - 1];
+      if (i === 0 || before === undefined || /\s/.test(before)) {
+        return { start: i, end: caret, query: text.slice(i + 1, caret) };
+      }
+      return null;
+    }
+    if (/\s/.test(ch)) return null;
+    i--;
+  }
+  return null;
 }
 
 /** Plain-text caret offset within the editor (counting chips as their url length). */
@@ -215,7 +291,7 @@ function setCaretOffset(root: HTMLElement, target: number): void {
 }
 
 const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUrlInput(
-  { value, onChange, onKeyDown, onPasteFiles, disabled, placeholder, className },
+  { value, onChange, onKeyDown, onPasteFiles, onPastePaths, onMentionChange, disabled, placeholder, className },
   ref,
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -228,10 +304,52 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
   // When set, the next reconcile chips every URL regardless of caret position
   // (used right after a paste so a pasted URL becomes a chip immediately).
   const forceChipAllRef = useRef(false);
+  // The plain-text range of the "@mention" token currently under the caret,
+  // if any — set by `updateMentionState`, consumed by `replaceMention`.
+  const mentionRangeRef = useRef<{ start: number; end: number } | null>(null);
+  const onMentionChangeRef = useRef(onMentionChange);
+  onMentionChangeRef.current = onMentionChange;
+
+  const updateMentionState = useCallback(() => {
+    const root = editorRef.current;
+    if (!root) return;
+    const caret = getCaretOffset(root);
+    const mention = caret == null ? null : findMentionAtCaret(serialize(root), caret);
+    mentionRangeRef.current = mention ? { start: mention.start, end: mention.end } : null;
+    onMentionChangeRef.current?.(mention ? mention.query : null);
+  }, []);
+
+  // Caret-only moves (arrow keys, clicks) don't fire `onInput`, so track
+  // them separately to close/reopen the mention dropdown as the caret
+  // enters or leaves an "@" token without the text itself changing.
+  useEffect(() => {
+    const handler = () => {
+      if (document.activeElement !== editorRef.current) return;
+      updateMentionState();
+    };
+    document.addEventListener("selectionchange", handler);
+    return () => document.removeEventListener("selectionchange", handler);
+  }, [updateMentionState]);
+
+  const replaceMention = useCallback((text: string) => {
+    const root = editorRef.current;
+    const range = mentionRangeRef.current;
+    if (!root || !range) return;
+    const current = serialize(root);
+    const before = current.slice(0, range.start);
+    const after = current.slice(range.end);
+    const next = before + text + after;
+    mentionRangeRef.current = null;
+    caretRef.current = before.length + text.length;
+    lastEmittedRef.current = next;
+    onChange(next);
+    requestAnimationFrame(() => editorRef.current?.focus());
+  }, [onChange]);
 
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
     el: editorRef.current,
+    replaceMention,
   }));
 
   const buildDom = useCallback((text: string, chipAll: boolean, caret: number | null) => {
@@ -317,6 +435,7 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
     if (opts?.forceChipAll) forceChipAllRef.current = true;
     lastEmittedRef.current = text;
     onChange(text);
+    updateMentionState();
   };
 
   // Reconcile the DOM whenever the canonical value changes.
@@ -350,6 +469,18 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
   }, [value, buildDom]);
 
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    // Check for real filesystem paths (Finder Cmd+C on a file/folder) before
+    // falling back to the generic file-blob path below — a pasted folder
+    // has no representable Blob content, so getAsFile() would otherwise
+    // hand back an empty 0-byte "file" named after the folder.
+    const uriList = e.clipboardData.getData("text/uri-list");
+    if (uriList) {
+      const paths = fileUrisToPaths(uriList);
+      if (paths.length > 0 && onPastePaths?.(paths)) {
+        e.preventDefault();
+        return;
+      }
+    }
     const files = Array.from(e.clipboardData.items)
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())

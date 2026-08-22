@@ -391,7 +391,9 @@ def build_mcp_builder_tools() -> list:
         ``command`` ``args...`` as a subprocess at start time and pipe
         ``required_secrets`` into its environment from the keychain.
         For ``transport='streamable_http'`` or ``'sse'`` the backend will
-        connect to ``url`` directly.
+        connect to ``url`` directly.  If ``required_secrets`` is set,
+        the first name is sent as ``Authorization: Bearer ${NAME}``
+        (Snowflake PAT, hosted vendor tokens, etc.).
 
         After this returns, the user must populate every name in
         ``required_secrets`` via ``request_credential`` before
@@ -407,9 +409,10 @@ def build_mcp_builder_tools() -> list:
             args: For stdio, the argv list (e.g.
                   ``["-y", "@modelcontextprotocol/server-github"]``).
             url: For HTTP/SSE, the endpoint URL.
-            required_secrets: SHOUTY_SNAKE_CASE env-var names the server
-                              expects in its environment (e.g.
-                              ``["GITHUB_PERSONAL_ACCESS_TOKEN"]``).
+            required_secrets: SHOUTY_SNAKE_CASE names.  For stdio these
+                              are env vars at spawn; for HTTP they are
+                              sent as ``Authorization: Bearer`` (e.g.
+                              ``["SNOWFLAKE_PAT_TOKEN"]``).
         """
         async def _add():
             from backend.config import AppConfig, MCPServerConfig
@@ -437,6 +440,11 @@ def build_mcp_builder_tools() -> list:
                 builtin=False,
                 generated=False,
                 required_secrets=list(required_secrets or []),
+                headers=(
+                    {"Authorization": f"Bearer ${{{required_secrets[0]}}}"}
+                    if transport != "stdio" and required_secrets
+                    else {}
+                ),
             ))
             await cfg.asave()
 
