@@ -749,7 +749,8 @@ def build_settings_tools() -> list:
     # Anthropic direct API models (mid-2026 catalogue)
     _ANTHROPIC_MODELS = [
         {"id": "claude-opus-4-5", "name": "Claude Opus 4.5", "notes": "Most capable, highest cost"},
-        {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "notes": "Balanced — recommended default"},
+        {"id": "claude-sonnet-5", "name": "Claude Sonnet 5", "notes": "Balanced — recommended default"},
+        {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "notes": "Previous balanced default"},
         {"id": "claude-haiku-3-5", "name": "Claude Haiku 3.5", "notes": "Fastest, lowest cost"},
         {"id": "claude-3-7-sonnet-20250219", "name": "Claude 3.7 Sonnet", "notes": "Extended thinking support"},
     ]
