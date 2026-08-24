@@ -129,6 +129,7 @@ _PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-4": (3.0, 15.0),
     "claude-sonnet-4-5": (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-5": (2.0, 10.0),
     "claude-haiku-3": (0.25, 1.25),
     "claude-haiku-3-5": (0.8, 4.0),
     # OpenAI
