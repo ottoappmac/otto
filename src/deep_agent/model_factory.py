@@ -245,38 +245,6 @@ def _openai_temperature(model_name: str, configured: float) -> float:
     return 1.0 if _is_modern_openai_model(model_name) else configured
 
 
-# Anthropic models that reject non-default ``temperature`` / ``top_p`` / ``top_k``.
-# Otto uses ``temperature=0.0`` for deterministic output on older models; for
-# these the parameter must be omitted entirely or the API returns HTTP 400
-# ("`temperature` is deprecated for this model.").
-_ANTHROPIC_NO_TEMPERATURE_KEYWORDS = (
-    "opus-4-7",
-    "opus-4-8",
-    "opus-5",
-    "sonnet-5",
-    "fable-5",
-)
-
-
-def _anthropic_rejects_temperature(model_name: str) -> bool:
-    """Whether *model_name* rejects non-default sampling parameters."""
-    name = (model_name or "").lower()
-    return any(kw in name for kw in _ANTHROPIC_NO_TEMPERATURE_KEYWORDS)
-
-
-def _anthropic_llm_kwargs(model_name: str, *, temperature: float = 0.0) -> dict[str, Any]:
-    """Return constructor kwargs for :class:`langchain_anthropic.ChatAnthropic`."""
-    kwargs: dict[str, Any] = {"model": model_name}
-    if _anthropic_rejects_temperature(model_name):
-        logger.info(
-            "Anthropic model %s rejects sampling params — omitting temperature",
-            model_name,
-        )
-    else:
-        kwargs["temperature"] = temperature
-    return kwargs
-
-
 def _openai_token_kwargs(model_name: str, max_tokens: int) -> dict:
     """Return the correct token-limit kwargs for an OpenAI/Azure constructor.
 
@@ -343,6 +311,51 @@ def _resolve_omlx_model_id(base_url: str, requested: str) -> str:
         if cand.lower() in lowered:
             return lowered[cand.lower()]
     return short
+
+
+# Anthropic models that lock down sampling parameters and manual extended
+# thinking, rejecting the request with HTTP 400 if ``temperature``, ``top_p``
+# or ``top_k`` is present at all (even the old "deterministic" idiom of 0.0),
+# and if ``thinking`` is set to the old ``{"type": "enabled", "budget_tokens":
+# N}`` form. Introduced with Claude Opus 4.7/4.8 and extended to the Sonnet
+# family with Claude Sonnet 5; adaptive thinking (``{"type": "adaptive"}``,
+# tunable via the ``effort`` parameter) replaces manual budgets for these.
+_ANTHROPIC_MODEL_VERSION_RE = re.compile(
+    r"claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?", re.IGNORECASE,
+)
+
+
+def _anthropic_locks_sampling_params(model_name: str) -> bool:
+    """Whether *model_name* rejects an explicit temperature/top_p/top_k.
+
+    Matches on the ``claude-<family>-<major>[-<minor>]`` fragment wherever
+    it appears, so both the plain API model id (``claude-sonnet-5``) and the
+    Bedrock inference-profile form
+    (``us.anthropic.claude-sonnet-5-20260101-v1:0``) are handled.
+    """
+    match = _ANTHROPIC_MODEL_VERSION_RE.search((model_name or "").lower())
+    if not match:
+        return False
+    family, major_s, minor_s = match.groups()
+    major = int(major_s)
+    minor = int(minor_s) if minor_s is not None else 0
+    if family == "opus":
+        return (major, minor) >= (4, 7)
+    if family == "sonnet":
+        return major >= 5
+    return False
+
+
+def _anthropic_temperature(model_name: str, configured: float = 0.0) -> Optional[float]:
+    """Return the ``temperature`` kwarg to use for an Anthropic model.
+
+    Returns ``None`` for models that lock down sampling parameters (see
+    :func:`_anthropic_locks_sampling_params`). ``None`` is ``ChatAnthropic``'s
+    own field default, which it treats as "omit from the request" — so
+    ``temperature=_anthropic_temperature(...)`` is always safe to pass
+    straight through to the constructor.
+    """
+    return None if _anthropic_locks_sampling_params(model_name) else configured
 
 
 def _resolve_bedrock_creds() -> dict:
@@ -455,10 +468,16 @@ def create_llm(provider: str) -> BaseChatModel:
 
             additional_fields: dict = {}
             if Environment.get_anthropic_thinking_flag():
-                additional_fields["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": Environment.get_anthropic_thinking_budget(),
-                }
+                if _anthropic_locks_sampling_params(model_name):
+                    # Manual budgets (``type: "enabled"``) are removed on
+                    # these models and return HTTP 400 — adaptive thinking
+                    # (on by default) is the only supported mode.
+                    additional_fields["thinking"] = {"type": "adaptive"}
+                else:
+                    additional_fields["thinking"] = {
+                        "type": "enabled",
+                        "budget_tokens": Environment.get_anthropic_thinking_budget(),
+                    }
 
             region = Environment.get_anthropic_bedrock_region()
             boto_cfg = BotoConfig(
@@ -480,7 +499,10 @@ def create_llm(provider: str) -> BaseChatModel:
 
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(**_anthropic_llm_kwargs(model_name))
+        return ChatAnthropic(
+            model=model_name,
+            temperature=_anthropic_temperature(model_name),
+        )
 
     if provider == "cohere":
         from langchain_cohere import ChatCohere

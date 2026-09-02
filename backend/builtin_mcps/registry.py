@@ -146,6 +146,26 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
         optional_secrets=("EDGAR_USER_AGENT",),
     ),
     BuiltinMCP(
+        id="blender",
+        name="Blender",
+        description=(
+            "Live control of a running Blender session via the popular "
+            "open-source BlenderMCP addon (ahujasid/blender-mcp): inspect "
+            "the scene/objects, grab a viewport screenshot, and run "
+            "arbitrary Python for everything else (creating objects, "
+            "materials, etc.). Requires installing that addon inside "
+            "Blender and clicking 'Connect to Claude' — see this MCP's "
+            "README."
+        ),
+        source_dir_name="blender",
+        # Not real secrets — reusing the credential-vault plumbing so
+        # users can override the addon's socket host/port from the
+        # Tools page without editing config files. Sensible defaults
+        # (127.0.0.1:9876) mean the MCP works with zero configuration
+        # once the addon's "Start Server" button has been clicked.
+        optional_secrets=("BLENDER_MCP_HOST", "BLENDER_MCP_PORT"),
+    ),
+    BuiltinMCP(
         id="macos-osascript",
         name="macOS osascript",
         description=(

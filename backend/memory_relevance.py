@@ -250,9 +250,12 @@ def _build_frontier_ranking_model(cfg: MemoryConfig):
         )
 
     name = cfg.model_name or _ANTHROPIC_HAIKU_DEFAULT
-    from deep_agent.model_factory import _anthropic_llm_kwargs
+    from deep_agent.model_factory import _anthropic_temperature
     from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(**_anthropic_llm_kwargs(name))
+
+    return ChatAnthropic(
+        model=name, temperature=_anthropic_temperature(name),
+    )
 
 
 def _build_mlx_ranking_model(
