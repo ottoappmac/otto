@@ -405,6 +405,7 @@ _BUILTIN_SKILL_VERSIONS: dict[str, int] = {
     "macos-applescript": 4,
     "mcp-builder": 3,
     "trigger-builder": 3,
+    "blender-3d-modeling": 2,
 }
 
 _BUILTIN_AGENT_VERSIONS: dict[str, int] = {
@@ -1121,6 +1122,7 @@ _RENAMED_AGENTS = [
     "claude-code-eval-agent",
     "agent-session-eval-agent",
     "playwright-browser-agent",
+    "blender-agent",
 ]
 _RENAMED_SKILLS = [
     "claude-code-eval",
@@ -1180,6 +1182,12 @@ def seed_defaults() -> None:
         name="trigger-builder",
         description="Use this skill when the user wants to fire an agent automatically on a condition — file appears or changes, AppleScript output transitions, periodic system check. Covers the two trigger types (fileos, macostool), the worker-agent-first ordering rule, and event-payload prompt conventions.",
         content=_TRIGGER_BUILDER_SKILL_CONTENT,
+    )
+
+    _seed_skill(
+        name="blender-3d-modeling",
+        description="Use when building or substantially modifying a multi-part 3D model in Blender via bpy scripting (execute_blender_code) — covers the block-out → verify → detail → verify iteration loop and the geometry/camera/render gotchas that silently produce disconnected or blank-looking results.",
+        content=_BLENDER_SKILL_CONTENT,
     )
 
     # --- Agents ---
@@ -3346,6 +3354,232 @@ created.**  The management tools are the source of truth:
 
 The app's data directory (``~/Library/Application Support/…``) is
 off-limits to file tools.  Attempting to access it produces an error.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Blender — skill content
+#
+# No built-in agent is seeded for Blender (the built-in "blender-agent" was
+# retired — see _RENAMED_AGENTS) and the built-in "blender" MCP itself was
+# removed from backend/builtin_mcps/registry.py: its wire protocol (raw
+# JSON, matching the ahujasid/blender-mcp addon) is incompatible with the
+# "Blender Lab" MCP extension most users actually install (null-byte
+# delimited JSON), so it could never connect. This skill is kept so any
+# locally-defined agent wired to a real Blender MCP (e.g. a custom agent
+# pointed at the Blender Lab extension) can still reference
+# "blender-3d-modeling" by name.
+# ---------------------------------------------------------------------------
+
+_BLENDER_SKILL_CONTENT = """\
+---
+name: blender-3d-modeling
+description: Use when building or substantially modifying a multi-part 3D model in Blender via bpy scripting (execute_blender_code) — covers the block-out → verify → detail → verify iteration loop and the specific geometry/camera/render gotchas that silently produce broken-looking results.
+---
+
+# Blender 3D Modeling (bpy scripting)
+
+## When to use
+
+- Building any object with more than 2-3 interdependent parts that must
+  align (vehicles, furniture, mechanical assemblies, architectural
+  elements, rigged characters).
+- Modifying an existing model where parts must stay connected (e.g.
+  resizing a frame while tubes must still meet at their joints).
+- Skip this for trivial single-primitive requests ("add a red cube at
+  the origin") — just call the code-execution tool directly.
+
+## Why this matters
+
+`bpy` will silently accept geometry that never connects, curves that
+don't reach their own control points, and cameras that point at empty
+space. None of these raise an exception — the script "succeeds," a
+render file is written, and the model still looks broken. The only way
+to catch this is to verify state and pixels at each stage, not just at
+the end.
+
+## Core Workflow: Block Out → Verify → Detail → Verify
+
+1. **Research the numbers first.** Before writing any geometry code,
+   gather real dimensions/angles/proportions (web research,
+   documentation search, or values the user gave you) and name them as
+   constants. Geometry computed from a wrong angle or a made-up
+   proportion looks wrong no matter how carefully the rest of the script
+   is written.
+2. **Block out with simple primitives.** Place a primitive
+   (cube/cylinder/empty) at each key hardpoint of the design before
+   building any final geometry. Primitives are cheap to position exactly
+   and cheap to reposition — final geometry (curves, boolean meshes,
+   modifiers) is not.
+3. **Verify the block-out before detailing.** Read back the object
+   positions/bounding boxes you just created and confirm they match the
+   coordinates you intended. Take a screenshot/render of the raw
+   block-out — a blockout that already reads as the right proportions is
+   far cheaper to fix than a fully detailed model that doesn't.
+4. **Detail one subsystem at a time.** Replace block-out primitives with
+   final geometry in focused, single-subsystem scripts (e.g. frame, then
+   fork, then cockpit, then wheels) rather than one long script that
+   builds everything. Small scripts are easier to debug and cheaper to
+   redo when one step is wrong.
+5. **Verify after every subsystem, not just at the end** — run the full
+   **Visual + Physical Evaluation** procedure below, not just a glance at
+   a render.
+6. **Final check is a real render from a properly-aimed camera**, put
+   through the same evaluation procedure — not just "the script ran
+   without error."
+
+Do not treat "the code executed with no exception" as evidence the
+model looks right. bpy will happily accept curve control points that
+never connect, cameras that point at empty space, and objects placed
+off in space — all silently.
+
+## Visual + Physical Evaluation (run this at every "verify" step)
+
+A render is not a verification step until you've actually treated it as
+an eval with a pass/fail outcome. Sloppy "glance at it, looks roughly
+right" checks are exactly how a model with stray lines through it or
+wrong-scale parts gets reported as done. Each time you verify:
+
+1. **Hide block-out scaffolding before judging the image.** Every
+   `EMPTY` used as a hardpoint/reference marker renders as a
+   `PLAIN_AXES` gizmo — 3 perpendicular lines at `empty_display_size`
+   (1.0 = **1 full meter** each direction) through its origin, by
+   default still visible in both viewport and final render. On a model
+   whose overall size is ~1m (a bicycle, a chair, a table lamp), a
+   handful of these overlapping is enough to look like a dense mess of
+   broken/disconnected wireframe lines shooting through and past the
+   model — even when every actual mesh in the scene is correct. Before
+   taking any screenshot/render you intend to actually judge, either
+   `obj.hide_set(True)` every helper `EMPTY` (and any leftover block-out
+   primitive you haven't deleted yet) or set `empty_display_size` down
+   to something small (e.g. `0.02`). Only unhide them again if you
+   specifically need to re-verify hardpoint alignment numerically.
+2. **Describe the image in words before judging it**, part by part
+   (silhouette, how parts connect, anything floating/overlapping/missing)
+   — this forces you to actually look rather than pattern-match "yep,
+   bike-shaped blob, done."
+3. **Check real-world physical plausibility with numbers, not just
+   eyeballing.** Recompute the key dimensions from live scene data
+   (`get_object_detail_summary` bounding boxes, or hardpoint-empty
+   distances via `mathutils.Vector` math) and compare them against the
+   reference ranges you gathered in step 1 (Research the numbers first).
+   For anything with well-known real-world proportions — vehicles,
+   furniture, human-scale objects — a part that's 3x too large/small, or
+   two mating parts whose contact points don't line up within a small
+   tolerance, is a bug even if the render "looks fine" at a glance.
+   Example reference ranges for a bicycle: wheelbase ~0.95–1.10 m, wheel
+   diameter ~0.6–0.75 m, bottom-bracket height ~0.25–0.30 m off the
+   ground, frame tube diameter ~0.025–0.035 m.
+4. **State an explicit pass/fail** for the subsystem before moving on —
+   "wheelbase 1.06 m, BB height 0.26 m, both in range; front wheel
+   render shows a clean silhouette, no stray geometry — PASS" or
+   "spokes render as a solid disc instead of individual struts — FAIL,
+   investigating." Only proceed to the next subsystem on a stated PASS.
+5. **If something looks wrong in a render, diagnose before re-rendering
+   blindly.** Query `get_objects_summary`/`get_object_detail_summary`
+   for the suspect object(s) first — most "broken geometry" turns out to
+   be a non-mesh object (an `EMPTY`, a stray duplicate, leftover
+   block-out primitive) rather than an actual mesh problem. Re-rendering
+   repeatedly without checking scene data first just repeats the same
+   inconclusive result.
+
+## Critical Rules
+
+### Block-out Empties render as large axis crosses and get mistaken for broken geometry
+
+This is the single most common false alarm: helper `EMPTY` objects
+placed at hardpoints during block-out (see step 2 above) default to
+`empty_display_type = 'PLAIN_AXES'` at `empty_display_size = 1.0` — a
+1-meter cross of lines through the origin, visible in both viewport and
+render unless explicitly hidden. On a model roughly human/object scale
+(a bicycle, furniture, a tool), even 5-10 of these overlapping reads as
+a chaotic mess of stray lines shooting through and past the model — it
+looks exactly like disconnected/broken mesh geometry, but the actual
+mesh objects can be completely correct. Always hide (`obj.hide_set(True)`)
+or shrink (`empty_display_size = 0.02`) every helper Empty before
+treating a screenshot/render as a real evaluation of the model — see
+"Visual + Physical Evaluation" above.
+
+### NURBS curves don't pass through their control points by default
+
+Building tubes/struts/cables as `CURVE` objects with `NURBS` splines
+(common — pair with `bevel_depth` for a round tube) is a frequent source
+of broken-looking models. A NURBS curve does **not** touch the
+coordinates assigned to `spline.points[i].co` unless:
+
+```python
+spline.use_endpoint_u = True
+```
+
+is set. Without it, the curve pulls inward from its own control points
+— with the 2-5 points typical of a straight structural member, this
+produces a visibly shortened, bowed, or offset curve that never reaches
+the joint it was meant to connect to (this is what "disconnected
+floating loops instead of a clean frame" usually is). Also check that
+`order_u` is sane for the point count — a 2-point cubic NURBS is a
+degenerate case. Prefer a `POLY` spline for members that are meant to be
+straight, and reserve `NURBS`/`BEZIER` for members that are actually
+meant to curve.
+
+After creating any curve-based part, read back its actual world-space
+endpoint (`obj.matrix_world @ obj.data.splines[0].points[0].co.xyz`, and
+`[-1]`) and diff it against the coordinate you intended. Don't assume
+they match.
+
+### Camera aim must be computed, not guessed
+
+Never hand-pick `rotation_euler` values to "roughly" point a camera at a
+model. Compute a real look-at rotation:
+
+```python
+import mathutils
+direction = target_point - camera.location
+camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+```
+
+or add a `TRACK_TO` constraint targeting an Empty placed at the model's
+bounding-box center. A camera aimed by guessed Euler angles very
+commonly points at empty space — the render still "succeeds" (valid
+non-empty PNG, no exception) but shows nothing but the world background,
+and nothing in the tool result tells you that happened.
+
+### A render/screenshot that "succeeded" can still be blank — check the pixels
+
+A `status: ok` render result only means a file was written, not that
+the model is in frame. Before treating a render as verification:
+
+- Actually view the image (vision tool / `view_image`, or a direct
+  image-bytes screenshot tool if your Blender MCP has one) and confirm
+  the object is visible — don't infer success from the tool call status
+  alone.
+- If it comes back blank or flat-colored, the cause is almost always
+  camera aim (above) or the object being hidden / on an excluded
+  collection / scaled near zero — check the object's actual world-space
+  bounding box, don't just re-render and hope.
+
+### Disk renders never land in your session automatically
+
+Blender runs as a separate, already-open process — it has no
+`$SESSION_FILES` env var and no concept of any virtual `/output/...`
+session path convention your file tools might use. A render written to
+disk via `bpy.ops.render.render(write_still=True)` (or a Blender MCP
+tool that renders "to a path") lands on the **real host filesystem** at
+whatever path was configured — commonly the addon's own temp directory
+if you didn't set an absolute path yourself. It will NOT appear inside
+your session's file area on its own.
+
+To get a disk render in front of yourself or the user: read back the
+*exact* real path the render call reports, then copy that file into
+your session's real output directory yourself (e.g. a shell copy that
+has your session's file-root env var available) before trying to view
+it with a session-scoped file tool — a "file not found" on the first
+view attempt almost always means this copy step was skipped, not that
+the render failed.
+
+## Prerequisites
+
+- A live Blender MCP connection (a scene-inspection tool call succeeds)
+  before attempting any modeling.
 """
 
 

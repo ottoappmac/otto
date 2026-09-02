@@ -660,6 +660,37 @@ def create_llm(provider: str) -> BaseChatModel:
                     )
                 return result
 
+            def _convert_chunk_to_generation_chunk(  # type: ignore[override]
+                self, chunk, default_chunk_class, base_generation_info=None,
+            ):
+                # ``_create_chat_result`` above only runs on the non-streaming
+                # path (``_generate``).  Now that ``session_manager`` streams
+                # graph output via ``stream_mode=["values", "messages"]``,
+                # LangGraph's callback machinery makes every ``.ainvoke()``
+                # transparently go through ``_stream``/``_astream`` instead,
+                # which bypasses ``_create_chat_result`` entirely — without
+                # this override oMLX's TPS/KV-cache stats would silently stop
+                # reaching the session stats panel. oMLX (like OpenAI, via
+                # ``stream_usage=True``) appends one extra chunk carrying the
+                # full ``usage`` object once generation finishes; stash the
+                # oMLX-specific extras on that chunk's ``response_metadata``
+                # the same way ``_create_chat_result`` does, so they survive
+                # LangChain's chunk-merge into the final accumulated message.
+                generation_chunk = super()._convert_chunk_to_generation_chunk(
+                    chunk, default_chunk_class, base_generation_info,
+                )
+                if generation_chunk is not None:
+                    try:
+                        usage_raw = _extract_usage_dict(chunk)
+                        stats = _map_omlx_usage(usage_raw) if usage_raw else {}
+                        if stats:
+                            generation_chunk.message.response_metadata.update(stats)
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "oMLX streaming stats extraction failed", exc_info=True
+                        )
+                return generation_chunk
+
         base = Environment.get_omlx_base_url()
         if not base:
             raise ValueError(

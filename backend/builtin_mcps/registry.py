@@ -119,6 +119,14 @@ class BuiltinMCP:
     static_env: dict[str, str] = field(default_factory=dict)
 
 
+# NOTE: a "blender" entry (ahujasid/blender-mcp addon client, 6 tools)
+# used to live here. It was removed because its raw-JSON wire protocol
+# is incompatible with the "Blender Lab" MCP extension most users now
+# install (which expects null-byte-delimited JSON) — the client would
+# hang on every request. See ``backend.config._RENAMED_SERVER_IDS``
+# ("blender") for the config.json cleanup this triggers on next load.
+# Users wanting live Blender control should register that extension's
+# MCP server directly (not a repo-bundled built-in).
 BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
     BuiltinMCP(
         id="edgar-sec",
@@ -417,13 +425,22 @@ def _sync_one(mcp: BuiltinMCP) -> bool:
 
 
 async def ensure_builtin_mcp_venvs(
-    *, force_rebuild: Optional[set[str]] = None,
+    *, force_rebuild: Optional[set[str]] = None, only_ids: Optional[set[str]] = None,
 ) -> dict[str, str]:
-    """Make sure every built-in MCP has a working ``.venv``.
+    """Make sure built-in MCPs have a working ``.venv``.
 
     Args:
         force_rebuild: ids whose venv must be wiped and re-installed
             (used when ``requirements.txt`` changed since last boot).
+        only_ids: when given, restrict provisioning to built-ins whose id
+            is in this set — every other built-in is skipped entirely (no
+            ``uv venv`` / ``pip install`` work at all).  Passing ``None``
+            (the default) provisions every built-in, matching the historical
+            behavior.  Callers pass the set of *enabled* server ids at boot
+            so disabled built-ins — which will never actually be connected —
+            don't pay for a venv build/rebuild nobody uses; a self-heal call
+            scoped to a single id later provisions it on demand if the user
+            enables it without restarting.
 
     Returns a map of ``id`` → status string (``"ready"``, ``"created"``,
     ``"rebuilt"``, ``"error: …"``).  Errors are logged at WARNING and
@@ -445,10 +462,16 @@ async def ensure_builtin_mcp_venvs(
         for mcp in BUILTIN_MCPS:
             if mcp.runtime != "python":
                 continue
+            if only_ids is not None and mcp.id not in only_ids:
+                continue
             statuses[mcp.id] = f"error: {msg}"
         return statuses
 
+    skipped = 0
     for mcp in BUILTIN_MCPS:
+        if only_ids is not None and mcp.id not in only_ids:
+            skipped += 1
+            continue
         if mcp.runtime != "python":
             # Third-party npm package run via npx — no venv to provision.
             statuses[mcp.id] = "ready"
@@ -463,6 +486,11 @@ async def ensure_builtin_mcp_venvs(
         except Exception:
             logger.exception("builtin_mcps: unexpected error provisioning %s", mcp.id)
             statuses[mcp.id] = "error: unexpected"
+    if only_ids is not None and skipped:
+        logger.info(
+            "builtin_mcps: skipped venv provisioning for %d disabled built-in(s)",
+            skipped,
+        )
     return statuses
 
 

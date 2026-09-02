@@ -227,7 +227,14 @@ async def _startup_mcp(cfg: AppConfig) -> None:
 
     try:
         from backend.builtin_mcps import ensure_builtin_mcp_venvs
-        statuses = await ensure_builtin_mcp_venvs()
+        # Only provision venvs for servers the user actually has enabled —
+        # a disabled built-in is never connected below, so building (or
+        # rebuilding, on a requirements.txt change) its venv at every boot
+        # is pure wasted uv/pip work on the critical path to "first session
+        # ready".  A server enabled later without a restart is self-healed
+        # by a scoped call in the /start route (see backend/routes/mcp.py).
+        enabled_ids = {srv.id for srv in cfg.mcp_servers if srv.enabled}
+        statuses = await ensure_builtin_mcp_venvs(only_ids=enabled_ids)
         for sid, status in statuses.items():
             if status.startswith("error:"):
                 logger.warning("Built-in MCP %s venv: %s", sid, status)

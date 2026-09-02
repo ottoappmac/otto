@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import Literal, Union
+
 from pydantic import BaseModel, ConfigDict
-from tools.schemas import ScreenshotImage, AnnotatedImage, VisualAnnotatedImage, ToolResult, VisualResult
+
+from tools.schemas import (AnnotatedImage, ScreenshotImage, ToolResult,
+                           VisualAnnotatedImage, VisualResult)
 
 ToolResponse = Union[ToolResult, VisualResult]
 
@@ -115,3 +118,4 @@ class Navigator(ABC, BaseModel):
     @abstractmethod
     def get_navigator_instructions(self) -> str:
         ...
+

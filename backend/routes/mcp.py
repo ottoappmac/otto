@@ -431,6 +431,19 @@ async def start_mcp_process(server_id: str):
     try:
         reset_circuit_breaker(server_id)
         if is_stdio:
+            if srv.builtin:
+                # Backend boot only provisions venvs for built-ins that were
+                # already enabled at that point (see server.py:_startup_mcp).
+                # A user flipping a built-in on afterwards, without a
+                # restart, needs its venv built here instead — cheap/no-op
+                # via the requirements-hash check when it's already ready.
+                try:
+                    from backend.builtin_mcps import ensure_builtin_mcp_venvs
+                    await ensure_builtin_mcp_venvs(only_ids={server_id})
+                except Exception:
+                    logger.exception(
+                        "Failed to self-heal venv for %s before start", server_id,
+                    )
             conn = await mcp_mgr.connect(srv)
         else:
             await mcp_mgr.ensure_process(srv)

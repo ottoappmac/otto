@@ -5,6 +5,7 @@
 export type WSMessageType =
   | "user"
   | "agent"
+  | "agent_delta"
   | "tool_call"
   | "tool_result"
   | "execute_output"

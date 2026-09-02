@@ -250,9 +250,8 @@ def _build_frontier_ranking_model(cfg: MemoryConfig):
         )
 
     name = cfg.model_name or _ANTHROPIC_HAIKU_DEFAULT
-    from langchain_anthropic import ChatAnthropic
-
     from deep_agent.model_factory import _anthropic_temperature
+    from langchain_anthropic import ChatAnthropic
 
     return ChatAnthropic(
         model=name, temperature=_anthropic_temperature(name),
@@ -452,6 +451,62 @@ class MemoryRelevanceMiddleware(
         self._session_id = session_id
         self._rank_cache: dict[str, list[str]] = {}
         self._last_cached: bool = False
+        # Description-scan and topic-file caches, both invalidated by mtime
+        # rather than a blanket TTL — memory consolidation writes these
+        # files occasionally, not every turn, so re-globbing the memory dir
+        # and re-reading every topic file's content on *every single model
+        # call* (this middleware fires once per LLM turn, including every
+        # intermediate tool-loop step) is redundant disk I/O the vast
+        # majority of the time. See ``_scan_descriptions_cached`` /
+        # ``_read_topic_file_cached``.
+        self._topics_cache: tuple[tuple[int, float], list[dict[str, str]]] | None = None
+        self._file_cache: dict[str, tuple[float, str]] = {}
+
+    @staticmethod
+    def _dir_signature() -> tuple[int, float]:
+        """Cheap (count, max-mtime) fingerprint of the memory dir's topic files.
+
+        Only ``stat()``s each file — doesn't open/read any of them — so this
+        is much cheaper than :func:`_scan_descriptions` while still detecting
+        additions, deletions, and edits.
+        """
+        mem = _memory_dir()
+        if not mem.exists():
+            return (0, 0.0)
+        count = 0
+        latest = 0.0
+        for f in mem.glob("*.md"):
+            if f.name == "MEMORY.md":
+                continue
+            count += 1
+            try:
+                mtime = f.stat().st_mtime
+            except OSError:
+                continue
+            if mtime > latest:
+                latest = mtime
+        return (count, latest)
+
+    async def _scan_descriptions_cached(self) -> list[dict[str, str]]:
+        sig = await asyncio.to_thread(self._dir_signature)
+        if self._topics_cache is not None and self._topics_cache[0] == sig:
+            return self._topics_cache[1]
+        topics = await asyncio.to_thread(_scan_descriptions)
+        self._topics_cache = (sig, topics)
+        return topics
+
+    async def _read_topic_file_cached(self, fname: str) -> str:
+        p = _memory_dir() / fname
+        try:
+            mtime = await asyncio.to_thread(lambda: p.stat().st_mtime)
+        except OSError:
+            return ""
+        cached = self._file_cache.get(fname)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        content = await asyncio.to_thread(_read_topic_file, fname)
+        self._file_cache[fname] = (mtime, content)
+        return content
 
     async def _ranked(
         self, user_text: str, topics: list[dict[str, str]],
@@ -485,9 +540,7 @@ class MemoryRelevanceMiddleware(
             logger.info("[memory-L2] skipped — no user text in messages")
             return await handler(request)
 
-        topics = await asyncio.to_thread(
-            _scan_descriptions,
-        )
+        topics = await self._scan_descriptions_cached()
         if not topics:
             logger.info("[memory-L2] no memory topics on disk")
             return await handler(request)
@@ -503,9 +556,7 @@ class MemoryRelevanceMiddleware(
 
         parts: list[str] = []
         for fname in selected:
-            content = await asyncio.to_thread(
-                _read_topic_file, fname,
-            )
+            content = await self._read_topic_file_cached(fname)
             if content:
                 parts.append(
                     f"### {fname}\n{content}"
