@@ -21,6 +21,7 @@ def test_lazy_subagent_runnable_supports_with_config():
             return {"messages": []}
 
     lazy = _LazySubagentRunnable(lambda: _Counter(), agent_name="counter")
+    assert "with_config" in _LazySubagentRunnable.__dict__
     bound = lazy.with_config({"tags": ["subagent"]})
     assert hasattr(bound, "invoke")
     bound.invoke({"messages": []})
