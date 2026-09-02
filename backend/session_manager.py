@@ -13,7 +13,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Iterator, Optional
+from typing import Any, AsyncGenerator, Callable, Iterator, Optional, cast
 
 import aiosqlite
 from langchain_core.runnables import Runnable, RunnableConfig
@@ -1281,10 +1281,10 @@ class _LazySubagentRunnable(Runnable):
     never get used, and it sits squarely on the critical path of "session
     ready" that the user is waiting on when opening a new chat.
 
-    Subclasses :class:`langchain_core.runnables.Runnable` so deepagents can
-    bind per-subagent config (``recursion_limit``, tracing metadata, etc.)
-    via ``with_config`` at graph-build time even though the inner graph is
-    not compiled yet.  *builder* runs at most once per session, the first
+    Subclasses :class:`langchain_core.runnables.Runnable` and defines
+    :meth:`with_config` explicitly so PyInstaller-frozen backends still
+    expose the method deepagents 0.7+ calls at graph-build time (inherited
+    Runnable methods are not always present on frozen subclasses).
     time either ``invoke`` or ``ainvoke`` is called; the compiled runnable
     is cached for the rest of the session's lifetime.
     """
@@ -1319,6 +1319,24 @@ class _LazySubagentRunnable(Runnable):
                 self._built = await asyncio.to_thread(self._builder)
                 self._log_built(time.monotonic() - t0)
         return self._built
+
+    def with_config(
+        self,
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Runnable:
+        """Bind config for deepagents' compiled-subagent wiring.
+
+        Defined on the class (not only inherited) so the PyInstaller bundle
+        always exposes this entrypoint to deepagents 0.7+.
+        """
+        from langchain_core.runnables.base import RunnableBinding
+
+        return RunnableBinding(
+            bound=self,
+            config=cast("RunnableConfig", {**(config or {}), **kwargs}),
+            kwargs={},
+        )
 
     def invoke(
         self,
