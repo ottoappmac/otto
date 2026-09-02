@@ -245,6 +245,38 @@ def _openai_temperature(model_name: str, configured: float) -> float:
     return 1.0 if _is_modern_openai_model(model_name) else configured
 
 
+# Anthropic models that reject non-default ``temperature`` / ``top_p`` / ``top_k``.
+# Otto uses ``temperature=0.0`` for deterministic output on older models; for
+# these the parameter must be omitted entirely or the API returns HTTP 400
+# ("`temperature` is deprecated for this model.").
+_ANTHROPIC_NO_TEMPERATURE_KEYWORDS = (
+    "opus-4-7",
+    "opus-4-8",
+    "opus-5",
+    "sonnet-5",
+    "fable-5",
+)
+
+
+def _anthropic_rejects_temperature(model_name: str) -> bool:
+    """Whether *model_name* rejects non-default sampling parameters."""
+    name = (model_name or "").lower()
+    return any(kw in name for kw in _ANTHROPIC_NO_TEMPERATURE_KEYWORDS)
+
+
+def _anthropic_llm_kwargs(model_name: str, *, temperature: float = 0.0) -> dict[str, Any]:
+    """Return constructor kwargs for :class:`langchain_anthropic.ChatAnthropic`."""
+    kwargs: dict[str, Any] = {"model": model_name}
+    if _anthropic_rejects_temperature(model_name):
+        logger.info(
+            "Anthropic model %s rejects sampling params — omitting temperature",
+            model_name,
+        )
+    else:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def _openai_token_kwargs(model_name: str, max_tokens: int) -> dict:
     """Return the correct token-limit kwargs for an OpenAI/Azure constructor.
 
@@ -448,7 +480,7 @@ def create_llm(provider: str) -> BaseChatModel:
 
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(model=model_name, temperature=0.0)
+        return ChatAnthropic(**_anthropic_llm_kwargs(model_name))
 
     if provider == "cohere":
         from langchain_cohere import ChatCohere
@@ -605,6 +637,37 @@ def create_llm(provider: str) -> BaseChatModel:
                         "oMLX stats extraction failed", exc_info=True
                     )
                 return result
+
+            def _convert_chunk_to_generation_chunk(  # type: ignore[override]
+                self, chunk, default_chunk_class, base_generation_info=None,
+            ):
+                # ``_create_chat_result`` above only runs on the non-streaming
+                # path (``_generate``).  Now that ``session_manager`` streams
+                # graph output via ``stream_mode=["values", "messages"]``,
+                # LangGraph's callback machinery makes every ``.ainvoke()``
+                # transparently go through ``_stream``/``_astream`` instead,
+                # which bypasses ``_create_chat_result`` entirely — without
+                # this override oMLX's TPS/KV-cache stats would silently stop
+                # reaching the session stats panel. oMLX (like OpenAI, via
+                # ``stream_usage=True``) appends one extra chunk carrying the
+                # full ``usage`` object once generation finishes; stash the
+                # oMLX-specific extras on that chunk's ``response_metadata``
+                # the same way ``_create_chat_result`` does, so they survive
+                # LangChain's chunk-merge into the final accumulated message.
+                generation_chunk = super()._convert_chunk_to_generation_chunk(
+                    chunk, default_chunk_class, base_generation_info,
+                )
+                if generation_chunk is not None:
+                    try:
+                        usage_raw = _extract_usage_dict(chunk)
+                        stats = _map_omlx_usage(usage_raw) if usage_raw else {}
+                        if stats:
+                            generation_chunk.message.response_metadata.update(stats)
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "oMLX streaming stats extraction failed", exc_info=True
+                        )
+                return generation_chunk
 
         base = Environment.get_omlx_base_url()
         if not base:

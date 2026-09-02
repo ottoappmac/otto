@@ -227,6 +227,13 @@ export default function ChatPage() {
   const [atFilter, setAtFilter] = useState("");
   const [atIndex, setAtIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // Whether the history pane should auto-scroll to the newest content.
+  // Starts pinned (bottom); flips to false as soon as the user scrolls up
+  // more than a small threshold, and back to true once they scroll back
+  // down near the bottom or send a new message. A ref (not state) so
+  // scrolling doesn't itself trigger a re-render.
+  const isPinnedToBottomRef = useRef(true);
   const inputRef = useRef<InlineUrlInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashRef = useRef<HTMLDivElement>(null);
@@ -552,12 +559,29 @@ export default function ChatPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const scrollRaf = useRef(0);
   useEffect(() => {
+    // Respect the user's scroll position: only auto-scroll on new/streamed
+    // content while they're pinned to the bottom. Otherwise every streamed
+    // token would yank the view back down, making it impossible to scroll
+    // up (or even hold the view still) while a response is being generated.
+    if (!isPinnedToBottomRef.current) return;
     if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current);
     scrollRaf.current = requestAnimationFrame(() => {
       scrollRaf.current = 0;
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     });
   }, [messages]);
+
+  // Tracks whether the user is near the bottom of the history pane, so the
+  // effect above knows whether to keep auto-scrolling. A generous threshold
+  // (matches roughly one line of text) avoids flapping from sub-pixel
+  // smooth-scroll settling or minor layout shifts while streaming.
+  const HISTORY_SCROLL_BOTTOM_THRESHOLD = 120;
+  const handleHistoryScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isPinnedToBottomRef.current = distanceFromBottom < HISTORY_SCROLL_BOTTOM_THRESHOLD;
+  }, []);
 
   useEffect(() => {
     if (!currentSessionId) { setSessionFiles([]); return; }
@@ -572,6 +596,11 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!sessionId) return;
+
+    // Switching sessions loads a fresh history — always start pinned to
+    // the bottom rather than carrying over whatever scroll state the
+    // previously viewed session happened to be left in.
+    isPinnedToBottomRef.current = true;
 
     // Sessions spawned from the ambient "Approve & run" flow are marked in
     // localStorage so we skip the empty-session redirect while kick_off_message
@@ -652,6 +681,17 @@ export default function ChatPage() {
     if (msg.type === "done") {
       setIsStreaming(false);
       setPendingContext([]);
+      // Defensive cleanup: a normal turn always finalizes its streaming
+      // placeholder via an "agent"/"tool_call" event before "done" arrives
+      // (see session_manager._do_stream), but clear the flag here too in
+      // case a turn ends without generating any text.
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (!last || last.type !== "agent" || !last.metadata?.streaming) return prev;
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...last, metadata: { ...last.metadata, streaming: false } };
+        return updated;
+      });
       if (sid) { refreshSessionFiles(sid); unwatchSession(sid); notify("done", sid); }
       return;
     }
@@ -663,7 +703,9 @@ export default function ChatPage() {
         prev.map((m) =>
           m.type === "tool_call"
             ? { ...m, type: "tool_result" as const, metadata: { ...m.metadata, stopped: true } }
-            : m,
+            : m.type === "agent" && m.metadata?.streaming
+              ? { ...m, metadata: { ...m.metadata, streaming: false } }
+              : m,
         ),
       );
       return;
@@ -720,6 +762,31 @@ export default function ChatPage() {
     if (msg.type === "memory_context") {
       pendingMemoryTopicsRef.current = (msg.metadata?.topics as string[]) ?? null;
       setStreamPhase("thinking");
+      return;
+    }
+    if (msg.type === "agent_delta") {
+      // Token-level chunk of the model's reply (see session_manager._do_stream).
+      // Grow the last bubble in place if it's already an in-progress streaming
+      // placeholder, otherwise start one. The authoritative "agent" event that
+      // follows replaces this placeholder's content wholesale, so any minor
+      // drift between concatenated deltas and the final text self-corrects.
+      setStreamPhase("thinking");
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.type === "agent" && last.metadata?.streaming) {
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...last, content: last.content + msg.content };
+          return updated;
+        }
+        return [...prev, {
+          id: `msg-${++msgIdRef.current}`,
+          type: "agent" as const,
+          content: msg.content,
+          metadata: { streaming: true },
+          timestamp: new Date(),
+          sessionId: sid || undefined,
+        }];
+      });
       return;
     }
     if (msg.type === "hitl_request" || msg.type === "ask_user") {
@@ -801,8 +868,34 @@ export default function ChatPage() {
       meta = { ...meta, memory_topics: pendingMemoryTopicsRef.current };
       pendingMemoryTopicsRef.current = null;
     }
-    const chatMsg: ChatMessage = { id: `msg-${++msgIdRef.current}`, type: msg.type, content: msg.content, metadata: meta, timestamp: new Date(), sessionId: sid || undefined };
-    setMessages((prev) => [...prev, chatMsg]);
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      const hasStreamingPlaceholder = !!(last && last.type === "agent" && last.metadata?.streaming);
+      if (hasStreamingPlaceholder && msg.type === "agent") {
+        // Finalize the placeholder that "agent_delta" events grew, replacing
+        // its content/metadata with the authoritative persisted values
+        // instead of appending a second bubble.
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...last, content: msg.content, metadata: meta };
+        return updated;
+      }
+      let base = prev;
+      if (hasStreamingPlaceholder && msg.type === "tool_call") {
+        // The streamed text was a preamble on a tool-calling turn — the
+        // backend suppresses the final "agent" event for those (see
+        // session_manager._do_stream), so drop the orphaned placeholder
+        // before appending the tool_call row below.
+        base = prev.slice(0, -1);
+      } else if (hasStreamingPlaceholder) {
+        // Some other event (e.g. an error) ended the turn without a proper
+        // finalizer — stop treating the placeholder as in-progress.
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...last, metadata: { ...last.metadata, streaming: false } };
+        base = updated;
+      }
+      const chatMsg: ChatMessage = { id: `msg-${++msgIdRef.current}`, type: msg.type, content: msg.content, metadata: meta, timestamp: new Date(), sessionId: sid || undefined };
+      return [...base, chatMsg];
+    });
   }, [navigate, notify, unwatchSession, refreshSessionFiles, setLastError]);
 
   const { connected, send, sendEdit, sendHitlResponse, sendContext, waitForConnection } = useWebSocket({ sessionId: currentSessionId, onMessage: handleMessage });
@@ -1267,6 +1360,9 @@ export default function ChatPage() {
       const fullText = parts.length > 0 ? `${parts.join("\n")}\n\n${text}` : text;
 
       const userMsg: ChatMessage = { id: `msg-${++msgIdRef.current}`, type: "user", content: fullText, timestamp: new Date(), sessionId: sid ?? undefined };
+      // Sending a message should always jump back to the bottom, even if
+      // the user had scrolled up to reread earlier context.
+      isPinnedToBottomRef.current = true;
       setMessages((prev) => [...prev, userMsg]);
 
       if (!send(fullText)) {
@@ -1892,7 +1988,12 @@ export default function ChatPage() {
         </div>
       </header>
 
-      <div data-chat-region="history" className="flex-1 overflow-y-auto px-8 py-8 space-y-7">
+      <div
+        data-chat-region="history"
+        ref={messagesContainerRef}
+        onScroll={handleHistoryScroll}
+        className="flex-1 overflow-y-auto px-8 py-8 space-y-7"
+      >
         {sessionMessages.length === 0 && (
           <div data-chat-empty className="flex flex-col items-center justify-center h-full -mt-12">
             <img

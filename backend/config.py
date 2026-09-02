@@ -1368,6 +1368,11 @@ class AppConfig(BaseModel):
         "transcript-reader": "claude-eval-hook",
         "agent-eval-hook": "claude-eval-hook",
         "claude-transcript-reader": "claude-eval-hook",
+        # Not a rename — this built-in was removed outright (protocol
+        # mismatch with the addon most users actually install; see
+        # backend/builtin_mcps/registry.py). Listed here purely to get
+        # the stale-entry removal in _ensure_default_servers() below.
+        "blender": "",
     }
 
     def _ensure_default_servers(self) -> None:

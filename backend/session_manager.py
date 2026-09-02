@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -12,7 +13,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncGenerator, Iterator, Optional
+from typing import Any, AsyncGenerator, Callable, Iterator, Optional
 
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -299,6 +300,26 @@ async def _load_messages_async(session_id: str) -> list[dict[str, Any]]:
 async def _save_messages_async(session_id: str, messages: list[dict[str, Any]]) -> None:
     """Non-blocking wrapper for _save_messages."""
     await asyncio.to_thread(_save_messages, session_id, messages)
+
+
+def _stream_chunk_text(content: Any) -> str:
+    """Extract raw text from a streamed ``AIMessageChunk.content``.
+
+    Deliberately does NOT ``.strip()`` like ``extract_text_content`` — that's
+    correct for a complete message, but a token-stream chunk's leading/
+    trailing whitespace is often the only space between two words, and
+    stripping every chunk would silently glue words together in the UI
+    (e.g. "Hello" + "world" -> "Helloworld").
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
 
 
 _PLAYWRIGHT_SERVER_ID = "playwright-mcp"
@@ -1246,6 +1267,270 @@ def _apply_macos_vision_variant(
     return out
 
 
+class _LazySubagentRunnable:
+    """Defers compiling a library agent's subagent graph until it is
+    actually delegated to via the ``task`` tool.
+
+    In general-purpose mode every library agent whose required MCP tools
+    happen to be connected is registered as a subagent so the orchestrator
+    *can* delegate to it — but a typical session only ever delegates to a
+    handful of them (often zero). Eagerly running ``create_agent`` (subagent
+    model resolution, the full middleware stack, tool binding) for every
+    one of them at ``_build_graph`` time is wasted work for the agents that
+    never get used, and it sits squarely on the critical path of "session
+    ready" that the user is waiting on when opening a new chat.
+
+    This wrapper satisfies the ``invoke``/``ainvoke`` interface deepagents'
+    subagent dispatch (``deepagents.middleware.subagents``) calls directly on
+    a ``CompiledSubAgent["runnable"]`` — it doesn't need to subclass
+    ``Runnable`` since dispatch never checks its type, only calls those two
+    methods.  *builder* runs at most once per session, the first time either
+    method is called; the compiled runnable is cached for the rest of the
+    session's lifetime.
+    """
+
+    def __init__(self, builder: Callable[[], Any], *, agent_name: str = "") -> None:
+        self._builder = builder
+        self._agent_name = agent_name
+        self._built: Any = None
+        self._lock: Optional[asyncio.Lock] = None
+
+    def _log_built(self, elapsed: float) -> None:
+        logger.info(
+            "[build_graph] lazily compiled subagent %r on first delegation (%.2fs)",
+            self._agent_name, elapsed,
+        )
+
+    def _build_sync(self) -> Any:
+        if self._built is None:
+            t0 = time.monotonic()
+            self._built = self._builder()
+            self._log_built(time.monotonic() - t0)
+        return self._built
+
+    async def _build_async(self) -> Any:
+        if self._built is not None:
+            return self._built
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._built is None:
+                t0 = time.monotonic()
+                self._built = await asyncio.to_thread(self._builder)
+                self._log_built(time.monotonic() - t0)
+        return self._built
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any:
+        return self._build_sync().invoke(*args, **kwargs)
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        runnable = await self._build_async()
+        return await runnable.ainvoke(*args, **kwargs)
+
+
+def _compile_library_subagent(
+    agent_spec: Any,
+    agent_mcp_tools: list[Any],
+    required_ids: set[str],
+    connections: Any,
+    subagent_vision_resolver: Any,
+    model: Any,
+    backend: Any,
+    standard_tools: list[Any],
+    ask_user_tools: list[Any] | None,
+    pw_pool: Any,
+    memory_middleware: list[Any] | None,
+    activity_tools: list[Any] | None,
+    mcp_mgr: Any,
+    session_id: str | None,
+) -> Any:
+    """Compile one library agent's subagent graph (model resolution,
+    middleware stack, ``create_agent``) and return the streaming-wrapped
+    runnable.
+
+    Split out of :func:`_build_subagents_from_library` specifically so it
+    can be deferred via :class:`_LazySubagentRunnable` — see that class's
+    docstring for why.  Every argument here is a plain value captured at
+    ``_build_graph`` time (via ``functools.partial``), not a reference into
+    the loop that builds the subagent list, so it's safe to call this later,
+    outside that loop's scope.
+    """
+    from langchain.agents import create_agent
+    from langchain.agents.middleware import TodoListMiddleware
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+    from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+    from deepagents.middleware.summarization import (
+        SummarizationMiddleware,
+        compute_summarization_defaults,
+    )
+
+    from backend.agent_library import get_agent_system_prompt
+    from middleware.playwright_pruning import PlaywrightSnapshotPruningMiddleware
+    from backend.prompts import STRUCTURED_SUMMARY_PROMPT, STRUCTURED_SUMMARY_PROMPT_LITE
+    from backend.streaming_subagent import StreamingSubagentRunnable
+    from utilities.environment import Environment
+
+    # For a vision-capable subagent model, swap the macos-native text
+    # read_screen for the text+image combo and expose capture_app_screenshot
+    # so the VLM actually receives screenshots. Text-only models keep the
+    # text-only variant (images would be useless / dropped by the server).
+    if "macos-native" in required_ids and subagent_vision_resolver is not None:
+        try:
+            wants_vision = bool(subagent_vision_resolver(agent_spec))
+        except Exception:
+            wants_vision = False
+        if wants_vision:
+            agent_mcp_tools = _apply_macos_vision_variant(
+                agent_mcp_tools, connections.get("macos-native"),
+            )
+            logger.info(
+                "macos-native: vision read_screen enabled for subagent %r",
+                agent_spec.name,
+            )
+
+    system_prompt = get_agent_system_prompt(agent_spec.name) or ""
+
+    subagent_model = _resolve_subagent_model(agent_spec, model)
+
+    summ_defaults = compute_summarization_defaults(subagent_model)
+    # Use the lite summary prompt when this subagent's model is on
+    # an OSS-local provider (mlx / exo).  See
+    # ``backend.prompts.STRUCTURED_SUMMARY_PROMPT_LITE`` for what the
+    # lite version drops.
+    sa_fam = (agent_spec.subagent_llm_family or "").strip().lower()
+    sa_is_local = (
+        sa_fam in ("mlx", "exo")
+        or (sa_fam in ("", "inherit") and Environment.is_oss_local_provider())
+    )
+    sa_summary_prompt = (
+        STRUCTURED_SUMMARY_PROMPT_LITE if sa_is_local else STRUCTURED_SUMMARY_PROMPT
+    )
+    middleware: list[Any] = [
+        TodoListMiddleware(),
+        FilesystemMiddleware(backend=backend),
+        SummarizationMiddleware(
+            model=subagent_model,
+            backend=backend,
+            trigger=summ_defaults["trigger"],
+            keep=summ_defaults["keep"],
+            summary_prompt=sa_summary_prompt,
+            trim_tokens_to_summarize=None,
+            truncate_args_settings=summ_defaults["truncate_args_settings"],
+        ),
+    ]
+    if memory_middleware:
+        middleware.extend(memory_middleware)
+    caching_mw = _make_prompt_caching_middleware(subagent_model)
+    if caching_mw:
+        middleware.append(caching_mw)
+    middleware.append(PatchToolCallsMiddleware())
+
+    from backend.safety_middleware import (
+        ExecutePathSafetyMiddleware,
+        HighRiskExecuteFlaggerMiddleware,
+    )
+    middleware.append(ExecutePathSafetyMiddleware())
+    middleware.append(HighRiskExecuteFlaggerMiddleware())
+
+    if "playwright-mcp" in required_ids:
+        middleware.insert(0, PlaywrightSnapshotPruningMiddleware())
+        logger.info(
+            "Playwright snapshot pruning enabled for %r",
+            agent_spec.name,
+        )
+
+    if "macos-native" in required_ids:
+        from agents.computer_voyager import ScreenControlPruningMiddleware
+        middleware.insert(0, ScreenControlPruningMiddleware())
+        logger.info(
+            "Screen control pruning enabled for %r",
+            agent_spec.name,
+        )
+
+    # ReAct shim for text-only on-device subagent models (e.g. an
+    # MLX subagent whose template lacks native tool support).
+    # Self-gated by ``_maybe_react_shim`` — no-op for tool-capable
+    # models.
+    sa_react_shim = _maybe_react_shim(subagent_model)
+    if sa_react_shim is not None:
+        middleware.insert(0, sa_react_shim)
+        logger.info(
+            "ReAct shim enabled for subagent %r (model=%s)",
+            agent_spec.name, type(subagent_model).__name__,
+        )
+
+    # Context-window safety net: clip the request to fit the model's
+    # input budget after every other middleware has run.  Appended last
+    # so it executes innermost (closest to the model).  No-op for
+    # big-context providers.
+    sa_ctx_trunc = _maybe_context_truncation(subagent_model)
+    if sa_ctx_trunc is not None:
+        middleware.append(sa_ctx_trunc)
+        logger.info(
+            "Context truncation enabled for subagent %r (model=%s, budget=%d tok)",
+            agent_spec.name,
+            type(subagent_model).__name__,
+            sa_ctx_trunc._budget,
+        )
+
+    extra_tools: list[Any] = []
+
+    # Meta-agents author other agents / triggers / MCP servers and need
+    # the full management surface even when invoked via the orchestrator's
+    # ``task`` tool — without these their system prompts (which instruct
+    # them to call ``create_agent_config`` / ``create_trigger`` / …) have
+    # no matching tools and the model improvises by writing files
+    # directly to the real filesystem (which the path-safety guard then
+    # correctly blocks).
+    _META_AGENT_NAMES = {"trigger-builder-agent", "mcp-builder-agent", "schedule-builder-agent"}
+    if agent_spec.name in _META_AGENT_NAMES:
+        from backend.agent_management_tools import build_management_tools
+        from backend.mcp_builder_tools import build_mcp_builder_tools
+        from backend.schedule_tools import build_schedule_tools
+        from backend.trigger_tools import build_trigger_tools
+
+        extra_tools.extend(build_management_tools(mcp_mgr))
+        extra_tools.extend(build_mcp_builder_tools())
+        # ``agent_name`` gates privileged trigger types (http/git/shell)
+        # to the trigger-builder-agent only; the mcp-builder-agent gets
+        # them too here, which is fine — it has no path that calls
+        # ``create_trigger`` so the extra capability is unused.
+        extra_tools.extend(build_trigger_tools(agent_name=agent_spec.name))
+        extra_tools.extend(build_schedule_tools())
+        logger.info(
+            "Meta-agent %r: attached management/trigger/schedule/mcp_builder tools",
+            agent_spec.name,
+        )
+
+    subagent_tools = (
+        agent_mcp_tools
+        + list(standard_tools)
+        + list(activity_tools or [])
+        + extra_tools
+        + list(ask_user_tools or [])
+    )
+    _apply_universal_loop_guard(
+        subagent_tools,
+        scope=f"subagent:{agent_spec.name}",
+        session_id=session_id,
+    )
+    _insert_repeated_thought_guard(
+        middleware, scope=f"subagent:{agent_spec.name}"
+    )
+    graph = create_agent(
+        subagent_model,
+        system_prompt=system_prompt,
+        tools=subagent_tools,
+        middleware=middleware,
+        name=agent_spec.name,
+    )
+
+    agent_pw_pool = pw_pool if "playwright-mcp" in required_ids else None
+    return StreamingSubagentRunnable(
+        graph, agent_spec.name, pw_pool=agent_pw_pool,
+    )
+
+
 def _build_subagents_from_library(
     mcp_mgr: Any,
     standard_tools: list[Any],
@@ -1262,9 +1547,10 @@ def _build_subagents_from_library(
     """Build ``CompiledSubAgent`` specs from every agent in the library.
 
     Each agent becomes a ``subagent_type`` the LLM can spawn via the ``task``
-    tool.  The agent graph is compiled here (with the standard middleware
-    stack) and wrapped in :class:`StreamingSubagentRunnable` so that
-    intermediate tool calls / results are relayed to the chat in real time.
+    tool.  The heavy part of compiling the agent graph (model resolution,
+    middleware stack, ``create_agent``) is deferred via
+    :class:`_LazySubagentRunnable` until the orchestrator actually delegates
+    to that agent — see :func:`_compile_library_subagent`.
 
     Agents whose required MCP servers aren't connected are skipped.
     Agents with no declared MCP tools are skipped (they would duplicate the
@@ -1272,20 +1558,8 @@ def _build_subagents_from_library(
 
     Returns ``(subagent_list_or_None, set_of_claimed_server_ids)``.
     """
-    from langchain.agents import create_agent
-    from langchain.agents.middleware import TodoListMiddleware
-    from deepagents.middleware.filesystem import FilesystemMiddleware
-    from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
-    from deepagents.middleware.summarization import (
-        SummarizationMiddleware,
-        compute_summarization_defaults,
-    )
-
-    from backend.agent_library import get_agent_system_prompt, list_agents
-    from middleware.playwright_pruning import PlaywrightSnapshotPruningMiddleware
-    from backend.prompts import STRUCTURED_SUMMARY_PROMPT, STRUCTURED_SUMMARY_PROMPT_LITE
-    from backend.streaming_subagent import StreamingSubagentRunnable
-    from utilities.environment import Environment
+    from backend.agent_library import list_agents
+    from backend.mcp_manager import dedupe_tool_names
 
     subagents: list[dict[str, Any]] = []
     claimed_server_ids: set[str] = set()
@@ -1310,8 +1584,6 @@ def _build_subagents_from_library(
         if not required_ids.intersection(connected_ids):
             continue
 
-        from backend.mcp_manager import dedupe_tool_names
-
         agent_mcp_tools = dedupe_tool_names(
             (sid, connections[sid].tools)
             for sid in required_ids
@@ -1320,174 +1592,34 @@ def _build_subagents_from_library(
         if not agent_mcp_tools:
             continue
 
-        # For a vision-capable subagent model, swap the macos-native text
-        # read_screen for the text+image combo and expose capture_app_screenshot
-        # so the VLM actually receives screenshots. Text-only models keep the
-        # text-only variant (images would be useless / dropped by the server).
-        if "macos-native" in required_ids and subagent_vision_resolver is not None:
-            try:
-                wants_vision = bool(subagent_vision_resolver(agent_spec))
-            except Exception:
-                wants_vision = False
-            if wants_vision:
-                agent_mcp_tools = _apply_macos_vision_variant(
-                    agent_mcp_tools, connections.get("macos-native"),
-                )
-                logger.info(
-                    "macos-native: vision read_screen enabled for subagent %r",
-                    agent_spec.name,
-                )
-
-        system_prompt = get_agent_system_prompt(agent_spec.name) or ""
         claimed_server_ids.update(required_ids)
 
-        subagent_model = _resolve_subagent_model(agent_spec, model)
-
-        summ_defaults = compute_summarization_defaults(subagent_model)
-        # Use the lite summary prompt when this subagent's model is on
-        # an OSS-local provider (mlx / exo).  See
-        # ``backend.prompts.STRUCTURED_SUMMARY_PROMPT_LITE`` for what the
-        # lite version drops.
-        sa_fam = (agent_spec.subagent_llm_family or "").strip().lower()
-        sa_is_local = (
-            sa_fam in ("mlx", "exo")
-            or (sa_fam in ("", "inherit") and Environment.is_oss_local_provider())
+        builder = functools.partial(
+            _compile_library_subagent,
+            agent_spec,
+            agent_mcp_tools,
+            required_ids,
+            connections,
+            subagent_vision_resolver,
+            model,
+            backend,
+            standard_tools,
+            ask_user_tools,
+            pw_pool,
+            memory_middleware,
+            activity_tools,
+            mcp_mgr,
+            session_id,
         )
-        sa_summary_prompt = (
-            STRUCTURED_SUMMARY_PROMPT_LITE if sa_is_local else STRUCTURED_SUMMARY_PROMPT
-        )
-        middleware: list[Any] = [
-            TodoListMiddleware(),
-            FilesystemMiddleware(backend=backend),
-            SummarizationMiddleware(
-                model=subagent_model,
-                backend=backend,
-                trigger=summ_defaults["trigger"],
-                keep=summ_defaults["keep"],
-                summary_prompt=sa_summary_prompt,
-                trim_tokens_to_summarize=None,
-                truncate_args_settings=summ_defaults["truncate_args_settings"],
-            ),
-        ]
-        if memory_middleware:
-            middleware.extend(memory_middleware)
-        caching_mw = _make_prompt_caching_middleware(subagent_model)
-        if caching_mw:
-            middleware.append(caching_mw)
-        middleware.append(PatchToolCallsMiddleware())
-
-        from backend.safety_middleware import (
-            ExecutePathSafetyMiddleware,
-            HighRiskExecuteFlaggerMiddleware,
-        )
-        middleware.append(ExecutePathSafetyMiddleware())
-        middleware.append(HighRiskExecuteFlaggerMiddleware())
-
-        if "playwright-mcp" in required_ids:
-            middleware.insert(0, PlaywrightSnapshotPruningMiddleware())
-            logger.info(
-                "Playwright snapshot pruning enabled for %r",
-                agent_spec.name,
-            )
-
-        if "macos-native" in required_ids:
-            from agents.computer_voyager import ScreenControlPruningMiddleware
-            middleware.insert(0, ScreenControlPruningMiddleware())
-            logger.info(
-                "Screen control pruning enabled for %r",
-                agent_spec.name,
-            )
-
-        # ReAct shim for text-only on-device subagent models (e.g. an
-        # MLX subagent whose template lacks native tool support).
-        # Self-gated by ``_maybe_react_shim`` — no-op for tool-capable
-        # models.
-        sa_react_shim = _maybe_react_shim(subagent_model)
-        if sa_react_shim is not None:
-            middleware.insert(0, sa_react_shim)
-            logger.info(
-                "ReAct shim enabled for subagent %r (model=%s)",
-                agent_spec.name, type(subagent_model).__name__,
-            )
-
-        # Context-window safety net: clip the request to fit the model's
-        # input budget after every other middleware has run.  Appended last
-        # so it executes innermost (closest to the model).  No-op for
-        # big-context providers.
-        sa_ctx_trunc = _maybe_context_truncation(subagent_model)
-        if sa_ctx_trunc is not None:
-            middleware.append(sa_ctx_trunc)
-            logger.info(
-                "Context truncation enabled for subagent %r (model=%s, budget=%d tok)",
-                agent_spec.name,
-                type(subagent_model).__name__,
-                sa_ctx_trunc._budget,
-            )
-
-        extra_tools: list[Any] = []
-
-        # Meta-agents author other agents / triggers / MCP servers and need
-        # the full management surface even when invoked via the orchestrator's
-        # ``task`` tool — without these their system prompts (which instruct
-        # them to call ``create_agent_config`` / ``create_trigger`` / …) have
-        # no matching tools and the model improvises by writing files
-        # directly to the real filesystem (which the path-safety guard then
-        # correctly blocks).
-        _META_AGENT_NAMES = {"trigger-builder-agent", "mcp-builder-agent", "schedule-builder-agent"}
-        if agent_spec.name in _META_AGENT_NAMES:
-            from backend.agent_management_tools import build_management_tools
-            from backend.mcp_builder_tools import build_mcp_builder_tools
-            from backend.schedule_tools import build_schedule_tools
-            from backend.trigger_tools import build_trigger_tools
-
-            extra_tools.extend(build_management_tools(mcp_mgr))
-            extra_tools.extend(build_mcp_builder_tools())
-            # ``agent_name`` gates privileged trigger types (http/git/shell)
-            # to the trigger-builder-agent only; the mcp-builder-agent gets
-            # them too here, which is fine — it has no path that calls
-            # ``create_trigger`` so the extra capability is unused.
-            extra_tools.extend(build_trigger_tools(agent_name=agent_spec.name))
-            extra_tools.extend(build_schedule_tools())
-            logger.info(
-                "Meta-agent %r: attached management/trigger/schedule/mcp_builder tools",
-                agent_spec.name,
-            )
-
-        subagent_tools = (
-            agent_mcp_tools
-            + list(standard_tools)
-            + list(activity_tools or [])
-            + extra_tools
-            + list(ask_user_tools or [])
-        )
-        _apply_universal_loop_guard(
-            subagent_tools,
-            scope=f"subagent:{agent_spec.name}",
-            session_id=session_id,
-        )
-        _insert_repeated_thought_guard(
-            middleware, scope=f"subagent:{agent_spec.name}"
-        )
-        graph = create_agent(
-            subagent_model,
-            system_prompt=system_prompt,
-            tools=subagent_tools,
-            middleware=middleware,
-            name=agent_spec.name,
-        )
-
-        agent_pw_pool = pw_pool if "playwright-mcp" in required_ids else None
         subagents.append({
             "name": agent_spec.name,
             "description": agent_spec.description,
-            "runnable": StreamingSubagentRunnable(
-                graph, agent_spec.name, pw_pool=agent_pw_pool,
-            ),
+            "runnable": _LazySubagentRunnable(builder, agent_name=agent_spec.name),
         })
 
     if subagents:
         logger.info(
-            "Subagents loaded: %s",
+            "Subagents available (compiled lazily on first delegation): %s",
             [s["name"] for s in subagents],
         )
     return (subagents or None, claimed_server_ids)
@@ -3086,7 +3218,7 @@ class SessionManager:
         context_queue: Optional[Any] = None,
         run_config: Optional[dict] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        from langchain_core.messages import AIMessage, ToolMessage
+        from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
         printed = printed_offset
         aiter = astream_iter.__aiter__()
@@ -3098,7 +3230,7 @@ class SessionManager:
         while True:
             try:
                 t_wait = time.monotonic()
-                chunk = await aiter.__anext__()
+                item = await aiter.__anext__()
                 wait_ms = (time.monotonic() - t_wait) * 1000
                 _chunk_idx += 1
                 if wait_ms > 2000:
@@ -3118,6 +3250,32 @@ class SessionManager:
             if live_q is not None:
                 while not live_q.empty():
                     yield live_q.get_nowait()
+
+            # ``stream_mode=["values", "messages"]`` makes every item a
+            # ``(mode, payload)`` tuple. "values" is the full graph state
+            # (unchanged below — drives persistence, tool-call bookkeeping,
+            # stats, transcripts). "messages" carries token-level
+            # ``(message_chunk, metadata)`` pairs emitted live as the model
+            # generates — LangGraph auto-detects that "messages" is being
+            # consumed and transparently upgrades the model node's
+            # ``model.ainvoke()`` call into a real token stream under the
+            # hood. We only forward the plain text pieces as ``agent_delta``
+            # events so the UI can grow the message bubble in place; the
+            # authoritative content, tool_calls, and stats still come from
+            # the "values" chunk once the turn completes, exactly as before.
+            mode, chunk = item
+            if mode == "messages":
+                msg_chunk, _msg_meta = chunk
+                if isinstance(msg_chunk, AIMessageChunk):
+                    # NOT ``extract_text_content`` — it ``.strip()``s each
+                    # piece, which is correct for a complete message but
+                    # would eat the inter-token spaces/newlines that fall at
+                    # a chunk boundary (e.g. "Hello" + "world" -> "Helloworld").
+                    piece = _stream_chunk_text(msg_chunk.content)
+                    if piece:
+                        yield {"type": "agent_delta", "content": piece}
+                continue
+
             if "messages" not in chunk:
                 continue
             new_msgs = chunk["messages"][printed:]
@@ -3565,7 +3723,7 @@ class SessionManager:
             astream_iter = session.graph.astream(
                 current_input,
                 config=run_config,
-                stream_mode="values",
+                stream_mode=["values", "messages"],
             )
 
             context_injected = False
@@ -3626,7 +3784,7 @@ class SessionManager:
         astream_iter = session.graph.astream(
             Command(resume={"decisions": decisions}),
             config=run_config,
-            stream_mode="values",
+            stream_mode=["values", "messages"],
         )
 
         async for resp in self._do_stream(session, session_id, astream_iter, printed_offset=existing_count):
@@ -3707,7 +3865,7 @@ class SessionManager:
         astream_iter = session.graph.astream(
             None,
             config=edit_run_config,
-            stream_mode="values",
+            stream_mode=["values", "messages"],
         )
 
         async for resp in self._do_stream(session, session_id, astream_iter, printed_offset=existing_count):
