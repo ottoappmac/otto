@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Iterator, Optional
 
 import aiosqlite
+from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
@@ -1267,7 +1268,7 @@ def _apply_macos_vision_variant(
     return out
 
 
-class _LazySubagentRunnable:
+class _LazySubagentRunnable(Runnable):
     """Defers compiling a library agent's subagent graph until it is
     actually delegated to via the ``task`` tool.
 
@@ -1280,13 +1281,12 @@ class _LazySubagentRunnable:
     never get used, and it sits squarely on the critical path of "session
     ready" that the user is waiting on when opening a new chat.
 
-    This wrapper satisfies the ``invoke``/``ainvoke`` interface deepagents'
-    subagent dispatch (``deepagents.middleware.subagents``) calls directly on
-    a ``CompiledSubAgent["runnable"]`` — it doesn't need to subclass
-    ``Runnable`` since dispatch never checks its type, only calls those two
-    methods.  *builder* runs at most once per session, the first time either
-    method is called; the compiled runnable is cached for the rest of the
-    session's lifetime.
+    Subclasses :class:`langchain_core.runnables.Runnable` so deepagents can
+    bind per-subagent config (``recursion_limit``, tracing metadata, etc.)
+    via ``with_config`` at graph-build time even though the inner graph is
+    not compiled yet.  *builder* runs at most once per session, the first
+    time either ``invoke`` or ``ainvoke`` is called; the compiled runnable
+    is cached for the rest of the session's lifetime.
     """
 
     def __init__(self, builder: Callable[[], Any], *, agent_name: str = "") -> None:
@@ -1320,12 +1320,22 @@ class _LazySubagentRunnable:
                 self._log_built(time.monotonic() - t0)
         return self._built
 
-    def invoke(self, *args: Any, **kwargs: Any) -> Any:
-        return self._build_sync().invoke(*args, **kwargs)
+    def invoke(
+        self,
+        input: Any,
+        config: Optional[RunnableConfig] = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._build_sync().invoke(input, config, **kwargs)
 
-    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+    async def ainvoke(
+        self,
+        input: Any,
+        config: Optional[RunnableConfig] = None,
+        **kwargs: Any,
+    ) -> Any:
         runnable = await self._build_async()
-        return await runnable.ainvoke(*args, **kwargs)
+        return await runnable.ainvoke(input, config, **kwargs)
 
 
 def _compile_library_subagent(
