@@ -42,6 +42,7 @@ import type {
   ScheduleStatusPoll,
   SessionInfo,
   SkillSpec,
+  WorkspaceTreeResult,
   TriggerRunsResponse,
   TriggerSpec,
   TriggerStatusPoll,
@@ -910,6 +911,33 @@ export const api = {
     if (!res.ok) throw new Error(`Link failed: ${res.status}`);
     return res.json();
   },
+
+  setSessionWorkspace: (id: string, source: string) =>
+    request<SessionInfo>(`/api/sessions/${id}/workspace`, {
+      method: "POST",
+      body: JSON.stringify({ source }),
+    }),
+  clearSessionWorkspace: (id: string) =>
+    request<SessionInfo>(`/api/sessions/${id}/workspace`, { method: "DELETE" }),
+  getWorkspaceTree: (id: string, path = "") =>
+    request<WorkspaceTreeResult>(
+      `/api/sessions/${id}/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`,
+    ),
+  getWorkspaceFileUrl: (id: string, relPath: string) =>
+    `${API_BASE}/api/sessions/${id}/workspace/file?path=${encodeURIComponent(relPath)}`,
+
+  /**
+   * The file or folder currently on the host OS clipboard, or an empty path
+   * when it holds none. Lets a paste recover the real absolute path the
+   * WebView won't give us for a copied *folder* — see
+   * `tryNativeClipboardPaste` in ChatPage.
+   */
+  clipboardFile: () =>
+    request<{
+      path: string;
+      is_dir: boolean;
+      items?: { path: string; is_dir: boolean }[];
+    }>("/api/clipboard/file", { cache: "no-store" }),
 
   // ── Activity timeline ────────────────────────────────────────────
   getActivityStatus: async (): Promise<{

@@ -186,10 +186,18 @@ class MCPServerAddRequest(BaseModel):
 # Session
 # ---------------------------------------------------------------------------
 
+class SessionWorkspace(BaseModel):
+    """A host folder mapped into the session as the coding agent's project root."""
+    host_path: str
+    virtual_path: str
+    name: str
+
+
 class SessionInfo(BaseModel):
     id: str
     agent_name: Optional[str] = None
     title: str = "New Session"
+    workspace: Optional[SessionWorkspace] = None
     message_count: int = 0
     tools_used: list[str] = Field(default_factory=list)
     schedule_id: Optional[str] = None

@@ -129,7 +129,21 @@ class _ConsolidatedStore:
         self._import_error: Optional[str] = None
         self._cache: Optional[dict[str, Any]] = None
         self._loaded = False
+        # Guards the in-memory cache only (``_cache`` / ``_loaded``) — held
+        # just long enough to read or swap a reference, never across a
+        # keychain syscall.  Kept separate from ``_write_lock`` so a slow
+        # or stuck keychain *write* (e.g. macOS popping a permission
+        # dialog nobody is there to click) can never block a *read*.
+        # Nearly every request touches ``AppConfig.aload()`` -> this
+        # store's ``load()``, so before this split a single stuck write
+        # would starve the whole ``asyncio.to_thread`` pool and freeze
+        # the app with no error logged.
         self._lock = threading.RLock()
+        # Serialises mutations (keychain writes) against each other.
+        # Not held during reads, so it may legitimately be held for a
+        # long time (or forever, if the OS prompt is never dismissed)
+        # without affecting anything but other concurrent writers.
+        self._write_lock = threading.RLock()
 
     # -- keyring plumbing ------------------------------------------------
 
@@ -226,19 +240,34 @@ class _ConsolidatedStore:
             self._loaded = True
             return doc
 
-    def mutate(self, fn: Callable[[dict[str, Any]], None]) -> None:
+    def mutate(self, fn: Callable[[dict[str, Any]], None]) -> bool:
         """Apply *fn* to a copy of the document and persist it atomically.
 
         The cache is only updated after a successful write, so a failed
         keychain write leaves the in-memory state untouched.
+
+        Returns True when a keychain write happened.  Identical documents
+        are skipped — AppConfig.save() / GET-triggered re-saves otherwise
+        rewrite the keychain on every load and can stall the UI (macOS
+        keychain writes are synchronous and serialize on a process lock).
+
+        The actual keychain syscall (``_write_item``) runs under
+        ``_write_lock`` only — *not* ``_lock`` — so a slow or indefinitely
+        stuck write (e.g. an unattended macOS keychain-access prompt)
+        serialises against other writers but never blocks concurrent
+        ``load()`` readers, which only need ``_lock`` briefly.
         """
-        with self._lock:
+        with self._write_lock:
             base = self.load()
             doc = copy.deepcopy(base)
             fn(doc)
+            if doc == base:
+                return False
             self._write_item(doc)  # raises on failure; cache stays on `base`
-            self._cache = doc
-            self._loaded = True
+            with self._lock:
+                self._cache = doc
+                self._loaded = True
+            return True
 
     # -- one-time migration from the old per-item layout -----------------
 

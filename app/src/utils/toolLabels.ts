@@ -21,6 +21,7 @@ const TOOL_LABELS: Record<string, string> = {
   write_file: "Write file",
   read_file: "Read file",
   edit_file: "Edit file",
+  edit: "Edit file",
   ls: "List directory",
   glob: "Find files",
   grep: "Search in files",
@@ -77,9 +78,25 @@ export function getToolLabel(name: string, args?: Record<string, unknown>): stri
     }
     case "write_file":
     case "read_file":
-    case "edit_file": {
+    case "edit_file":
+    case "edit": {
       const p = (args.path ?? args.file_path) as string | undefined;
       if (p && base) return `${base} ${p}`;
+      break;
+    }
+    case "grep": {
+      const q = (args.pattern ?? args.query) as string | undefined;
+      if (q) return `Searched ${q.length > 40 ? q.slice(0, 40) + "…" : q}`;
+      break;
+    }
+    case "glob": {
+      const q = (args.pattern ?? args.glob) as string | undefined;
+      if (q) return `Find ${q}`;
+      break;
+    }
+    case "ls": {
+      const p = (args.path ?? args.file_path) as string | undefined;
+      if (p) return `List ${p}`;
       break;
     }
     case "web_research":

@@ -82,6 +82,7 @@ const TOOL_ICON_MAP: Record<string, IconConfig> = {
   // File writes / edits
   write_file: { Icon: FilePen, className: "text-emerald-400" },
   edit_file: { Icon: FilePen, className: "text-emerald-400" },
+  edit: { Icon: FilePen, className: "text-emerald-400" },
   // File listing
   ls: { Icon: FolderOpen, className: "text-th-text-muted" },
   glob: { Icon: FolderOpen, className: "text-th-text-muted" },

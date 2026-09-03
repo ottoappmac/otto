@@ -52,6 +52,18 @@ interface Props {
    */
   onPastePaths?: (paths: string[]) => boolean;
   /**
+   * Called when a paste couldn't be resolved to a confident file/folder
+   * attachment through the paths above: either nothing usable was on the
+   * clipboard at all, or every "file" blob came back as a suspicious 0-byte
+   * blob — this WebView's `getAsFile()` hands back an empty File named
+   * after the folder for a *folder* reference instead of failing outright
+   * (folders have no Blob content to represent), which is indistinguishable
+   * here from a genuinely empty file. `files` carries whatever raw blobs
+   * were found (possibly empty) so the caller can fall back to uploading
+   * them as-is if a native OS clipboard lookup doesn't pan out.
+   */
+  onPasteMaybeFolder?: (files: File[]) => void;
+  /**
    * Called with the text typed so far whenever the caret sits inside an
    * in-progress "@mention" token (an "@" at the start of the text or right
    * after whitespace, followed by a run of non-whitespace up to the caret),
@@ -112,7 +124,42 @@ function fileUrisToPaths(uriList: string): string[] {
         return null;
       }
     })
-    .filter((p): p is string => !!p);
+    .filter((p): p is string => !!p)
+    // WKWebView sometimes exposes Finder copies as file-id URLs
+    // (`file:///.file/id=…`) which are not usable filesystem paths.
+    .filter((p) => p.startsWith("/") && !p.startsWith("/.file/"));
+}
+
+function itemEntry(item: DataTransferItem): { isDirectory?: boolean } | null {
+  try {
+    const getter = (item as DataTransferItem & {
+      webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
+    }).webkitGetAsEntry;
+    return getter?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Absolute path some native shells (Electron, some Tauri builds) put on File. */
+function nativeFilePath(file: File): string | null {
+  const path = (file as File & { path?: string }).path;
+  if (typeof path === "string" && (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path))) {
+    return path;
+  }
+  return null;
+}
+
+/**
+ * Directories have no Blob content. WKWebView still hands back a File:
+ * size 0, empty MIME type, and/or a FileSystemEntry with isDirectory.
+ * Those must never be uploaded as attachments — they become the "0 B folder"
+ * chip and can hang the webview if the default paste runs.
+ */
+function isDirectoryStandIn(file: File, item?: DataTransferItem): boolean {
+  if (item && itemEntry(item)?.isDirectory) return true;
+  if (file.size === 0) return true;
+  return false;
 }
 
 function displayUrl(url: string): string {
@@ -291,7 +338,7 @@ function setCaretOffset(root: HTMLElement, target: number): void {
 }
 
 const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUrlInput(
-  { value, onChange, onKeyDown, onPasteFiles, onPastePaths, onMentionChange, disabled, placeholder, className },
+  { value, onChange, onKeyDown, onPasteFiles, onPastePaths, onPasteMaybeFolder, onMentionChange, disabled, placeholder, className },
   ref,
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -468,34 +515,6 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
     }
   }, [value, buildDom]);
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-    // Check for real filesystem paths (Finder Cmd+C on a file/folder) before
-    // falling back to the generic file-blob path below — a pasted folder
-    // has no representable Blob content, so getAsFile() would otherwise
-    // hand back an empty 0-byte "file" named after the folder.
-    const uriList = e.clipboardData.getData("text/uri-list");
-    if (uriList) {
-      const paths = fileUrisToPaths(uriList);
-      if (paths.length > 0 && onPastePaths?.(paths)) {
-        e.preventDefault();
-        return;
-      }
-    }
-    const files = Array.from(e.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((f): f is File => f !== null);
-    if (files.length > 0 && onPasteFiles?.(files)) {
-      e.preventDefault();
-      return;
-    }
-    const text = e.clipboardData.getData("text/plain");
-    if (!text) return;
-    e.preventDefault();
-    insertText(text);
-    emitChange({ forceChipAll: true });
-  };
-
   const insertText = (text: string) => {
     const sel = window.getSelection();
     const root = editorRef.current;
@@ -509,6 +528,86 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
     sel.removeAllRanges();
     sel.addRange(range);
   };
+
+  const handlePaste = (e: ClipboardEvent) => {
+    const dt = e.clipboardData;
+    if (!dt) return;
+
+    const types = Array.from(dt.types ?? []);
+    const hasFilesType = types.includes("Files") || types.includes("text/uri-list");
+    const uriPaths = fileUrisToPaths(dt.getData("text/uri-list") || "");
+
+    const fromItems: { file: File; item: DataTransferItem }[] = [];
+    for (const item of Array.from(dt.items)) {
+      if (item.kind !== "file") continue;
+      try {
+        const file = item.getAsFile();
+        if (file) fromItems.push({ file, item });
+      } catch {
+        // WKWebView can throw on getAsFile for a directory item.
+      }
+    }
+    const files = fromItems.length > 0
+      ? fromItems.map((x) => x.file)
+      : Array.from(dt.files ?? []);
+
+    const nativePaths = [
+      ...uriPaths,
+      ...files.map(nativeFilePath).filter((p): p is string => !!p),
+    ];
+    const uniquePaths = [...new Set(nativePaths)];
+
+    const blobs: File[] = [];
+    let sawDirectory = false;
+    const source = fromItems.length > 0
+      ? fromItems
+      : files.map((file) => ({ file, item: undefined as DataTransferItem | undefined }));
+    for (const { file, item } of source) {
+      if (isDirectoryStandIn(file, item)) sawDirectory = true;
+      else if (file.size > 0) blobs.push(file);
+    }
+
+    // Finder Cmd+C sets the Files pasteboard type. Handle that even when
+    // this event's FileList is still empty (React root capture used to
+    // fire too early, see only the filename as text, preventDefault, and
+    // swallow the paste).
+    if (uniquePaths.length > 0 || hasFilesType || files.length > 0 || sawDirectory) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (uniquePaths.length > 0) {
+        onPastePaths?.(uniquePaths);
+        return;
+      }
+      // Real file blobs (screenshot, a copied file WKWebView actually
+      // populated) attach immediately. Directories and Finder copies that
+      // arrived as empty FileLists go to the OS clipboard for a real path.
+      if (blobs.length > 0 && !sawDirectory) {
+        onPasteFiles?.(blobs);
+        return;
+      }
+      onPasteMaybeFolder?.(blobs);
+      return;
+    }
+
+    const text = dt.getData("text/plain");
+    if (!text) return;
+    e.preventDefault();
+    insertText(text);
+    emitChange({ forceChipAll: true });
+  };
+
+  const handlePasteRef = useRef(handlePaste);
+  handlePasteRef.current = handlePaste;
+
+  // Native capture on the editor node itself — not React's onPasteCapture,
+  // which is attached at the React root and can see an empty FileList.
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const listener = (e: ClipboardEvent) => handlePasteRef.current(e);
+    el.addEventListener("paste", listener, true);
+    return () => el.removeEventListener("paste", listener, true);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(e);
@@ -537,7 +636,6 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
         style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
         onInput={() => emitChange()}
         onKeyDown={handleKeyDown}
-        onPaste={handlePaste}
         onCompositionStart={() => {
           composingRef.current = true;
         }}

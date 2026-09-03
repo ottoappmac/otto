@@ -5,6 +5,8 @@ import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import { highlightCode } from "../../utils/highlightCode";
+import { UnifiedDiff } from "./UnifiedDiff";
 
 export type ArtifactType =
   | "html" | "md" | "pdf" | "docx" | "txt" | "csv" | "xlsx" | "image" | "video" | "json" | "code";
@@ -13,6 +15,8 @@ export interface Artifact {
   path: string;       // virtual path, e.g. "output/report.html"
   fileUrl: string;    // full URL to fetch / display
   type: ArtifactType;
+  /** When set, the panel can toggle a search-replace diff from an edit tool call. */
+  diff?: { oldText: string; newText: string };
 }
 
 // Source/script files opened as read-only code (Python and other common
@@ -215,6 +219,11 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
+  const [viewMode, setViewMode] = useState<"file" | "diff">(artifact.diff ? "diff" : "file");
+
+  useEffect(() => {
+    setViewMode(artifact.diff ? "diff" : "file");
+  }, [artifact.path, artifact.diff]);
 
   useEffect(() => {
     setMdContent(null);
@@ -316,6 +325,24 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
         <span className="text-sm font-medium text-th-text-primary truncate flex-1" title={artifact.path}>
           {filename}
         </span>
+        {artifact.diff && (
+          <div className="flex items-center rounded-md border border-th-border text-[10px] font-medium overflow-hidden shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewMode("file")}
+              className={`px-2 py-0.5 ${viewMode === "file" ? "bg-th-tab-active-bg text-th-tab-active-fg" : "text-th-text-muted hover:text-th-text-primary"}`}
+            >
+              File
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("diff")}
+              className={`px-2 py-0.5 ${viewMode === "diff" ? "bg-th-tab-active-bg text-th-tab-active-fg" : "text-th-text-muted hover:text-th-text-primary"}`}
+            >
+              Diff
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-1 shrink-0">
           {(artifact.type === "html" || artifact.type === "pdf") && (
             <button
@@ -349,7 +376,16 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
 
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {artifact.type === "html" ? (
+        {artifact.diff && viewMode === "diff" ? (
+          <div className="h-full overflow-auto p-3">
+            <UnifiedDiff
+              path={artifact.path}
+              oldText={artifact.diff.oldText}
+              newText={artifact.diff.newText}
+              maxLines={400}
+            />
+          </div>
+        ) : artifact.type === "html" ? (
           <iframe
             key={iframeKey}
             src={artifact.fileUrl}
@@ -406,16 +442,18 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
             </pre>
           </div>
         ) : artifact.type === "code" ? (
-          <div className="h-full overflow-auto px-6 py-5">
-            <pre className="text-xs text-th-text-primary font-mono whitespace-pre leading-relaxed">
-              {plainText ?? ""}
-            </pre>
+          <div className="h-full overflow-auto px-4 py-4 bg-th-code-bg">
+            <pre
+              className="hljs text-xs font-mono whitespace-pre leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: highlightCode(plainText ?? "", artifact.path) }}
+            />
           </div>
         ) : artifact.type === "json" ? (
-          <div className="h-full overflow-auto px-6 py-5">
-            <pre className="text-xs text-th-text-primary font-mono whitespace-pre leading-relaxed">
-              {jsonText ?? ""}
-            </pre>
+          <div className="h-full overflow-auto px-4 py-4 bg-th-code-bg">
+            <pre
+              className="hljs text-xs font-mono whitespace-pre leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: highlightCode(jsonText ?? "", artifact.path) }}
+            />
           </div>
         ) : (
           <div className="h-full overflow-y-auto px-6 py-5">

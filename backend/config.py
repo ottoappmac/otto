@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import platform
+import tempfile
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -1551,7 +1552,29 @@ class AppConfig(BaseModel):
         # ``self`` is never mutated, so the in-memory model keeps real
         # values for apply_to_environ() after a save.
         self._route_secrets_to_vault(data)
-        config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # Write atomically (temp file + os.replace) so a concurrent
+        # ``load()`` — which happens on almost every request via
+        # ``AppConfig.aload()`` — can never observe a truncated/empty
+        # file mid-write. ``Path.write_text`` truncates in place, which
+        # is a real race under this app's read-heavy polling.
+        #
+        # ``mkstemp`` (not a pid-based name) guarantees a unique path per
+        # *call*, not just per process — ``save()`` runs on arbitrary
+        # ``asyncio.to_thread`` worker threads that all share one pid, so
+        # two concurrent saves (e.g. two browser tabs settling settings at
+        # once) would otherwise race on the same tmp filename: the first
+        # ``os.replace`` consumes it and the second then fails with
+        # ``FileNotFoundError``.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=config_dir, prefix=f"{config_path.name}.tmp-", suffix=".json",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, indent=2))
+            os.replace(tmp_name, config_path)
+        except BaseException:
+            Path(tmp_name).unlink(missing_ok=True)
+            raise
 
     def _route_secrets_to_vault(self, data: dict) -> None:
         """Move secret values out of *data* (the on-disk dict) into the

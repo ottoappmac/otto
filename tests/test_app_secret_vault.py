@@ -19,6 +19,8 @@ instead of plaintext in ``config.json``.  These tests stub out
 from __future__ import annotations
 
 import json
+import threading
+import time
 from typing import Optional
 
 import pytest
@@ -35,8 +37,10 @@ class _FakeKeyring:
 
     def __init__(self) -> None:
         self.store: dict[tuple[str, str], str] = {}
+        self.writes = 0
 
     def set_password(self, service: str, account: str, value: str) -> None:
+        self.writes += 1
         self.store[(service, account)] = value
 
     def get_password(self, service: str, account: str) -> Optional[str]:
@@ -313,3 +317,92 @@ def test_put_settings_updates_secret_value(app_data, fake_app_vault, settings_cl
 
     assert app_vault.get_bundle()["anthropic_api_key"] == "sk-new"
     assert AppConfig.load().llm.anthropic.api_key == "sk-new"
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: a stuck write must never block concurrent reads
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_saves_do_not_race_on_tmp_filename(app_data, fake_app_vault):
+    """Regression guard: ``AppConfig.save()`` runs on arbitrary
+    ``asyncio.to_thread`` worker threads that all share one pid. A
+    pid-based temp filename let two concurrent saves collide on the same
+    tmp path — the first ``os.replace`` consumed it and the second then
+    raised ``FileNotFoundError`` instead of writing config.json.
+    """
+    cfg = AppConfig()
+    barrier = threading.Barrier(8)
+    errors: list[BaseException] = []
+
+    def _save():
+        barrier.wait(timeout=5)
+        try:
+            cfg.save()
+        except BaseException as exc:  # noqa: BLE001 — captured, not raised, from a thread
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_save) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, f"concurrent save() raised: {errors}"
+    assert (app_data / "config.json").exists()
+
+
+def test_set_bundle_skips_identical_keychain_write(fake_app_vault):
+    app_vault.set_bundle({"anthropic_api_key": "sk-a"})
+    n = fake_app_vault.writes
+
+    # Re-setting the exact same bundle must not touch the keychain again —
+    # AppConfig.save() / GET-triggered re-saves would otherwise rewrite it
+    # on every request.
+    app_vault.set_bundle({"anthropic_api_key": "sk-a"})
+    assert fake_app_vault.writes == n
+
+    app_vault.set_bundle({"anthropic_api_key": "sk-b", "omlx_admin_api_key": "omlx"})
+    assert fake_app_vault.writes == n + 1
+
+
+def test_blocked_write_does_not_stall_concurrent_reads(fake_app_vault):
+    """Regression guard: a stuck keychain *write* (e.g. an unattended
+    macOS permission prompt) must never block a concurrent *read*.
+
+    Before splitting ``_ConsolidatedStore`` into a cache lock and a
+    write lock, both paths shared one ``RLock`` held across the
+    synchronous keychain syscall — one hung write silently froze every
+    other request that touched ``AppConfig``/the vault (the app-wide
+    hang this test guards against).
+    """
+    # Seed the cache so ``get()`` can hit the fast (already-loaded) path.
+    app_vault.set("anthropic_api_key", "sk-seed")
+
+    release = threading.Event()
+    entered = threading.Event()
+    real_set_password = fake_app_vault.set_password
+
+    def _blocking_set_password(service, account, value):
+        entered.set()
+        release.wait(timeout=5)
+        real_set_password(service, account, value)
+
+    fake_app_vault.set_password = _blocking_set_password  # type: ignore[method-assign]
+
+    writer = threading.Thread(
+        target=lambda: app_vault.set("openai_api_key", "sk-writer"),
+    )
+    writer.start()
+    try:
+        assert entered.wait(timeout=5), "writer never reached the keychain call"
+
+        # A concurrent read must return promptly — it must not wait for
+        # the in-flight write to finish.
+        t0 = time.monotonic()
+        assert app_vault.get("anthropic_api_key") == "sk-seed"
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.0, f"read blocked for {elapsed:.2f}s behind a stuck write"
+    finally:
+        release.set()
+        writer.join(timeout=5)

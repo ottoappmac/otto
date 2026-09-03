@@ -194,10 +194,31 @@ export interface ThroughputStats {
 // Session
 // ---------------------------------------------------------------------------
 
+export interface SessionWorkspace {
+  host_path: string;
+  virtual_path: string;
+  name: string;
+}
+
+export interface WorkspaceTreeEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number | null;
+}
+
+export interface WorkspaceTreeResult {
+  path: string;
+  entries: WorkspaceTreeEntry[];
+  truncated: boolean;
+  skipped: number;
+}
+
 export interface SessionInfo extends ThroughputStats {
   id: string;
   agent_name: string | null;
   title: string;
+  workspace?: SessionWorkspace | null;
   message_count: number;
   tools_used: string[];
   schedule_id: string | null;

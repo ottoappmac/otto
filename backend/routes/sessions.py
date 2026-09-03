@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import traceback
 from pathlib import Path
 from typing import Any
@@ -17,9 +18,11 @@ from backend.schemas import SessionCreateRequest
 from backend.session_manager import (
     _append_message_async,
     _load_messages_async,
+    _read_workspace_meta,
     _session_files_dir,
     _sessions_dir,
 )
+from backend.utils import is_resolved_path_allowed
 from backend.state import (
     context_queues,
     message_queues,
@@ -467,6 +470,27 @@ async def api_delete_all_sessions():
     return {"status": "deleted", "count": deleted}
 
 
+# Directory *names* pruned wherever they occur while walking a session's
+# files dir — chosen so a `/links/<name>` symlink into a real project
+# (dropped/pasted folder) never triggers a multi-hundred-thousand-entry
+# walk. This endpoint is polled every few seconds per open session, so an
+# unbounded ``rglob("*")`` over e.g. a repo's ``node_modules``/``.venv``/
+# ``target`` would occupy a thread-pool worker for a long time on *every*
+# poll, starving other ``asyncio.to_thread`` work (config load/save,
+# checkpoint DB, …) and making the whole app feel hung.
+_SESSION_FILES_SKIP_DIRS = {
+    ".git", ".hg", ".svn",
+    "node_modules", ".venv", "venv", "env",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "target", "dist", "build", ".next", ".turbo", ".cache",
+    "site-packages",
+}
+# Hard cap so pathological trees (huge folders the pruning above doesn't
+# catch, or a symlink cycle from ``followlinks=True``) can never make this
+# walk run unbounded — it always returns in bounded time.
+_SESSION_FILES_MAX_ENTRIES = 5000
+
+
 @router.get("/{session_id}/files")
 async def api_list_session_files(session_id: str):
     """List files created by the agent in this session."""
@@ -475,20 +499,26 @@ async def api_list_session_files(session_id: str):
     def _collect() -> list[dict]:
         if not files_dir.exists():
             return []
-        results = []
-        for fp in sorted(files_dir.rglob("*")):
-            if not fp.is_file():
-                continue
-            rel = fp.relative_to(files_dir).as_posix()
-            try:
-                stat = fp.stat()
-                results.append({
-                    "path": rel,
-                    "size": stat.st_size,
-                    "modified_at": stat.st_mtime,
-                })
-            except OSError:
-                results.append({"path": rel, "size": 0, "modified_at": 0})
+        results: list[dict] = []
+        for dirpath, dirnames, filenames in os.walk(files_dir, followlinks=True):
+            dirnames[:] = [d for d in dirnames if d not in _SESSION_FILES_SKIP_DIRS]
+            base = Path(dirpath)
+            for name in filenames:
+                fp = base / name
+                rel = fp.relative_to(files_dir).as_posix()
+                try:
+                    stat = fp.stat()
+                    results.append({
+                        "path": rel,
+                        "size": stat.st_size,
+                        "modified_at": stat.st_mtime,
+                    })
+                except OSError:
+                    results.append({"path": rel, "size": 0, "modified_at": 0})
+                if len(results) >= _SESSION_FILES_MAX_ENTRIES:
+                    results.sort(key=lambda r: r["path"])
+                    return results
+        results.sort(key=lambda r: r["path"])
         return results
 
     return await asyncio.to_thread(_collect)
@@ -546,9 +576,11 @@ async def api_download_session_file(session_id: str, file_path: str):
     """Download a specific file created by the agent."""
     import mimetypes
     files_dir = _session_files_dir(session_id)
-    resolved = (files_dir / file_path).resolve()
-    if not resolved.is_relative_to(files_dir.resolve()):
+    full = files_dir / file_path
+    vpath = "/" + file_path.lstrip("/")
+    if not is_resolved_path_allowed(full, files_dir, vpath):
         return JSONResponse(status_code=400, content={"error": "Invalid path"})
+    resolved = full.resolve()
     if not resolved.is_file():
         return JSONResponse(status_code=404, content={"error": "File not found"})
     media_type, _ = mimetypes.guess_type(str(resolved))
@@ -624,6 +656,102 @@ async def api_create_session_link(
         "is_dir": src.is_dir(),
         "source": str(src),
     }
+
+
+@router.post("/{session_id}/workspace")
+async def api_set_session_workspace(session_id: str, body: dict = Body(...)):
+    """Map a host directory as this session's coding workspace."""
+    from backend.workspace import ensure_workspace_link, remove_workspace_link
+
+    src_raw = body.get("source", "")
+    if not isinstance(src_raw, str) or not src_raw:
+        return JSONResponse(status_code=400, content={"error": "source is required"})
+
+    src = Path(src_raw).expanduser().resolve()
+    if not src.exists():
+        return JSONResponse(status_code=404, content={"error": f"source not found: {src_raw}"})
+    if not src.is_dir():
+        return JSONResponse(status_code=400, content={"error": "workspace must be a directory"})
+
+    files_dir = _session_files_dir(session_id)
+    previous = _read_workspace_meta(session_id)
+    if previous is not None and previous.host_path != str(src):
+        await asyncio.to_thread(remove_workspace_link, files_dir, previous)
+
+    try:
+        workspace = await asyncio.to_thread(ensure_workspace_link, files_dir, src)
+    except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    try:
+        session = await session_mgr.set_workspace(session_id, workspace)
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    return session.to_info().model_dump()
+
+
+@router.get("/{session_id}/workspace")
+async def api_get_session_workspace(session_id: str):
+    workspace = _read_workspace_meta(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    return workspace.model_dump()
+
+
+@router.delete("/{session_id}/workspace")
+async def api_clear_session_workspace(session_id: str):
+    from backend.workspace import remove_workspace_link
+
+    workspace = _read_workspace_meta(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    files_dir = _session_files_dir(session_id)
+    await asyncio.to_thread(remove_workspace_link, files_dir, workspace)
+    try:
+        session = await session_mgr.set_workspace(session_id, None)
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    return session.to_info().model_dump()
+
+
+@router.get("/{session_id}/workspace/tree")
+async def api_workspace_tree(session_id: str, path: str = ""):
+    from backend.workspace import list_tree
+
+    workspace = _read_workspace_meta(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    try:
+        return await asyncio.to_thread(list_tree, workspace, path)
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    except (NotADirectoryError, ValueError) as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+@router.get("/{session_id}/workspace/file")
+async def api_workspace_file(session_id: str, path: str):
+    from backend.workspace import read_file
+    from fastapi.responses import PlainTextResponse
+
+    workspace = _read_workspace_meta(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    try:
+        result = await asyncio.to_thread(read_file, workspace, path)
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    return PlainTextResponse(result["content"], media_type="text/plain; charset=utf-8")
 
 
 @router.delete("/{session_id}/files/{file_path:path}")

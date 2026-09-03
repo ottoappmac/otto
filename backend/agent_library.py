@@ -406,6 +406,7 @@ _BUILTIN_SKILL_VERSIONS: dict[str, int] = {
     "mcp-builder": 3,
     "trigger-builder": 3,
     "blender-3d-modeling": 2,
+    "coding": 2,
 }
 
 _BUILTIN_AGENT_VERSIONS: dict[str, int] = {
@@ -417,6 +418,7 @@ _BUILTIN_AGENT_VERSIONS: dict[str, int] = {
     "mcp-builder-agent": 3,
     "trigger-builder-agent": 4,
     "schedule-builder-agent": 1,
+    "coding-agent": 2,
 }
 
 
@@ -1190,6 +1192,12 @@ def seed_defaults() -> None:
         content=_BLENDER_SKILL_CONTENT,
     )
 
+    _seed_skill(
+        name="coding",
+        description="Use when exploring, explaining, or changing code in a mapped project folder — glob/grep, read_file, edit_file, then one targeted execute.",
+        content=_CODING_SKILL_CONTENT,
+    )
+
     # --- Agents ---
     _seed_agent(
         name="claude-session-eval-agent",
@@ -1253,6 +1261,19 @@ def seed_defaults() -> None:
         system_prompt=_SCHEDULE_BUILDER_AGENT_PROMPT,
         tools=[],  # schedule_tools and management/ask_user tools are auto-attached
         skills=[],
+    )
+
+    _seed_agent(
+        name="coding-agent",
+        description=(
+            "Explore, explain, or change code in a mapped project folder — "
+            "grep/glob, read, `edit_file`, run tests via `execute`. Prefer over "
+            "`general-purpose` whenever a folder is mapped or the user is talking "
+            "about their repo."
+        ),
+        system_prompt=_CODING_AGENT_PROMPT,
+        tools=[],  # file/shell tools are always attached; no extra MCP required
+        skills=["coding"],
     )
 
 
@@ -3354,6 +3375,66 @@ created.**  The management tools are the source of truth:
 
 The app's data directory (``~/Library/Application Support/…``) is
 off-limits to file tools.  Attempting to access it produces an error.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Coding agent
+# ---------------------------------------------------------------------------
+
+_CODING_SKILL_CONTENT = """\
+---
+name: coding
+description: Use when exploring, explaining, or changing code in a mapped project folder — glob/grep, read_file, edit_file, then one targeted execute.
+---
+
+# Coding in a mapped folder
+
+Search, read, smallest edit, verify. The user reviews diffs in chat — there is no IDE.
+
+## If no Mapped project block
+
+Ask the user to map a folder. Do not guess a host path.
+
+## Loop
+
+1. `glob` / `grep` under `/links/<name>/`. Do not dump the tree.
+2. `read_file` every file you will change. Quote paths.
+3. `edit_file` for existing files; `write_file` only for new files. Smallest change that satisfies the request.
+4. One targeted `execute` (cwd is the project root): tests, typecheck, or the failing command. If it fails, re-read, fix, repeat.
+
+## Rules
+
+- Stay inside the mapped virtual path. Scratch → `/output/`.
+- Do not use `write_todos`.
+- Never commit, push, or force-push unless asked.
+- Do not invent APIs or files you have not read.
+- If `grep`/`glob` finds nothing, say so and try a broader pattern before concluding the code does not exist.
+"""
+
+_CODING_AGENT_PROMPT = """\
+# Coding agent
+
+Complete the delegated coding task in the mapped project folder. Return a short result: paths changed and one-line why. Do not dump trees or whole files.
+
+## Loop
+
+1. `glob` / `grep` under the mapped virtual path (`/links/<name>/…`).
+2. `read_file` the files you will change.
+3. Smallest `edit_file`. `write_file` only for new files.
+4. One targeted `execute` (cwd is `$PROJECT_ROOT`). Then stop.
+
+## Speed
+
+- Do not use `write_todos` — proceed directly to tool calls.
+- Do not add steps beyond what was requested.
+
+## Constraints
+
+- If there is no **Mapped project** block, say so and stop. Do not invent a host path.
+- Stay inside `/links/<name>/`. Scratch → `/output/`.
+- No commit or push unless asked.
+- Ground every claim in a file you actually read this session.
 """
 
 
