@@ -340,4 +340,34 @@ html.stealth-capture:not(.stealth-capture-expanded) [data-capture-region="feed"]
     --tw-prose-bullets: rgb(var(--color-text-muted));
     --tw-prose-captions: rgb(var(--color-text-muted));
   }
+
+  /* highlight.js tokens — keep contrast on Otto's code background */
+  .hljs {
+    color: rgb(var(--color-text-primary));
+    background: transparent;
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-literal,
+  .hljs-title,
+  .hljs-section,
+  .hljs-doctag,
+  .hljs-type,
+  .hljs-name,
+  .hljs-strong { color: #7dd3fc; }
+  .hljs-string,
+  .hljs-title.function_,
+  .hljs-title.class_ { color: #86efac; }
+  .hljs-comment,
+  .hljs-quote { color: rgb(var(--color-text-muted)); font-style: italic; }
+  .hljs-number,
+  .hljs-attr,
+  .hljs-attribute { color: #fcd34d; }
+  .hljs-built_in,
+  .hljs-builtin-name { color: #c4b5fd; }
+  .hljs-variable,
+  .hljs-template-variable,
+  .hljs-symbol { color: #fda4af; }
+  .hljs-meta,
+  .hljs-meta .hljs-keyword { color: #94a3b8; }
 }

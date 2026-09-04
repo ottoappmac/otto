@@ -142,13 +142,13 @@ export default function Sidebar() {
         .slice(0, MAX_RECENT_SESSIONS);
       setRecentSessions(sessions);
 
-      // Count running sessions for the Dashboard badge (check first batch only)
-      const statuses = await Promise.allSettled(
-        data.slice(0, 20).map((s) => api.getSessionStatus(s.id)),
-      );
-      const running = statuses.filter(
-        (r) => r.status === "fulfilled" && r.value.running,
-      ).length;
+      // Count running sessions for the Dashboard badge. `listSessions()`
+      // already carries each session's `status` — deriving the count from
+      // it avoids firing off up to 20 extra per-session `getSessionStatus`
+      // requests (each with its own CORS preflight) every poll, on every
+      // page, since Sidebar is mounted globally. That N+1 fan-out was
+      // enough to spike the webview's networking process and stall input.
+      const running = data.filter((s) => s.status === "running").length;
       setRunningCount(running);
     } catch (e) {
       console.warn("Failed to load sidebar data:", e);

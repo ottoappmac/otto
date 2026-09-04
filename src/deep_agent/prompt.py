@@ -806,6 +806,10 @@ _SUBAGENT_USE_WHEN: dict[str, str] = {
         "Evaluate OpenClaw agent sessions — parse transcripts (local "
         "or SSH) and score them."
     ),
+    "coding-agent": (
+        "Mapped project / repo: read, grep, edit_file, run tests. "
+        "Prefer over general-purpose for code changes."
+    ),
 }
 
 

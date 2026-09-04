@@ -20,6 +20,8 @@ import { api } from "../../hooks/useApi";
 import { getToolLabel } from "../../utils/toolLabels";
 import { artifactTypeFromPath } from "./ArtifactPanel";
 import type { ArtifactType } from "./ArtifactPanel";
+import { UnifiedDiff } from "./UnifiedDiff";
+import { filePathFromToolArgs } from "./ChangedFilesStrip";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -408,12 +410,26 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
     const isTodoTool = toolName === "write_todos";
     const todos = isTodoTool ? parseTodos(args) : null;
 
+    const filePath = filePathFromToolArgs(args);
+    const isEditTool = toolName === "edit_file" || toolName === "edit";
+    const isWriteTool = toolName === "write_file";
+    const isReadTool = toolName === "read_file";
+    const isSearchTool = toolName === "grep" || toolName === "glob" || toolName === "ls";
+    const oldString = typeof args?.old_string === "string" ? args.old_string : "";
+    const newString = typeof args?.new_string === "string" ? args.new_string : "";
+    const writeContent = typeof args?.content === "string" ? args.content : "";
+    const resultSnippet = hasResult && (isReadTool || isSearchTool)
+      ? snippetLines(String(message.metadata!.result as string), isSearchTool ? 12 : 8)
+      : null;
+
     const rawArtifactPath =
-      isDone && !isStopped && toolName === "write_file"
-        ? ((args?.path ?? args?.file_path) as string | undefined)
+      !isStopped && (isWriteTool || isEditTool || isReadTool)
+        ? filePath ?? undefined
         : undefined;
     const artifactPath = typeof rawArtifactPath === "string" ? rawArtifactPath : null;
-    const artifactType: ArtifactType | null = artifactPath ? artifactTypeFromPath(artifactPath) : null;
+    const artifactType: ArtifactType | null = artifactPath
+      ? (artifactTypeFromPath(artifactPath) ?? "code")
+      : null;
     const artifactFileUrl =
       artifactType && sessionId
         ? api.getSessionFileUrl(sessionId, artifactPath!.replace(/^\//, ""))
@@ -432,6 +448,35 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
         </button>
         {todos && todos.length > 0 && isLatestTodo && (
           <TodoChecklist todos={todos} />
+        )}
+        {isEditTool && oldString && (
+          <UnifiedDiff
+            path={filePath ?? "file"}
+            oldText={oldString}
+            newText={newString}
+            onOpen={
+              artifactType && artifactFileUrl
+                ? () => onOpenArtifact?.(filePath!, artifactFileUrl, artifactType)
+                : undefined
+            }
+          />
+        )}
+        {isWriteTool && writeContent && !isEditTool && (
+          <UnifiedDiff
+            path={filePath ?? "file"}
+            oldText=""
+            newText={writeContent}
+            onOpen={
+              artifactType && artifactFileUrl
+                ? () => onOpenArtifact?.(filePath!, artifactFileUrl, artifactType)
+                : undefined
+            }
+          />
+        )}
+        {resultSnippet && (
+          <pre className="mt-1 ml-6 text-[11px] leading-[1.5] text-th-text-secondary bg-th-code-bg border border-th-border rounded-lg p-2.5 max-h-36 overflow-auto font-mono whitespace-pre-wrap break-all max-w-2xl">
+            {resultSnippet}
+          </pre>
         )}
         {/* Live output tail — shown while the execute command is running */}
         {hasLiveOutput && (
@@ -489,7 +534,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
             </span>
           </button>
         )}
-        {expanded && (
+        {expanded && !(isEditTool && oldString) && !(isWriteTool && writeContent) && (
           <div className="mt-1.5 ml-6 space-y-2">
             {message.metadata?.args != null && (
               <div>
@@ -897,6 +942,14 @@ function ExecuteResultBlock({
       </div>
     </div>
   );
+}
+
+function snippetLines(text: string, maxLines: number): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const lines = trimmed.split("\n");
+  if (lines.length <= maxLines) return trimmed;
+  return `${lines.slice(0, maxLines).join("\n")}\n…`;
 }
 
 // ---------------------------------------------------------------------------

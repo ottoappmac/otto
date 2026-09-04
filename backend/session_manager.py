@@ -21,7 +21,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
 from backend.config import AppConfig, get_app_data_dir
-from backend.schemas import AgentSpec, SessionInfo
+from backend.schemas import AgentSpec, SessionInfo, SessionWorkspace
 from backend.session_transcript import append_event_async as _transcript
 from backend.utils import (
     extract_text_content,
@@ -62,13 +62,14 @@ def _head_tail_preview(text: str) -> tuple[str, int, bool]:
 # ---- Shell backend with SESSION_FILES env var ----------------------------
 
 
-def _make_backend(files_dir: Path) -> Any:
+def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
     """Create a ``LocalShellBackend`` with ``SESSION_FILES`` injected into
     the shell environment so agents can reference the real session files path.
 
-    The ``execute`` tool's working directory is already set to *files_dir*,
-    so relative paths work too.  ``SESSION_FILES`` provides an explicit
-    anchor for cases where the agent needs a full absolute path.
+    The ``execute`` tool's working directory defaults to *files_dir*.  When
+    *project_root* is set (a mapped workspace folder) ``execute`` runs there
+    instead, with ``PROJECT_ROOT`` in the environment.  File tools stay
+    scoped to the virtual session root — only the shell cwd changes.
 
     We subclass to relax the symlink-resolution check so that user-dropped
     files/folders, which we expose as symlinks under ``files_dir/links/``,
@@ -80,6 +81,8 @@ def _make_backend(files_dir: Path) -> Any:
     only thing that changes is "symlinks may legitimately escape".
     """
     from deepagents.backends.local_shell import LocalShellBackend
+    from deepagents.backends.protocol import ExecuteResponse
+    import subprocess as _subprocess
 
     class _SymlinkAwareBackend(LocalShellBackend):
         def _resolve_path(self, key: str) -> Path:
@@ -208,12 +211,75 @@ def _make_backend(files_dir: Path) -> Any:
                 rel = path.resolve().relative_to(self.cwd)
             return "/" + rel.as_posix()
 
-    return _SymlinkAwareBackend(
+        def execute(self, command: str, *, timeout: int | None = None) -> Any:
+            """Same as LocalShellBackend.execute, but cwd is the mapped
+            project root when one is set — file tools still use self.cwd."""
+            if not command or not isinstance(command, str):
+                return ExecuteResponse(
+                    output="Error: Command must be a non-empty string.",
+                    exit_code=1,
+                    truncated=False,
+                )
+            effective_timeout = timeout if timeout is not None else self._default_timeout
+            if effective_timeout <= 0:
+                raise ValueError(f"timeout must be positive, got {effective_timeout}")
+            shell_cwd = getattr(self, "_execute_cwd", None) or self.cwd
+            try:
+                result = _subprocess.run(  # noqa: S602
+                    command,
+                    check=False,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=effective_timeout,
+                    env=self._env,
+                    cwd=str(shell_cwd),
+                )
+                output_parts = []
+                if result.stdout:
+                    output_parts.append(result.stdout)
+                if result.stderr:
+                    stderr_lines = result.stderr.strip().split("\n")
+                    output_parts.extend(f"[stderr] {line}" for line in stderr_lines)
+                output = "\n".join(output_parts) if output_parts else "<no output>"
+                truncated = False
+                if len(output) > self._max_output_bytes:
+                    output = output[: self._max_output_bytes]
+                    output += f"\n\n... Output truncated at {self._max_output_bytes} bytes."
+                    truncated = True
+                if result.returncode != 0:
+                    output = f"{output.rstrip()}\n\nExit code: {result.returncode}"
+                return ExecuteResponse(
+                    output=output,
+                    exit_code=result.returncode,
+                    truncated=truncated,
+                )
+            except _subprocess.TimeoutExpired:
+                return ExecuteResponse(
+                    output=(
+                        f"Error: Command timed out after {effective_timeout} seconds."
+                    ),
+                    exit_code=124,
+                    truncated=False,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return ExecuteResponse(
+                    output=f"Error executing command ({type(exc).__name__}): {exc}",
+                    exit_code=1,
+                    truncated=False,
+                )
+
+    env: dict[str, str] = {"SESSION_FILES": str(files_dir)}
+    if project_root is not None:
+        env["PROJECT_ROOT"] = str(project_root)
+    backend = _SymlinkAwareBackend(
         root_dir=files_dir,
         virtual_mode=True,
         inherit_env=True,
-        env={"SESSION_FILES": str(files_dir)},
+        env=env,
     )
+    backend._execute_cwd = Path(project_root) if project_root is not None else files_dir
+    return backend
 
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
@@ -235,6 +301,60 @@ def _session_files_dir(session_id: str) -> Path:
     d = _sessions_dir() / session_id / "files"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _read_workspace_meta(session_id: str) -> SessionWorkspace | None:
+    """Load the persisted workspace from session meta, if any."""
+    meta_path = _sessions_dir() / f"{session_id}.json"
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    raw = data.get("workspace")
+    if not raw:
+        return None
+    try:
+        return SessionWorkspace.model_validate(raw)
+    except Exception:
+        return None
+
+
+def _mapped_project_prompt_block(
+    workspace: SessionWorkspace | None,
+    *,
+    include_unmapped: bool = False,
+) -> str:
+    """Session-context block for a mapped project folder.
+
+    Used by the orchestrator prompt and by filesystem subagents (coding-agent)
+    so delegated work sees the same virtual / host paths.  When *workspace*
+    is None, emit the "ask the user to map a folder" note only if
+    *include_unmapped* is True (coding sessions / coding subagent).
+    """
+    if workspace is not None:
+        return (
+            f"\n\n## Mapped project\n"
+            f"The user mapped a project folder into this session.\n"
+            f"- Host path: `{workspace.host_path}` (also `$PROJECT_ROOT`)\n"
+            f"- Virtual path for file tools (`read_file`, `write_file`, `edit_file`, "
+            f"`ls`, `glob`, `grep`): `{workspace.virtual_path}/…` "
+            f"(e.g. `{workspace.virtual_path}/src/main.py`)\n"
+            f"- `execute` runs with cwd = the host path. Use relative paths in "
+            f"shell commands (e.g. `ls`, `pytest`, `npm test`). HITL approval "
+            f"still applies.\n"
+            f"- Prefer `edit_file` over `write_file` for existing files. Stay "
+            f"inside `{workspace.virtual_path}` — do not edit paths outside it.\n"
+            f"- Session output (reports, scratch files) still goes under `/output/`.\n"
+        )
+    if include_unmapped:
+        return (
+            "\n\n## Mapped project\n"
+            "No project folder is mapped. Before reading or editing the user's "
+            "code, ask them to map a folder (or drop one onto the chat).\n"
+        )
+    return ""
 
 
 def _checkpoint_db_path() -> str:
@@ -842,6 +962,14 @@ def _build_gp_subagent(
 
 _RESERVED_SUBAGENT_NAMES = frozenset({"general-purpose"})
 
+# Library agents with no MCP tools that still deserve a distinct
+# ``task(subagent_type=…)`` entry.  They use FilesystemMiddleware +
+# ``standard_tools`` (same as other library subagents) and must not
+# claim MCP server IDs.  Other empty-tools agents (e.g.
+# ``schedule-builder-agent``) stay skipped so they do not duplicate
+# ``general-purpose``.
+_FILESYSTEM_SUBAGENT_NAMES = frozenset({"coding-agent"})
+
 
 def _build_named_agent_subagent(
     agent_name: str,
@@ -1371,6 +1499,7 @@ def _compile_library_subagent(
     activity_tools: list[Any] | None,
     mcp_mgr: Any,
     session_id: str | None,
+    workspace: SessionWorkspace | None = None,
 ) -> Any:
     """Compile one library agent's subagent graph (model resolution,
     middleware stack, ``create_agent``) and return the streaming-wrapped
@@ -1417,6 +1546,10 @@ def _compile_library_subagent(
             )
 
     system_prompt = get_agent_system_prompt(agent_spec.name) or ""
+    if agent_spec.name in _FILESYSTEM_SUBAGENT_NAMES:
+        system_prompt += _mapped_project_prompt_block(
+            workspace, include_unmapped=True,
+        )
 
     subagent_model = _resolve_subagent_model(agent_spec, model)
 
@@ -1571,6 +1704,7 @@ def _build_subagents_from_library(
     activity_tools: list[Any] | None = None,
     subagent_vision_resolver: Any = None,
     session_id: str | None = None,
+    workspace: SessionWorkspace | None = None,
 ) -> tuple[Optional[list[dict[str, Any]]], set[str]]:
     """Build ``CompiledSubAgent`` specs from every agent in the library.
 
@@ -1582,7 +1716,8 @@ def _build_subagents_from_library(
 
     Agents whose required MCP servers aren't connected are skipped.
     Agents with no declared MCP tools are skipped (they would duplicate the
-    built-in general-purpose subagent).
+    built-in general-purpose subagent) unless they are in
+    :data:`_FILESYSTEM_SUBAGENT_NAMES`.
 
     Returns ``(subagent_list_or_None, set_of_claimed_server_ids)``.
     """
@@ -1603,24 +1738,26 @@ def _build_subagents_from_library(
         required_ids = set(agent_spec.tools)
 
         if not required_ids:
-            logger.debug(
-                "Skipping agent %r — no MCP tools declared (would duplicate general-purpose)",
-                agent_spec.name,
+            if agent_spec.name not in _FILESYSTEM_SUBAGENT_NAMES:
+                logger.debug(
+                    "Skipping agent %r — no MCP tools declared (would duplicate general-purpose)",
+                    agent_spec.name,
+                )
+                continue
+            agent_mcp_tools: list[Any] = []
+        else:
+            if not required_ids.intersection(connected_ids):
+                continue
+
+            agent_mcp_tools = dedupe_tool_names(
+                (sid, connections[sid].tools)
+                for sid in required_ids
+                if sid in connections and connections[sid].connected
             )
-            continue
+            if not agent_mcp_tools:
+                continue
 
-        if not required_ids.intersection(connected_ids):
-            continue
-
-        agent_mcp_tools = dedupe_tool_names(
-            (sid, connections[sid].tools)
-            for sid in required_ids
-            if sid in connections and connections[sid].connected
-        )
-        if not agent_mcp_tools:
-            continue
-
-        claimed_server_ids.update(required_ids)
+            claimed_server_ids.update(required_ids)
 
         builder = functools.partial(
             _compile_library_subagent,
@@ -1638,6 +1775,7 @@ def _build_subagents_from_library(
             activity_tools,
             mcp_mgr,
             session_id,
+            workspace,
         )
         subagents.append({
             "name": agent_spec.name,
@@ -1718,6 +1856,7 @@ class Session:
         self.eval_overall_score: Optional[float] = None
         self.eval_pass_count: Optional[int] = None
         self.eval_total: Optional[int] = None
+        self.workspace: Optional[SessionWorkspace] = None
 
     def accumulate_mlx_stats(self, stats: dict) -> None:
         """Fold a single turn's MLX ``response_metadata`` stats into the
@@ -1794,6 +1933,7 @@ class Session:
             eval_overall_score=self.eval_overall_score,
             eval_pass_count=self.eval_pass_count,
             eval_total=self.eval_total,
+            workspace=self.workspace,
             **self._throughput_fields(),
         )
 
@@ -2129,7 +2269,9 @@ class SessionManager:
         _vision_available = _main_supports_vision or (_file_vision_llm is not None)
 
         files_dir = _session_files_dir(session_id)
-        backend = _make_backend(files_dir)
+        workspace = _read_workspace_meta(session_id)
+        project_root = Path(workspace.host_path) if workspace else None
+        backend = _make_backend(files_dir, project_root=project_root)
 
         # --- Playwright browser isolation pool ---
         # When Playwright MCP is connected, create a pool of ephemeral
@@ -2410,6 +2552,7 @@ class SessionManager:
                 activity_tools=activity_tools,
                 subagent_vision_resolver=_subagent_vision,
                 session_id=session_id,
+                workspace=workspace,
             )
             from backend.mcp_manager import dedupe_tool_names
 
@@ -2672,6 +2815,11 @@ class SessionManager:
             f"{_location_line}\n"
         )
 
+        system_prompt += _mapped_project_prompt_block(
+            workspace,
+            include_unmapped=bool(agent_name and "coding" in agent_name),
+        )
+
         system_prompt += (
             "\n## Data Integrity (NON-NEGOTIABLE)\n"
             "- Report ONLY data that tools or subagents actually returned. NEVER "
@@ -2916,6 +3064,7 @@ class SessionManager:
         session.eval_overall_score = info.eval_overall_score
         session.eval_pass_count = info.eval_pass_count
         session.eval_total = info.eval_total
+        session.workspace = info.workspace
         self._active[session_id] = session
         logger.info("Resumed session %s (%s)", session_id, info.title)
         return session
@@ -2963,6 +3112,60 @@ class SessionManager:
         # the next allocation.  ``mx.clear_cache`` only releases the unused
         # pool, so this is safe even when MLX is still the active provider.
         await asyncio.to_thread(_reclaim_mlx_memory)
+
+    async def _rebuild_one_session(self, session: Session, config: AppConfig) -> None:
+        """Swap *session*'s graph for a freshly built one (workspace, tools)."""
+        old_tool_set = session.tool_set
+        graph, mcp_mgr, _ = await self._build_graph(
+            config, session.agent_name, session.id, session._checkpointer,
+            is_scheduled_run=session.trigger_source == "schedule",
+            schedule_id=session.schedule_id,
+            live_output_queue=session.live_output_queue,
+        )
+        session.graph = graph
+        session.tool_set = mcp_mgr
+        if old_tool_set is not None:
+            try:
+                await old_tool_set.close()
+            except Exception:
+                logger.debug("Error closing old tool set for session %s", session.id, exc_info=True)
+
+    async def set_workspace(
+        self,
+        session_id: str,
+        workspace: SessionWorkspace | None,
+        *,
+        rebuild: bool = True,
+    ) -> Session:
+        """Persist a mapped folder on the session and rebuild the graph so
+        ``execute`` cwd / the system prompt pick it up."""
+        session = self._active.get(session_id)
+        if session is None:
+            # Persist onto disk meta even if the session isn't in memory
+            # (closed but not deleted) so a later resume sees it.
+            meta_path = _sessions_dir() / f"{session_id}.json"
+            if not meta_path.exists():
+                raise FileNotFoundError(f"Session not found: {session_id}")
+            raw = json.loads(meta_path.read_text(encoding="utf-8"))
+            info = SessionInfo.model_validate(raw)
+            info.workspace = workspace
+            info.updated_at = datetime.now(timezone.utc)
+            meta_path.write_text(info.model_dump_json(indent=2), encoding="utf-8")
+            # Resume so subsequent chat uses the new workspace.
+            session = await self.resume_session(session_id, await AppConfig.aload())
+            if session is None:
+                raise FileNotFoundError(f"Session not found: {session_id}")
+            return session
+
+        if session.status == "running":
+            raise RuntimeError("Cannot remap the project folder while a run is in progress")
+
+        session.workspace = workspace
+        session.updated_at = datetime.now(timezone.utc)
+        await session.save_meta_async()
+        if rebuild:
+            await self._rebuild_one_session(session, await AppConfig.aload())
+        return session
 
     async def close_session(self, session_id: str) -> None:
         session = self._active.pop(session_id, None)

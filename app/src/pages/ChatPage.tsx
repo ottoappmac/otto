@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff } from "lucide-react";
+import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff, FolderPlus } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { AgentGraph } from "../components/chat/AgentGraph";
@@ -14,6 +14,8 @@ import { ModelPicker } from "../components/chat/ModelPicker";
 import SessionStatsPanel from "../components/chat/SessionStatsPanel";
 import SessionFileTree from "../components/chat/SessionFileTree";
 import OutputFileGrid from "../components/chat/OutputFileGrid";
+import WorkspaceTree from "../components/chat/WorkspaceTree";
+import { ChangedFilesStrip, collectChangedFiles, filePathFromToolArgs } from "../components/chat/ChangedFilesStrip";
 import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
 import { formatFileSize } from "../utils/formatFileSize";
 import { mergeToolMessages } from "../utils/mergeToolMessages";
@@ -24,7 +26,7 @@ import { useConnection } from "../context/ConnectionContext";
 import { useTheme } from "../context/ThemeContext";
 import { usePolling } from "../hooks/usePolling";
 import { CRON_PRESETS } from "../types";
-import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJob, SessionInfo, WSMessage } from "../types";
+import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJob, SessionInfo, SessionWorkspace, WSMessage } from "../types";
 import { useVoice } from "../hooks/useVoice";
 import { onAskOtto } from "../utils/askOttoBus";
 import { subscribeSessionFiles } from "../utils/sessionFilesBus";
@@ -48,6 +50,18 @@ function dataUrlToFile(img: AskImage): File | null {
   } catch {
     return null;
   }
+}
+
+function folderFromFileList(files: FileList | File[]): string | null {
+  const arr = Array.from(files);
+  const first = arr[0] as (File & { path?: string }) | undefined;
+  if (!first?.path) return null;
+  const abs = first.path.replace(/\\/g, "/");
+  const rel = first.webkitRelativePath?.replace(/\\/g, "/");
+  if (rel && abs.endsWith(rel)) {
+    return abs.slice(0, abs.length - rel.length).replace(/\/$/, "");
+  }
+  return abs.split("/").slice(0, -1).join("/") || null;
 }
 
 type RenderItem =
@@ -104,7 +118,18 @@ export default function ChatPage() {
   const artifactDragCleanupRef = useRef<(() => void) | null>(null);
 
   const handleOpenArtifact = useCallback((path: string, fileUrl: string, type: ArtifactType) => {
-    setOpenArtifact({ path, fileUrl, type });
+    const sid = sessionIdRef.current;
+    const ws = workspaceRef.current;
+    let url = fileUrl;
+    if (sid && ws) {
+      const stripped = path.replace(/^\//, "");
+      const prefix = ws.virtual_path.replace(/^\//, "");
+      if (stripped === prefix || stripped.startsWith(`${prefix}/`)) {
+        const rel = stripped === prefix ? "" : stripped.slice(prefix.length + 1);
+        url = api.getWorkspaceFileUrl(sid, rel);
+      }
+    }
+    setOpenArtifact({ path, fileUrl: url, type });
   }, []);
 
   const onArtifactResizeStart = useCallback((e: React.MouseEvent) => {
@@ -178,6 +203,10 @@ export default function ChatPage() {
   }, [currentSessionId, isStreaming]);
   const [sessionFiles, setSessionFiles] = useState<{ path: string; size: number; modified_at: number }[]>([]);
   const [showFiles, setShowFiles] = useState(false);
+  const [showWorkspaceTree, setShowWorkspaceTree] = useState(true);
+  const [mappingFolder, setMappingFolder] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const lastFollowedToolRef = useRef<string | null>(null);
   const [downloadedFile, setDownloadedFile] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingFolders, setPendingFolders] = useState<string[]>([]);
@@ -226,6 +255,7 @@ export default function ChatPage() {
   const [atOpen, setAtOpen] = useState(false);
   const [atFilter, setAtFilter] = useState("");
   const [atIndex, setAtIndex] = useState(0);
+  const [atWorkspaceEntries, setAtWorkspaceEntries] = useState<{ path: string; isDir: boolean; pending: false; group: "workspace" }[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   // Whether the history pane should auto-scroll to the newest content.
@@ -236,6 +266,7 @@ export default function ChatPage() {
   const isPinnedToBottomRef = useRef(true);
   const inputRef = useRef<InlineUrlInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const slashRef = useRef<HTMLDivElement>(null);
   const atRef = useRef<HTMLDivElement>(null);
   const msgIdRef = useRef(0);
@@ -244,6 +275,7 @@ export default function ChatPage() {
   const justCreatedRef = useRef(false);
   const sessionIdRef = useRef(currentSessionId);
   sessionIdRef.current = currentSessionId;
+  const workspaceRef = useRef<SessionWorkspace | null>(null);
 
   // Sync per-session state with the URL prop *during* render — without
   // this, navigating from /chat/A to /chat/B leaves ``messages``,
@@ -264,6 +296,8 @@ export default function ChatPage() {
     setStreamPhase("thinking");
     setSessionFiles([]);
     setShowFiles(false);
+    setShowWorkspaceTree(true);
+    lastFollowedToolRef.current = null;
     setParentSessionId(null);
     setSessionBoundAgent(undefined);
     setSessionInfo(null);
@@ -353,20 +387,45 @@ export default function ChatPage() {
   // Finder-copied file/folder (`onPastePaths` on `InlineUrlInput`) — both
   // hand us real paths rather than Blob content, which is the only way to
   // represent a pasted/dropped *folder* at all.
-  const addDroppedPaths = (paths: string[]) => {
+  const queueOsPaths = (entries: { path: string; isDir?: boolean }[]) => {
     const folders: string[] = [];
     const filePaths: string[] = [];
-    paths.forEach((p) => {
-      // Heuristic: if the last path segment contains a ".", treat as file
-      const basename = p.replace(/\\/g, "/").split("/").pop() ?? p;
-      if (basename.includes(".")) {
-        filePaths.push(p);
-      } else {
-        folders.push(p);
-      }
+    entries.forEach(({ path, isDir }) => {
+      const basename = path.replace(/\\/g, "/").split("/").pop() ?? path;
+      const asDir = isDir ?? !basename.includes(".");
+      if (asDir) folders.push(path);
+      else filePaths.push(path);
     });
     if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
     if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+  };
+
+  const addDroppedPaths = (paths: string[]) => {
+    queueOsPaths(paths.map((path) => ({ path })));
+  };
+
+  // Fired when paste had a directory stand-in (0-byte File, webkit directory
+  // entry) and no usable `file://` uri-list. Ask the OS clipboard for the
+  // real path so a pasted folder goes through the same queue as drag-drop.
+  // Never fall back to uploading the 0-byte blob — that's the "0 B folder"
+  // chip, and letting WKWebView treat it as a File is what hangs the chat.
+  const tryNativeClipboardPaste = async (fallbackFiles: File[] = []) => {
+    try {
+      const data = await api.clipboardFile();
+      const items = data.items?.length
+        ? data.items
+        : data.path
+          ? [{ path: data.path, is_dir: data.is_dir }]
+          : [];
+      if (items.length) {
+        queueOsPaths(items.map((it) => ({ path: it.path, isDir: it.is_dir })));
+        return;
+      }
+    } catch {
+      // Backend unreachable — fall through to real blobs if we have any.
+    }
+    const blobs = fallbackFiles.filter((f) => f.size > 0);
+    if (blobs.length) addFiles(blobs);
   };
 
   // Tauri intercepts OS-level file/folder drops before they reach the browser's
@@ -1136,10 +1195,10 @@ export default function ChatPage() {
     handleHitlDecision(unresolved.id, actions.map(() => ({ type: "approve" })));
   }, [shouldAutoApprove, messages, handleHitlDecision]);
 
-  const startSession = async () => {
+  const startSession = async (agentOverride?: string) => {
     let data: Awaited<ReturnType<typeof api.createSession>>;
     try {
-      data = await api.createSession({ agent_name: selectedAgent || null });
+      data = await api.createSession({ agent_name: (agentOverride ?? selectedAgent) || null });
     } catch (err) {
       // Parse privacy-lock 403 so the chat renders the dedicated card
       // instead of a raw "API 403: …" string.
@@ -1171,9 +1230,74 @@ export default function ChatPage() {
     return sid;
   };
 
+  const workspace: SessionWorkspace | null = sessionInfo?.workspace ?? null;
+  workspaceRef.current = workspace;
+
+  const resolveFileUrl = useCallback((path: string) => {
+    if (!currentSessionId) return "";
+    const stripped = path.replace(/^\//, "");
+    if (workspace) {
+      const prefix = workspace.virtual_path.replace(/^\//, "");
+      if (stripped === prefix || stripped.startsWith(prefix + "/")) {
+        const rel = stripped === prefix ? "" : stripped.slice(prefix.length + 1);
+        return api.getWorkspaceFileUrl(currentSessionId, rel);
+      }
+    }
+    return api.getSessionFileUrl(currentSessionId, stripped);
+  }, [currentSessionId, workspace]);
+
+  const mapWorkspace = useCallback(async (source: string) => {
+    setWorkspaceError(null);
+    setMappingFolder(true);
+    try {
+      let sid = currentSessionId;
+      if (!sid) {
+        const agent = selectedAgent || "coding-agent";
+        if (!selectedAgent) {
+          setSelectedAgent("coding-agent");
+          localStorage.setItem("chatSelectedAgent", "coding-agent");
+        }
+        sid = await startSession(agent);
+        await waitForConnection();
+      }
+      const info = await api.setSessionWorkspace(sid, source);
+      setSessionInfo(info);
+      setShowWorkspaceTree(true);
+      setPendingFolders((prev) => prev.filter((p) => p !== source));
+    } catch (e) {
+      setWorkspaceError(e instanceof Error ? e.message : "Could not map folder");
+    } finally {
+      setMappingFolder(false);
+    }
+  }, [currentSessionId, selectedAgent, startSession, waitForConnection]);
+
+  const unmapWorkspace = useCallback(async () => {
+    if (!currentSessionId) return;
+    try {
+      const info = await api.clearSessionWorkspace(currentSessionId);
+      setSessionInfo(info);
+      setOpenArtifact(null);
+    } catch (e) {
+      setWorkspaceError(e instanceof Error ? e.message : "Could not unmap folder");
+    }
+  }, [currentSessionId]);
+
   const addFiles = (files: FileList | File[]) => {
-    const arr = Array.from(files);
-    if (arr.length) setPendingFiles((prev) => [...prev, ...arr]);
+    const blobs: File[] = [];
+    const nativePaths: string[] = [];
+    for (const f of Array.from(files)) {
+      const native = (f as File & { path?: string }).path;
+      if (typeof native === "string" && (native.startsWith("/") || /^[A-Za-z]:[\\/]/.test(native))) {
+        nativePaths.push(native);
+        continue;
+      }
+      // A pasted folder arrives as a 0-byte File. Uploading it is the "0 B"
+      // chip; never queue those as attachments.
+      if (f.size === 0) continue;
+      blobs.push(f);
+    }
+    if (nativePaths.length) addDroppedPaths(nativePaths);
+    if (blobs.length) setPendingFiles((prev) => [...prev, ...blobs]);
   };
 
   const removeFile = (index: number) => {
@@ -1691,6 +1815,29 @@ export default function ChatPage() {
     [messages, focusSessionId],
   );
 
+  useEffect(() => {
+    const last = [...sessionMessages].reverse().find((m) => {
+      if (m.type !== "tool_call" && m.type !== "tool_result") return false;
+      return m.content === "read_file" || m.content === "edit_file" || m.content === "edit" || m.content === "write_file";
+    });
+    if (!last || last.id === lastFollowedToolRef.current) return;
+    lastFollowedToolRef.current = last.id;
+    const args = last.metadata?.args as Record<string, unknown> | undefined;
+    const path = filePathFromToolArgs(args);
+    if (!path) return;
+    const type = artifactTypeFromPath(path) ?? "code";
+    const isEdit = last.content === "edit_file" || last.content === "edit";
+    const diff = isEdit && typeof args?.old_string === "string"
+      ? { oldText: args.old_string, newText: String(args.new_string ?? "") }
+      : undefined;
+    setOpenArtifact({
+      path,
+      fileUrl: resolveFileUrl(path),
+      type,
+      diff,
+    });
+  }, [sessionMessages, resolveFileUrl]);
+
   const memoryHits = useMemo(() => {
     const agent = sessionMessages.filter((m) => m.type === "agent" && !m.metadata?.subagent);
     const withMemory = agent.filter((m) => (m.metadata?.memory_topics as string[] | undefined)?.length);
@@ -1737,17 +1884,17 @@ export default function ChatPage() {
   const atPendingEntries = useMemo(() => {
     const basename = (p: string) => p.replace(/\\/g, "/").split("/").pop() ?? p;
     return [
-      ...pendingFiles.map((f) => ({ path: f.name, isDir: false, pending: true as const })),
-      ...pendingFilePaths.map((p) => ({ path: basename(p), isDir: false, pending: true as const })),
-      ...pendingFolders.map((p) => ({ path: basename(p), isDir: true, pending: true as const })),
+      ...pendingFiles.map((f) => ({ path: f.name, isDir: false, pending: true as const, group: "pending" as const })),
+      ...pendingFilePaths.map((p) => ({ path: basename(p), isDir: false, pending: true as const, group: "pending" as const })),
+      ...pendingFolders.map((p) => ({ path: basename(p), isDir: true, pending: true as const, group: "pending" as const })),
     ];
   }, [pendingFiles, pendingFilePaths, pendingFolders]);
 
   const atSessionEntries = useMemo(() => {
-    const out: { path: string; isDir: boolean; pending: false }[] = [];
+    const out: { path: string; isDir: boolean; pending: false; group: "run" }[] = [];
     const walk = (nodes: ReturnType<typeof buildFileTree>) => {
       for (const node of nodes) {
-        out.push({ path: node.path, isDir: !node.file, pending: false });
+        out.push({ path: node.path, isDir: !node.file, pending: false, group: "run" as const });
         if (node.children.length > 0) walk(node.children);
       }
     };
@@ -1756,8 +1903,8 @@ export default function ChatPage() {
   }, [visibleSessionFiles]);
 
   const atEntries = useMemo(
-    () => [...atPendingEntries, ...atSessionEntries],
-    [atPendingEntries, atSessionEntries],
+    () => [...atPendingEntries, ...atWorkspaceEntries, ...atSessionEntries],
+    [atPendingEntries, atWorkspaceEntries, atSessionEntries],
   );
 
   const atItems = useMemo(() => {
@@ -1766,6 +1913,28 @@ export default function ChatPage() {
     return matches.slice(0, 30);
   }, [atEntries, atFilter]);
   const clampedAtIndex = Math.max(0, Math.min(atIndex, atItems.length - 1));
+
+  useEffect(() => {
+    if (!workspace || !currentSessionId) {
+      setAtWorkspaceEntries([]);
+      return;
+    }
+    if (!atOpen) return;
+    const prefix = atFilter.includes("/") ? atFilter.replace(/\/[^/]*$/, "") : "";
+    let cancelled = false;
+    api.getWorkspaceTree(currentSessionId, prefix)
+      .then((r) => {
+        if (cancelled) return;
+        setAtWorkspaceEntries(r.entries.map((e) => ({
+          path: e.path,
+          isDir: e.is_dir,
+          pending: false as const,
+          group: "workspace" as const,
+        })));
+      })
+      .catch(() => { if (!cancelled) setAtWorkspaceEntries([]); });
+    return () => { cancelled = true; };
+  }, [atOpen, atFilter, workspace, currentSessionId]);
 
   useEffect(() => {
     if (atOpen && atRef.current) {
@@ -1906,6 +2075,23 @@ export default function ChatPage() {
     [sessionMessages],
   );
 
+  const changedFiles = useMemo(
+    () => collectChangedFiles(sessionMessages),
+    [sessionMessages],
+  );
+
+  const codingSelected = (currentSessionId ? sessionBoundAgent : selectedAgent) === "coding-agent";
+  const welcomePrompts = codingSelected
+    ? ["Explain this repo", "Fix a failing test", "Add a feature"]
+    : [
+        "Write a Python script",
+        "Summarise a document",
+        "Research a topic online",
+        "Debug this code",
+        "Plan a project",
+        "Draft an email",
+      ];
+
 
 
   return (
@@ -1927,6 +2113,35 @@ export default function ChatPage() {
             >
               <ArrowUpLeft size={11} />
               From parent
+            </button>
+          )}
+          {workspace && (
+            <span
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-sky-500/15 text-sky-400 border border-sky-500/25 max-w-[280px]"
+              title={workspace.host_path}
+            >
+              <Folder size={11} />
+              <span className="truncate">{workspace.name}</span>
+              <button
+                type="button"
+                onClick={() => unmapWorkspace()}
+                className="hover:text-th-text-primary transition-colors"
+                title="Unmap folder"
+              >
+                <X size={11} />
+              </button>
+            </span>
+          )}
+          {!workspace && (
+            <button
+              type="button"
+              onClick={() => folderInputRef.current?.click()}
+              disabled={mappingFolder || isStreaming}
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium text-th-text-tertiary hover:text-th-text-primary border border-transparent hover:border-th-border hover:bg-th-surface-hover transition-colors"
+              title="Map a project folder for the coding agent"
+            >
+              <FolderPlus size={11} />
+              {mappingFolder ? "Mapping…" : "Map folder"}
             </button>
           )}
         </div>
@@ -2004,17 +2219,22 @@ export default function ChatPage() {
             />
             <h3 className="text-xl font-semibold text-th-text-primary mb-2">How can I help?</h3>
             <p className="text-sm text-th-text-tertiary max-w-sm text-center leading-relaxed mb-7">
-              Your AI agent — browse, write, run code, and more.
+              {codingSelected
+                ? "Map a project folder, then describe the change. Otto will search, edit, and run commands in that tree."
+                : "Your AI agent — browse, write, run code, and more."}
             </p>
+            {codingSelected && !workspace && (
+              <button
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+                className="mb-5 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-sky-300 bg-sky-500/10 border border-sky-500/25 rounded-xl hover:bg-sky-500/15 transition-colors"
+              >
+                <FolderPlus size={15} />
+                Map a project folder
+              </button>
+            )}
             <div className="flex flex-wrap gap-2 justify-center max-w-lg">
-              {[
-                "Write a Python script",
-                "Summarise a document",
-                "Research a topic online",
-                "Debug this code",
-                "Plan a project",
-                "Draft an email",
-              ].map((prompt) => (
+              {welcomePrompts.map((prompt) => (
                 <button
                   key={prompt}
                   onClick={() => { setInput(prompt); inputRef.current?.focus(); }}
@@ -2043,6 +2263,13 @@ export default function ChatPage() {
             phase={streamPhase}
             pendingContext={pendingContext}
             withAvatar
+          />
+        )}
+        {!isStreaming && changedFiles.length > 0 && currentSessionId && (
+          <ChangedFilesStrip
+            files={changedFiles}
+            fileUrl={resolveFileUrl}
+            onOpen={handleOpenArtifact}
           />
         )}
         {!isStreaming && viewableSessionFiles.length > 0 && (
@@ -2084,6 +2311,31 @@ export default function ChatPage() {
             <RefreshCw size={12} />
             <span>Refresh</span>
           </button>
+        </div>
+      )}
+
+      {workspace && currentSessionId && (
+        <div className="border-t border-th-border px-6 py-2 shrink-0 bg-th-inset-bg/90">
+          <div className="flex items-center gap-2 py-1">
+            <button
+              onClick={() => setShowWorkspaceTree(!showWorkspaceTree)}
+              className="flex items-center gap-2 text-xs text-th-text-tertiary hover:text-th-text-primary transition-colors flex-1"
+            >
+              {showWorkspaceTree ? <ChevronUp size={12} /> : <ChevronRight size={12} />}
+              <Folder size={13} className="text-sky-400" />
+              <span className="font-medium text-th-text-primary truncate">{workspace.name}</span>
+              <span className="text-th-text-muted truncate max-w-[240px]">{workspace.host_path}</span>
+            </button>
+          </div>
+          {showWorkspaceTree && (
+            <div className="mt-1.5 mb-1 max-h-48 overflow-y-auto">
+              <WorkspaceTree
+                sessionId={currentSessionId}
+                fileUrl={(rel) => api.getWorkspaceFileUrl(currentSessionId, rel)}
+                onOpenFile={(rel, url, type) => handleOpenArtifact(`${workspace.virtual_path}/${rel}`, url, type)}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -2143,6 +2395,21 @@ export default function ChatPage() {
           className="hidden"
           onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }}
         />
+        <input
+          ref={folderInputRef}
+          type="file"
+          className="hidden"
+          // @ts-expect-error webkitdirectory is a non-standard attribute
+          webkitdirectory=""
+          directory=""
+          onChange={(e) => {
+            if (!e.target.files?.length) return;
+            const dir = folderFromFileList(e.target.files);
+            e.target.value = "";
+            if (dir) mapWorkspace(dir);
+            else setWorkspaceError("Drop a folder onto the window to map it (this picker needs a desktop path).");
+          }}
+        />
         {(pendingFiles.length > 0 || pendingFilePaths.length > 0 || pendingFolders.length > 0) && (
           <div className="flex flex-wrap gap-2 mb-3 max-w-4xl mx-auto">
             {pendingFiles.map((f, i) => (
@@ -2173,6 +2440,14 @@ export default function ChatPage() {
                 <div key={`folder-${name}-${i}`} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-400" title={name}>
                   <Folder size={12} className="shrink-0" />
                   <span className="truncate max-w-[150px] font-medium">{basename}</span>
+                  <button
+                    type="button"
+                    onClick={() => mapWorkspace(name)}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 hover:bg-sky-500/30"
+                    title="Map as project workspace"
+                  >
+                    Map
+                  </button>
                   <button onClick={() => removeFolder(i)} className="text-blue-400/60 hover:text-blue-300 transition-colors ml-0.5">
                     <X size={11} />
                   </button>
@@ -2180,6 +2455,9 @@ export default function ChatPage() {
               );
             })}
           </div>
+        )}
+        {workspaceError && (
+          <p className="max-w-4xl mx-auto mb-2 text-xs text-red-400">{workspaceError}</p>
         )}
         {/* Context-injection nudge — slides in/out while agent is running */}
         {isStreaming && (
@@ -2244,13 +2522,17 @@ export default function ChatPage() {
               {atItems.map((item, i) => {
                 // Section headers: once right before the first item of each
                 // group (pending attachments always come first, see atEntries).
-                const showHeader = i === 0 || item.pending !== atItems[i - 1].pending;
+                const showHeader = i === 0 || item.group !== atItems[i - 1].group;
                 return (
-                  <div key={`${item.pending ? "pending" : "run"}:${item.path}:${i}`}>
+                  <div key={`${item.group}:${item.path}:${i}`}>
                     {showHeader && (
                       <div className="px-3 py-2 border-b border-th-border">
                         <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">
-                          {item.pending ? "Attached (not sent yet)" : "Files in this run"}
+                          {item.group === "pending"
+                            ? "Attached (not sent yet)"
+                            : item.group === "workspace"
+                              ? "Project"
+                              : "Files in this run"}
                         </span>
                       </div>
                     )}
@@ -2302,6 +2584,7 @@ export default function ChatPage() {
             onKeyDown={handleKeyDown}
             onPasteFiles={(files) => { addFiles(files); return true; }}
             onPastePaths={(paths) => { addDroppedPaths(paths); return true; }}
+            onPasteMaybeFolder={(files) => { void tryNativeClipboardPaste(files); }}
             onMentionChange={(query) => {
               if (query === null) { setAtOpen(false); return; }
               setAtOpen(true);

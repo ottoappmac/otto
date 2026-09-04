@@ -63,6 +63,7 @@ from backend.routes.ambient import router as ambient_router
 from backend.routes.voice import router as voice_router, ws_router as voice_ws_router
 from backend.routes.runs import router as runs_router
 from backend.routes.capture import router as capture_router
+from backend.routes.clipboard import router as clipboard_router
 from backend.routes.video import router as video_router
 from backend.routes.video_ws import ws_router as video_ws_router
 from backend.activity_tracker import tracker as activity_tracker
@@ -741,6 +742,7 @@ app.include_router(voice_router)
 app.include_router(voice_ws_router)
 app.include_router(runs_router)
 app.include_router(capture_router)
+app.include_router(clipboard_router)
 app.include_router(video_router)
 app.include_router(video_ws_router)
 
