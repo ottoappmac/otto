@@ -287,12 +287,15 @@ def _make_progress_tqdm(job_id: str):
     """Custom ``tqdm`` subclass that pipes progress into ``_jobs[job_id]``.
 
     In ``huggingface_hub`` 1.x, ``snapshot_download`` instantiates the
-    custom ``tqdm_class`` exactly twice:
+    custom ``tqdm_class`` at least twice:
 
     1. The shared **bytes** progress bar (``desc="Downloading (incomplete
-       total...)"``).  Its ``total`` grows as each file's metadata is
-       fetched and its ``n`` increments as bytes land on disk.  This is
-       the source of truth for ``bytes_done`` / ``bytes_total``.
+       total...)"``, ``unit="B"``).  Its ``total`` grows as each file's
+       metadata is fetched and its ``n`` increments as bytes land on
+       disk.  This is the source of truth for ``bytes_done`` /
+       ``bytes_total``.  huggingface_hub ≥ 1.25 may also emit extra Xet
+       transfer/reconstruction bars with ``unit="B"``; those overwrite
+       the same counters and are harmless.
     2. The outer ``thread_map`` **files** bar (``desc="Fetching N files"``).
        Counts files completed.
 
@@ -316,7 +319,16 @@ def _make_progress_tqdm(job_id: str):
             kwargs.pop("name", None)
             self._desc_low = str(kwargs.get("desc", "") or "").lower()
             self._is_files_bar = self._desc_low.startswith("fetching")
-            self._is_bytes_bar = "downloading" in self._desc_low or kwargs.get("unit") == "B"
+            # huggingface_hub ≥ 1.25 may add extra Xet transfer /
+            # reconstruction bars alongside the shared bytes bar. Any
+            # bar with unit "B" is a bytes source of truth; unknown
+            # bars are ignored by ``_publish``.
+            unit = str(kwargs.get("unit") or "")
+            self._is_bytes_bar = (
+                unit == "B"
+                or "downloading" in self._desc_low
+                or "transfer" in self._desc_low
+            )
             super().__init__(*args, **kwargs)
             self._job_id = job_id
 

@@ -423,6 +423,38 @@ async def _save_messages_async(session_id: str, messages: list[dict[str, Any]]) 
     await asyncio.to_thread(_save_messages, session_id, messages)
 
 
+_INTERRUPT_MSG_TYPES = ("hitl_request", "ask_user")
+
+
+def mark_last_interrupt_resolved(
+    session_id: str,
+    decisions: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Stamp ``resolved`` on the most recent HITL/ask_user transcript entry.
+
+    The flag lives only in the client unless we persist it here; the 2s
+    streaming poll then treats the interrupt as still pending and, with
+    Always-allow, re-sends ``hitl_response`` — which used to cancel the
+    in-flight execute.  Idempotent: already-resolved interrupts are left
+    alone.  Returns True when a row was updated.
+    """
+    messages = load_messages(session_id)
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg.get("type") not in _INTERRUPT_MSG_TYPES:
+            continue
+        meta = dict(msg.get("metadata") or {})
+        if meta.get("resolved"):
+            return False
+        meta["resolved"] = True
+        if decisions is not None:
+            meta["decisions"] = decisions
+        messages[i] = {**msg, "metadata": meta}
+        _save_messages(session_id, messages)
+        return True
+    return False
+
+
 def _stream_chunk_text(content: Any) -> str:
     """Extract raw text from a streamed ``AIMessageChunk.content``.
 

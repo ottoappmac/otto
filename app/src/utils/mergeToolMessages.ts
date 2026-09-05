@@ -61,3 +61,50 @@ export function mergeToolMessages(messages: ChatMessage[]): ChatMessage[] {
   }
   return merged;
 }
+
+function isInterrupt(m: ChatMessage): boolean {
+  return m.type === "hitl_request" || m.type === "ask_user";
+}
+
+/**
+ * Keep client-side HITL/ask_user ``resolved`` when the API transcript has
+ * not caught up yet (no tool_result, or the backend stamp is still in
+ * flight).  Without this, the 2s streaming poll re-opens the approval
+ * card and Always-allow re-sends ``hitl_response``, cancelling the
+ * in-flight execute.
+ */
+export function preserveHitlResolved(
+  apiMerged: ChatMessage[],
+  prev: ChatMessage[],
+): ChatMessage[] {
+  return apiMerged.map((m, i) => {
+    if (!isInterrupt(m) || m.metadata?.resolved) return m;
+    const local = matchingLocalInterrupt(prev, m, i);
+    if (!local?.metadata?.resolved) return m;
+    return {
+      ...m,
+      metadata: {
+        ...m.metadata,
+        resolved: true,
+        decisions: local.metadata.decisions ?? m.metadata?.decisions,
+      },
+    };
+  });
+}
+
+function matchingLocalInterrupt(
+  prev: ChatMessage[],
+  apiMsg: ChatMessage,
+  index: number,
+): ChatMessage | undefined {
+  const atIndex = prev[index];
+  if (atIndex && atIndex.type === apiMsg.type && atIndex.content === apiMsg.content) {
+    return atIndex;
+  }
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const p = prev[i];
+    if (p.type === apiMsg.type && p.content === apiMsg.content) return p;
+  }
+  return undefined;
+}
+

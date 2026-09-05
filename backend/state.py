@@ -14,6 +14,12 @@ running_tasks: dict[str, asyncio.Task] = {}
 message_queues: dict[str, asyncio.Queue] = {}
 context_queues: dict[str, asyncio.Queue] = {}
 
+# Session ids whose HITL resume has been accepted and is still running.
+# Duplicate ``hitl_response`` messages (Always-allow + the 2s message poll
+# wiping client-side ``resolved``) must not cancel that task — doing so
+# SIGTERMs the in-flight ``execute`` and restarts it in a loop.
+hitl_resume_inflight: set[str] = set()
+
 # Session ids the user has asked to stop.  Long-running, non-cancellable
 # work (e.g. the macOS desktop agent, which blocks in ``asyncio.to_thread``
 # wrapping pyautogui / Accessibility / osascript calls that cannot be

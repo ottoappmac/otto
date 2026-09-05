@@ -21,10 +21,12 @@ from backend.session_manager import (
     _read_workspace_meta,
     _session_files_dir,
     _sessions_dir,
+    mark_last_interrupt_resolved,
 )
 from backend.utils import is_resolved_path_allowed
 from backend.state import (
     context_queues,
+    hitl_resume_inflight,
     message_queues,
     running_tasks,
     session_mgr,
@@ -354,6 +356,7 @@ async def api_stop_session(session_id: str):
     # particular) sees the request at its next step boundary and unwinds
     # cooperatively rather than running to completion.
     stop_requested.add(session_id)
+    hitl_resume_inflight.discard(session_id)
 
     task = running_tasks.pop(session_id, None)
     if task and not task.done():
@@ -395,6 +398,7 @@ async def api_delete_session(session_id: str):
     schedule_id = getattr(session, "schedule_id", None) if session else None
 
     stop_requested.add(session_id)
+    hitl_resume_inflight.discard(session_id)
     task = running_tasks.pop(session_id, None)
     if task and not task.done():
         task.cancel()
@@ -446,6 +450,7 @@ async def api_delete_all_sessions():
     deleted = 0
     for sid in all_ids:
         stop_requested.add(sid)
+        hitl_resume_inflight.discard(sid)
         task = running_tasks.pop(sid, None)
         if task and not task.done():
             task.cancel()
@@ -987,6 +992,7 @@ async def _run_agent_stream_loop(
         if not sent_terminal and not was_cancelled and not has_pending_context:
             await queue.put({"type": "done", "content": ""})
         running_tasks.pop(session_id, None)
+        hitl_resume_inflight.discard(session_id)
 
     # Drain any context the user injected while the agent was running.
     # Merge all queued messages into a single turn to avoid rapid-fire sessions.
@@ -1033,6 +1039,23 @@ async def _run_agent_edit(
     await _run_agent_stream_loop(
         session_id, session_mgr.stream_edit(session_id, message_index, new_content), queue, "Agent edit",
     )
+
+
+def _hitl_resume_action(*, running: bool, resume_inflight: bool) -> str:
+    """How to handle an incoming ``hitl_response``.
+
+    ``ignore`` — a resume is already executing this interrupt; a duplicate
+    decision must not cancel it.  Requires both *running* and
+    *resume_inflight* so a leaked flag cannot block the next real approval.
+    ``wait_then_start`` — the current stream has emitted the interrupt but
+    has not finished cleanup; wait for it instead of cancelling, then resume.
+    ``start`` — nothing in flight; start the resume immediately.
+    """
+    if resume_inflight and running:
+        return "ignore"
+    if running:
+        return "wait_then_start"
+    return "start"
 
 
 async def _run_agent_resume(
@@ -1118,6 +1141,41 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         # Do not cancel the running task or create a new one.
                         continue
 
+                    if msg_type == "hitl_response":
+                        decisions = msg.get("decisions", [])
+                        await asyncio.to_thread(
+                            mark_last_interrupt_resolved, session_id, decisions,
+                        )
+                        prev_task = running_tasks.get(session_id)
+                        running = bool(prev_task and not prev_task.done())
+                        action = _hitl_resume_action(
+                            running=running,
+                            resume_inflight=session_id in hitl_resume_inflight,
+                        )
+                        if action == "ignore":
+                            logger.info(
+                                "Ignoring duplicate hitl_response for session %s "
+                                "(resume already in flight)",
+                                session_id,
+                            )
+                            continue
+                        if action == "wait_then_start" and prev_task is not None:
+                            # Stream just yielded the interrupt; let it finish
+                            # cleanly rather than cancelling (which used to
+                            # SIGTERM a just-started execute on the next tick).
+                            try:
+                                await prev_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                            if session_id in stop_requested:
+                                continue
+                        hitl_resume_inflight.add(session_id)
+                        agent_task = asyncio.create_task(
+                            _run_agent_resume(session_id, decisions, queue)
+                        )
+                        running_tasks[session_id] = agent_task
+                        continue
+
                     prev_task = running_tasks.get(session_id)
                     if prev_task and not prev_task.done():
                         prev_task.cancel()
@@ -1132,14 +1190,6 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                                 session_id,
                                 msg["message_index"],
                                 msg["content"],
-                                queue,
-                            )
-                        )
-                    elif msg_type == "hitl_response":
-                        agent_task = asyncio.create_task(
-                            _run_agent_resume(
-                                session_id,
-                                msg.get("decisions", []),
                                 queue,
                             )
                         )
