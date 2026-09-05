@@ -18,7 +18,7 @@ import WorkspaceTree from "../components/chat/WorkspaceTree";
 import { ChangedFilesStrip, collectChangedFiles, filePathFromToolArgs } from "../components/chat/ChangedFilesStrip";
 import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
 import { formatFileSize } from "../utils/formatFileSize";
-import { mergeToolMessages } from "../utils/mergeToolMessages";
+import { mergeToolMessages, preserveHitlResolved } from "../utils/mergeToolMessages";
 import { familyChipClasses } from "../utils/subagentModelChip";
 import { screenHighRiskCommand } from "../utils/highRiskCommands";
 import { useNotification } from "../context/NotificationContext";
@@ -81,6 +81,10 @@ function preserveImages(apiMerged: ChatMessage[], prev: ChatMessage[]): ChatMess
     }
     return m;
   });
+}
+
+function reconcileApiMessages(apiMerged: ChatMessage[], prev: ChatMessage[]): ChatMessage[] {
+  return preserveHitlResolved(preserveImages(apiMerged, prev), prev);
 }
 
 export default function ChatPage() {
@@ -272,6 +276,7 @@ export default function ChatPage() {
   const msgIdRef = useRef(0);
   const pendingMemoryTopicsRef = useRef<string[] | null>(null);
   const sendingRef = useRef(false);
+  const hitlSubmittedRef = useRef<Set<string>>(new Set());
   const justCreatedRef = useRef(false);
   const sessionIdRef = useRef(currentSessionId);
   sessionIdRef.current = currentSessionId;
@@ -363,7 +368,7 @@ export default function ChatPage() {
                 lastApi?.type === lastLocal?.type
               ) return prev;
             }
-            return preserveImages(apiMerged, prev).map((m, i) => i < prev.length ? { ...m, id: prev[i].id } : m);
+            return reconcileApiMessages(apiMerged, prev).map((m, i) => i < prev.length ? { ...m, id: prev[i].id } : m);
           });
           if (!status.running) setIsStreaming(false);
         }).catch(() => {});
@@ -1010,17 +1015,17 @@ export default function ChatPage() {
         // local state but the API response doesn't include the hitl_request
         // yet, preserve the local pending interrupt instead of wiping it.
         setMessages((prev) => {
-          const withImages = preserveImages(apiMerged, prev);
-          const apiHasPendingHitl = withImages.some(
+          const withLocal = reconcileApiMessages(apiMerged, prev);
+          const apiHasPendingHitl = withLocal.some(
             (m) => (m.type === "hitl_request" || m.type === "ask_user") && !m.metadata?.resolved,
           );
           if (!apiHasPendingHitl) {
             const localPending = prev.filter(
               (m) => (m.type === "hitl_request" || m.type === "ask_user") && !m.metadata?.resolved,
             );
-            if (localPending.length > 0) return [...withImages, ...localPending];
+            if (localPending.length > 0) return [...withLocal, ...localPending];
           }
-          return withImages;
+          return withLocal;
         });
         if (!status.running && !sendingRef.current) setIsStreaming(false);
       }).catch(() => {
@@ -1084,8 +1089,9 @@ export default function ChatPage() {
             // arrived via WS before it was persisted) apply the API state.
             // Reuse existing IDs by position so components don't remount.
             if (apiMerged.length < prev.length) return prev;
-            if (apiMerged.length === prev.length) {
-              const lastApi = apiMerged[apiMerged.length - 1];
+            const merged = reconcileApiMessages(apiMerged, prev);
+            if (merged.length === prev.length) {
+              const lastApi = merged[merged.length - 1];
               const lastLocal = prev[prev.length - 1];
               if (
                 lastApi?.content === lastLocal?.content &&
@@ -1093,7 +1099,7 @@ export default function ChatPage() {
                 JSON.stringify(lastApi?.metadata) === JSON.stringify(lastLocal?.metadata)
               ) return prev;
             }
-            return preserveImages(apiMerged, prev).map((m, i) =>
+            return merged.map((m, i) =>
               i < prev.length ? { ...m, id: prev[i].id } : m,
             );
           });
@@ -1152,6 +1158,7 @@ export default function ChatPage() {
   useEffect(() => { if (input.trim()) setShowContextHint(false); }, [input]);
 
   const handleHitlDecision = useCallback((messageId: string, decisions: Array<Record<string, unknown>>) => {
+    if (hitlSubmittedRef.current.has(messageId)) return;
     if (!sendHitlResponse(decisions)) {
       setMessages((prev) => [
         ...prev,
@@ -1159,6 +1166,7 @@ export default function ChatPage() {
       ]);
       return;
     }
+    hitlSubmittedRef.current.add(messageId);
     if (currentSessionId) { clearSession(currentSessionId); watchSession(currentSessionId); }
     setMessages((prev) => prev.map((m) =>
       m.id === messageId
@@ -1172,7 +1180,10 @@ export default function ChatPage() {
   // automatically reset whenever the user opens a different session, so
   // every new session starts by requiring approval again.
   const [sessionAutoApprove, setSessionAutoApprove] = useState(false);
-  useEffect(() => { setSessionAutoApprove(false); }, [currentSessionId]);
+  useEffect(() => {
+    setSessionAutoApprove(false);
+    hitlSubmittedRef.current = new Set();
+  }, [currentSessionId]);
 
   const handleApproveAllSession = useCallback((messageId: string, decisions: Array<Record<string, unknown>>) => {
     handleHitlDecision(messageId, decisions);
@@ -1189,6 +1200,7 @@ export default function ChatPage() {
       (m) => m.type === "hitl_request" && !m.metadata?.resolved,
     );
     if (!unresolved) return;
+    if (hitlSubmittedRef.current.has(unresolved.id)) return;
     const actions = (unresolved.metadata?.action_requests as Array<{ name: string; args: Record<string, unknown> }> | undefined) ?? [];
     const hasHighRisk = actions.some((a) => screenHighRiskCommand(a.args?.command).length > 0);
     if (hasHighRisk) return;
