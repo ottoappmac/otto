@@ -42,11 +42,14 @@ dependencies = [
     "deepagents>=0.4.5",
 
     # MLX local inference (Apple Silicon)
-    "mlx>=0.31.1",
+    "mlx>=0.32.2",
     "mlx-lm>=0.31.2",
-    "mlx-vlm>=0.4.4",
+    # 0.6+ requires transformers>=5.14, which breaks mlx-lm's
+    # AutoTokenizer.register("NewlineTokenizer", ...) string-key call.
+    "mlx-vlm>=0.4.4,<0.5",
     "transformers>=5.0.0,<5.13.0",  # 5.13.0 broke mlx-lm's AutoTokenizer.register("NewlineTokenizer", ...) string-key call
-    "huggingface-hub>=1.3.0",
+    # 1.16.3+ requires click>=8.4, which conflicts with deepeval 3.x (click<8.4).
+    "huggingface-hub>=1.16.1,<1.16.3",
     # Optional accelerator for non-Xet repos.  Used in
     # ``backend/routes/mlx.py`` via ``HF_HUB_ENABLE_HF_TRANSFER=1`` for a
     # single download call; the worker retries without it on failure
@@ -80,7 +83,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.0",
 
     # Token splitters
-    "tiktoken>=0.12.0",
+    "tiktoken>=0.14.0",
 
     # Observability
     "traceloop-sdk>=0.33.0",
@@ -110,8 +113,9 @@ dependencies = [
 
     # Semantic search (sqlite-vec + MLX embeddings — Apple Silicon only at runtime)
     "sqlite-vec>=0.1.0",
-    # Evaluation
-    "deepeval>=2.0.0",
+    # Evaluation — stay on 3.x. 4.x pins click<8.4 and a 2.x backtrack
+    # pulls LlamaIndex + instructor into the lock (and the freeze).
+    "deepeval>=3.9.8,<4",
 
     # Remote transcript access (OpenClaw SSH)
     "asyncssh>=2.17.0",
@@ -143,8 +147,12 @@ dependencies = [
     # build in CI. These floors keep the resolver on 3.12-compatible wheels.
     "numba>=0.61",
     "llvmlite>=0.44",
+    # Keep numpy on 2.4.x: 2.5+ is fine for latest numba, but an
+    # unconstrained resolve historically backtracked numba to 0.53 /
+    # llvmlite 0.36 (no cp312 wheels). 2.4.6 is the last 2.4 patch.
+    "numpy>=2.4.6,<2.5",
     "openwakeword>=0.6.0",
-    "onnxruntime>=1.17.0",
+    "onnxruntime>=1.29.0",
     "sounddevice>=0.5.0",
 
     # Video understanding
