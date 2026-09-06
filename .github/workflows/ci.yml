@@ -59,7 +59,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install minimal test deps
-        run: pip install pytest pytest-asyncio httpx "mcp>=1.0.0" langchain-core
+        run: pip install pytest pytest-asyncio httpx "mcp>=1.0.0,<2" langchain-core
       - name: Run built-in MCP helper tests
         run: |
           pytest -v -m "not live" \
