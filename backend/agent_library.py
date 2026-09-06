@@ -2620,7 +2620,7 @@ does all three in one call.
   distribution names (``slack-sdk``) via the ``IMPORT_TO_PYPI`` map
   in ``backend/mcp_builder.py`` — extend that map if you need an
   unmapped vendor SDK.
-- ``mcp>=1.0.0`` is added automatically; you don't need to list it.
+- ``mcp>=1.0.0,<2`` is added automatically; you don't need to list it.
 - ``httpx`` is preferred over vendor SDKs when the operation is
   trivial — fewer transitive deps means a smaller ``.venv``.
 - The host MUST have ``uv`` installed.  Generation fails fast with

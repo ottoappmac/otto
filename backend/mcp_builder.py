@@ -580,11 +580,14 @@ if __name__ == "__main__":
 def render_requirements_txt(spec: MCPSpec) -> str:
     """Build a requirements.txt from ``spec.allowed_imports``.
 
-    ``mcp`` is always pinned because every generated server imports
-    ``mcp.server.fastmcp``.  Additional entries map import-names to
-    PyPI distribution names via :data:`IMPORT_TO_PYPI`.
+    ``mcp`` is always pinned below 2.x because every generated server
+    imports ``mcp.server.fastmcp`` (removed in mcp 2) and the backend
+    client still uses ``langchain-mcp-adapters``, which imports
+    ``RequestContext`` from ``mcp.shared.context``.  Additional entries
+    map import-names to PyPI distribution names via
+    :data:`IMPORT_TO_PYPI`.
     """
-    pkgs = {"mcp>=1.0.0"}
+    pkgs = {"mcp>=1.0.0,<2"}
     for imp in spec.allowed_imports or []:
         pkgs.add(import_to_pypi(imp))
     return "\n".join(sorted(pkgs)) + "\n"
@@ -960,7 +963,7 @@ async def generate_mcp_server(spec: MCPSpec) -> dict[str, Any]:
           "server_path": "/.../mcp_server/stripe/server.py",
           "client_path": "/.../mcp_server/stripe/client.py",
           "venv_python": "/.../mcp_server/stripe/.venv/bin/python",
-          "requirements": ["mcp>=1.0.0", "stripe"],
+          "requirements": ["mcp>=1.0.0,<2", "stripe"],
           "required_secrets": ["STRIPE_SECRET_KEY"],
           "missing_secrets": ["STRIPE_SECRET_KEY"],
           "registered": true,

@@ -50,8 +50,9 @@ aiohttp>=3.9.0
 # Image processing
 Pillow>=10.0.0
 
-# MCP server for Claude Desktop
-mcp>=1.0.0
+# MCP.  2.x removed RequestContext from mcp.shared.context; langchain-mcp-adapters
+# 0.2.x still imports it, so an unfrozen install of mcp 2 breaks Playwright MCP.
+mcp>=1.0.0,<2
 langchain-mcp-adapters>=0.1.0
 
 # Token splitters
