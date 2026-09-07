@@ -820,6 +820,14 @@ export const api = {
     const qs = sp.toString();
     return request<RunsResponse>(`/api/runs${qs ? `?${qs}` : ""}`);
   },
+  clearAllRuns: () =>
+    request<{
+      status: string;
+      count: number;
+      sessions: number;
+      schedule_runs: number;
+      trigger_runs: number;
+    }>("/api/runs", { method: "DELETE" }),
   getRunStats: (
     period: "24h" | "7d" | "30d" | "all" | "custom" = "7d",
     dateFrom?: string,

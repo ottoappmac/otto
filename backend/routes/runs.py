@@ -423,6 +423,34 @@ async def api_list_runs(
     return {"total": total, "offset": offset, "limit": limit, "runs": page}
 
 
+@router.delete("")
+async def api_delete_all_runs():
+    """Delete every session and every schedule/trigger run record.
+
+    The Runs page lists sessions *and* leftover schedule/trigger ``run.json``
+    files. Clearing only ``/api/sessions`` leaves those records behind, so
+    they reappear on the next poll as orphan "Schedule run" / "Trigger run"
+    rows. This endpoint wipes all three sources. Schedule and trigger
+    *specs* (the jobs themselves) are left intact.
+    """
+    from backend.routes.sessions import delete_all_sessions_and_runtime
+    from backend.scheduler import delete_all_run_histories as delete_schedule_run_histories
+    from backend.trigger_manager import delete_all_run_histories as delete_trigger_run_histories
+
+    session_count = await delete_all_sessions_and_runtime()
+    sched_count, trig_count = await asyncio.gather(
+        asyncio.to_thread(delete_schedule_run_histories),
+        asyncio.to_thread(delete_trigger_run_histories),
+    )
+    return {
+        "status": "deleted",
+        "count": session_count + sched_count + trig_count,
+        "sessions": session_count,
+        "schedule_runs": sched_count,
+        "trigger_runs": trig_count,
+    }
+
+
 @router.get("/{session_id}/evaluation")
 async def api_get_run_evaluation(session_id: str):
     """Return the persisted end-of-run evaluation for a session."""
