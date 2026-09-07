@@ -352,6 +352,29 @@ def _prune_old_runs(schedule_id: str, keep_last_n: int) -> None:
         shutil.rmtree(old_run, ignore_errors=True)
 
 
+def delete_all_run_histories() -> int:
+    """Remove every schedule's ``runs/`` and ``latest/`` dirs.
+
+    Leaves schedule specs and attachments in place. Returns the number of
+    run directories removed.
+    """
+    root = _schedules_dir()
+    if not root.exists():
+        return 0
+    removed = 0
+    for sched_dir in root.iterdir():
+        if not sched_dir.is_dir():
+            continue
+        runs = sched_dir / "runs"
+        if runs.is_dir():
+            removed += sum(1 for p in runs.iterdir() if p.is_dir())
+            shutil.rmtree(runs, ignore_errors=True)
+        latest = sched_dir / "latest"
+        if latest.exists():
+            shutil.rmtree(latest, ignore_errors=True)
+    return removed
+
+
 def _sync_latest(schedule_id: str, run_dir: Path) -> None:
     """Copy run output files to the schedule's ``latest/`` directory."""
     latest = schedule_dir(schedule_id) / "latest"

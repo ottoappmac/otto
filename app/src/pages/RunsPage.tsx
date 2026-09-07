@@ -180,6 +180,8 @@ export default function RunsPage() {
   const [localSearch, setLocalSearch] = useState(() => search || loadFilters()["search"] || "");
   const [clearingAll, setClearingAll] = useState(false);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
+  // Bumped on delete-all so an in-flight poll cannot restore the old list.
+  const fetchGen = useRef(0);
 
   const [density, setDensity] = useState<Density>(
     () => (localStorage.getItem(DENSITY_KEY) === "compact" ? "compact" : "comfortable"),
@@ -230,6 +232,7 @@ export default function RunsPage() {
   };
 
   const fetchRuns = useCallback(async () => {
+    const gen = fetchGen.current;
     try {
       const data = await api.listRuns({
         search: search || undefined,
@@ -242,12 +245,13 @@ export default function RunsPage() {
         limit: pageSize,
         offset: (page - 1) * pageSize,
       });
+      if (gen !== fetchGen.current) return;
       setRuns(data.runs);
       setTotal(data.total);
     } catch (e) {
       console.warn("[RunsPage] fetch failed:", e);
     } finally {
-      setLoading(false);
+      if (gen === fetchGen.current) setLoading(false);
     }
   }, [search, status, source, dateFrom, dateTo, sortKey, sortDir, page, pageSize]);
 
@@ -256,11 +260,12 @@ export default function RunsPage() {
     fetchRuns();
   }, [fetchRuns]);
 
-  usePolling(fetchRuns, POLL_MS);
+  usePolling(fetchRuns, POLL_MS, !clearingAll);
 
   // Fetch aggregate stats only while the stats strip is open; refresh on filter change.
   const fetchStats = useCallback(async () => {
     if (!statsOpen) return;
+    const gen = fetchGen.current;
     try {
       const period = dateFrom || dateTo ? "custom" : "all";
       const data = await api.getRunStats(
@@ -271,11 +276,12 @@ export default function RunsPage() {
         status || undefined,
         source || undefined,
       );
+      if (gen !== fetchGen.current) return;
       setStats(data);
     } catch (e) {
       console.warn("[RunsPage] stats fetch failed:", e);
     } finally {
-      setStatsLoading(false);
+      if (gen === fetchGen.current) setStatsLoading(false);
     }
   }, [statsOpen, dateFrom, dateTo, search, status, source]);
 
@@ -285,7 +291,7 @@ export default function RunsPage() {
     fetchStats();
   }, [statsOpen, fetchStats]);
 
-  usePolling(fetchStats, POLL_MS);
+  usePolling(fetchStats, POLL_MS, !clearingAll);
 
   // Keep the search box in sync when the URL param changes externally
   // (e.g. after filter restore on mount, or when "Clear all filters" fires).
@@ -334,10 +340,12 @@ export default function RunsPage() {
     }
     setClearingAll(true);
     setConfirmClearAll(false);
+    fetchGen.current += 1;
     try {
-      await api.clearAllSessions();
+      await api.clearAllRuns();
       setRuns([]);
       setTotal(0);
+      setStats(null);
     } catch (e) {
       console.warn("[RunsPage] clear all failed:", e);
     } finally {

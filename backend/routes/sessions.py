@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from backend.config import AppConfig
 from backend.schemas import SessionCreateRequest
 from backend.session_manager import (
+    _UUID_RE,
     _append_message_async,
     _load_messages_async,
     _read_workspace_meta,
@@ -392,87 +393,86 @@ async def api_stop_session(session_id: str):
     return {"status": "stopped"}
 
 
-@router.delete("/{session_id}")
-async def api_delete_session(session_id: str):
-    session = session_mgr.get_session(session_id)
-    schedule_id = getattr(session, "schedule_id", None) if session else None
+async def _cancel_tasks(tasks: list[asyncio.Task]) -> None:
+    live = [t for t in tasks if t and not t.done()]
+    for t in live:
+        t.cancel()
+    if live:
+        await asyncio.gather(*live, return_exceptions=True)
 
+
+async def _cancel_session_runtime(session_id: str, *, schedule_id: str | None = None) -> None:
+    """Stop in-flight work for *session_id* so its files can be deleted."""
     stop_requested.add(session_id)
     hitl_resume_inflight.discard(session_id)
-    task = running_tasks.pop(session_id, None)
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
-
-    for sub_task in list(subagent_tasks.get(session_id, ())):
-        if not sub_task.done():
-            sub_task.cancel()
-    orphans = [t for t in subagent_tasks.get(session_id, ()) if not t.done()]
-    if orphans:
-        await asyncio.gather(*orphans, return_exceptions=True)
-    subagent_tasks.pop(session_id, None)
-
+    await _cancel_tasks([t for t in (running_tasks.pop(session_id, None),) if t is not None])
+    await _cancel_tasks(list(subagent_tasks.pop(session_id, ())))
     if schedule_id:
         from backend.scheduler import _running_schedule_tasks
-        sched_task = _running_schedule_tasks.get(schedule_id)
-        if sched_task and not sched_task.done():
-            sched_task.cancel()
-            try:
-                await sched_task
-            except (asyncio.CancelledError, Exception):
-                pass
-
+        await _cancel_tasks([
+            t for t in (_running_schedule_tasks.get(schedule_id),) if t is not None
+        ])
     message_queues.pop(session_id, None)
     stop_requested.discard(session_id)
-    await session_mgr.delete_session(session_id)
-    return {"status": "deleted"}
 
 
-@router.delete("")
-async def api_delete_all_sessions():
-    """Delete every session (history clear-all)."""
-    # Collect IDs from in-memory active sessions first, then scan the
-    # sessions directory so we catch persisted sessions that exceed the
-    # paginated list_history cap.
+async def _cancel_all_background_run_tasks() -> None:
+    """Cancel every in-flight schedule and trigger run.
+
+    Required for clear-all: otherwise a still-running job rewrites session
+    meta / ``run.json`` after we delete them and the Runs list comes back.
+    """
+    from backend.scheduler import _running_schedule_tasks
+    from backend.trigger_manager import _running_trigger_tasks
+    pending: list[asyncio.Task] = []
+    for mapping in (_running_schedule_tasks, _running_trigger_tasks):
+        pending.extend(t for t in list(mapping.values()) if t is not None)
+    await _cancel_tasks(pending)
+
+
+def _collect_session_ids() -> list[str]:
+    """Active sessions plus every UUID meta file on disk."""
     all_ids: list[str] = [s.id for s in session_mgr.list_active()]
     seen: set[str] = set(all_ids)
     for p in _sessions_dir().glob("*.json"):
         if p.name.endswith((".messages.json", ".eval.json")):
             continue
         sid = p.stem
-        if sid not in seen:
-            all_ids.append(sid)
-            seen.add(sid)
+        if sid in seen or not _UUID_RE.match(sid):
+            continue
+        all_ids.append(sid)
+        seen.add(sid)
+    return all_ids
 
+
+async def delete_all_sessions_and_runtime() -> int:
+    """Cancel in-flight work and delete every session. Returns the deleted count."""
+    await _cancel_all_background_run_tasks()
     deleted = 0
-    for sid in all_ids:
-        stop_requested.add(sid)
-        hitl_resume_inflight.discard(sid)
-        task = running_tasks.pop(sid, None)
-        if task and not task.done():
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-        for sub_task in list(subagent_tasks.get(sid, ())):
-            if not sub_task.done():
-                sub_task.cancel()
-        orphans = [t for t in subagent_tasks.get(sid, ()) if not t.done()]
-        if orphans:
-            await asyncio.gather(*orphans, return_exceptions=True)
-        subagent_tasks.pop(sid, None)
-        message_queues.pop(sid, None)
-        stop_requested.discard(sid)
+    for sid in _collect_session_ids():
+        await _cancel_session_runtime(sid)
         try:
             await session_mgr.delete_session(sid)
             deleted += 1
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:
+            logger.warning("Failed to delete session %s", sid, exc_info=True)
+    return deleted
+
+
+@router.delete("")
+async def api_delete_all_sessions():
+    """Delete every session (history clear-all)."""
+    deleted = await delete_all_sessions_and_runtime()
     return {"status": "deleted", "count": deleted}
+
+
+@router.delete("/{session_id}")
+async def api_delete_session(session_id: str):
+    session = session_mgr.get_session(session_id)
+    schedule_id = getattr(session, "schedule_id", None) if session else None
+    await _cancel_session_runtime(session_id, schedule_id=schedule_id)
+    await session_mgr.delete_session(session_id)
+    return {"status": "deleted"}
 
 
 # Directory *names* pruned wherever they occur while walking a session's
