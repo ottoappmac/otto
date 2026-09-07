@@ -136,6 +136,12 @@ jobs:
           # on-disk bytes of the bundled .app.
         with:
           projectPath: app
+          # Skip Tauri's bundle_dmg.sh. That script drives Finder via
+          # AppleScript and regularly fails on GitHub-hosted macOS
+          # runners (hdiutil / diskimages-helper / AppleEvent -1712).
+          # The signed DMG is created later with create-dmg after we
+          # re-sign nested binaries inside OTTO.app.
+          args: --bundles app
 
       - name: Locate built .app and .dmg
         id: locate
@@ -414,22 +420,17 @@ jobs:
 
           xcrun stapler staple "$APP"
 
-          # 2. The .dmg Tauri produced contains the .app as it was
-          # *before* we re-signed the nested backend, so it's stale.
-          # Recreate it from the now-stapled .app and re-use the same
-          # filename so the release upload step finds it.
+          # 2. Recreate the DMG from the now-stapled .app. Tauri is told
+          # not to emit a DMG (--bundles app) because bundle_dmg.sh is
+          # flaky on GitHub runners, so we always write a versioned path.
           if [ -z "$DMG_DIR" ]; then
             DMG_DIR="$(dirname "$APP")/../dmg"
-            mkdir -p "$DMG_DIR"
           fi
-          DMG_PATH=$(find "$DMG_DIR" -maxdepth 1 -name "*.dmg" -print -quit 2>/dev/null)
-          if [ -n "$DMG_PATH" ]; then
-            echo "Replacing existing DMG: $DMG_PATH"
-            rm -f "$DMG_PATH"
-          else
-            DMG_PATH="$DMG_DIR/OTTO.dmg"
-            echo "No existing DMG found; will create: $DMG_PATH"
-          fi
+          mkdir -p "$DMG_DIR"
+          VERSION=$(jq -r '.version' app/src-tauri/tauri.conf.json)
+          DMG_PATH="$DMG_DIR/OTTO_${VERSION}_aarch64.dmg"
+          echo "Creating DMG: $DMG_PATH"
+          rm -f "$DMG_PATH"
 
           # Stage only the signed .app to avoid including the stale
           # Tauri-generated .app.tar.gz (unsigned) in the DMG.
