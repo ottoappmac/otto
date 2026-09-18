@@ -343,11 +343,21 @@ async def api_session_timeline(session_id: str):
 
 @router.get("/{session_id}/status")
 async def api_session_status(session_id: str):
-    active = session_mgr.get_session(session_id) is not None
+    session = session_mgr.get_session(session_id)
+    active = session is not None
     meta_path = _sessions_dir() / f"{session_id}.json"
     has_meta = await asyncio.to_thread(meta_path.exists)
     running = session_id in running_tasks and not running_tasks[session_id].done()
-    return {"active": active or has_meta, "running": running}
+    awaiting_input = False
+    if session is not None:
+        awaiting_input = session.status == "awaiting_input"
+    elif has_meta:
+        try:
+            meta = json.loads((await asyncio.to_thread(meta_path.read_text, encoding="utf-8")))
+            awaiting_input = meta.get("status") == "awaiting_input"
+        except Exception:
+            logger.debug("status meta read failed for %s", session_id, exc_info=True)
+    return {"active": active or has_meta, "running": running, "awaiting_input": awaiting_input}
 
 
 @router.post("/{session_id}/stop")

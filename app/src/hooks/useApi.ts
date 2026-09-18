@@ -870,7 +870,7 @@ export const api = {
   getSessionTimeline: (id: string) =>
     request<SessionTimeline>(`/api/sessions/${id}/timeline`),
   getSessionStatus: (id: string) =>
-    request<{ active: boolean; running: boolean }>(`/api/sessions/${id}/status`),
+    request<{ active: boolean; running: boolean; awaiting_input?: boolean }>(`/api/sessions/${id}/status`),
   stopSession: (id: string) =>
     request<{ status: string }>(`/api/sessions/${id}/stop`, { method: "POST" }),
   closeSession: (id: string) =>

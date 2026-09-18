@@ -108,3 +108,82 @@ function matchingLocalInterrupt(
   return undefined;
 }
 
+export function pendingInterrupts(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter((m) => isInterrupt(m) && !m.metadata?.resolved);
+}
+
+/**
+ * When the API transcript is shorter than local state (streaming thoughts
+ * not yet persisted, in-flight WS rows) the poll used to keep ``prev`` and
+ * drop a just-persisted HITL card.  Append any missing unresolved interrupt
+ * so approval buttons appear without a manual Refresh.
+ */
+export function appendMissingInterrupts(
+  prev: ChatMessage[],
+  apiMerged: ChatMessage[],
+): ChatMessage[] | null {
+  const apiHitl = pendingInterrupts(apiMerged);
+  if (apiHitl.length === 0) return null;
+  if (pendingInterrupts(prev).length > 0) return null;
+  return [...prev, ...apiHitl];
+}
+
+/** Tools that pause for HITL; an unmatched call means approval is likely incoming. */
+const APPROVAL_TOOLS = new Set(["execute", "ask_user", "request_credential"]);
+
+export function hasUnmatchedApprovalTool(messages: ChatMessage[]): boolean {
+  return messages.some((m) => m.type === "tool_call" && APPROVAL_TOOLS.has(m.content));
+}
+
+/**
+ * Intermediate agent bubbles are "thoughts" when a later agent reply, tool
+ * row, or approval card follows.  ``tool_result`` must count — live WS uses
+ * ``tool_call`` until the result arrives, then the same row becomes
+ * ``tool_result``.
+ */
+export function computeThoughtFlags(messages: ChatMessage[]): boolean[] {
+  const flags = new Array<boolean>(messages.length).fill(false);
+  let hasFollowUp = false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type === "agent" && !m.metadata?.subagent) {
+      flags[i] = hasFollowUp;
+      hasFollowUp = true;
+    } else if (
+      m.type === "tool_call"
+      || m.type === "tool_result"
+      || m.type === "hitl_request"
+      || m.type === "ask_user"
+    ) {
+      hasFollowUp = true;
+    } else if (m.type === "user" && !m.metadata?.isContext) {
+      // A real user turn starts a new reply. The last agent text of the
+      // previous turn is that turn's answer and must stay visible — not
+      // collapse into "Thought" just because the conversation continued.
+      hasFollowUp = false;
+    }
+  }
+  return flags;
+}
+
+/**
+ * Collapse consecutive thought-flagged agent rows into runs so the chat can
+ * render one "Thinking" accordion per stretch instead of a wall of body text.
+ */
+export function groupConsecutiveThoughts(
+  flags: boolean[],
+): Array<{ start: number; end: number }> {
+  const runs: Array<{ start: number; end: number }> = [];
+  let start = -1;
+  for (let i = 0; i < flags.length; i++) {
+    if (flags[i]) {
+      if (start === -1) start = i;
+    } else if (start !== -1) {
+      runs.push({ start, end: i - 1 });
+      start = -1;
+    }
+  }
+  if (start !== -1) runs.push({ start, end: flags.length - 1 });
+  return runs;
+}
+
