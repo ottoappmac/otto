@@ -5,7 +5,7 @@ import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLi
 import { api } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { AgentGraph } from "../components/chat/AgentGraph";
-import { MessageBubble } from "../components/chat/MessageBubble";
+import { MessageBubble, ThoughtBlock } from "../components/chat/MessageBubble";
 import { SubagentGroup } from "../components/chat/SubagentGroup";
 import { ArtifactPanel, artifactTypeFromPath } from "../components/chat/ArtifactPanel";
 import { ThinkingIndicator } from "../components/chat/ThinkingIndicator";
@@ -18,7 +18,7 @@ import WorkspaceTree from "../components/chat/WorkspaceTree";
 import { ChangedFilesStrip, collectChangedFiles, filePathFromToolArgs } from "../components/chat/ChangedFilesStrip";
 import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
 import { formatFileSize } from "../utils/formatFileSize";
-import { mergeToolMessages, preserveHitlResolved } from "../utils/mergeToolMessages";
+import { mergeToolMessages, preserveHitlResolved, appendMissingInterrupts, pendingInterrupts, hasUnmatchedApprovalTool, computeThoughtFlags } from "../utils/mergeToolMessages";
 import { familyChipClasses } from "../utils/subagentModelChip";
 import { screenHighRiskCommand } from "../utils/highRiskCommands";
 import { useNotification } from "../context/NotificationContext";
@@ -66,7 +66,8 @@ function folderFromFileList(files: FileList | File[]): string | null {
 
 type RenderItem =
   | { kind: "message"; message: ChatMessage; index: number }
-  | { kind: "subagent-group"; name: string; messages: ChatMessage[] };
+  | { kind: "subagent-group"; name: string; messages: ChatMessage[] }
+  | { kind: "thought-group"; messages: ChatMessage[] };
 
 // When rebuilding messages from the API (which never persists base64 images),
 // carry any images that are already in local state forward into the new array.
@@ -94,6 +95,9 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState(() => localStorage.getItem("chatDraft") ?? "");
   const [isStreaming, setIsStreaming] = useState(false);
+  // Keep the 2s transcript poll alive after the agent task stops when a
+  // HITL/ask_user card is expected but has not arrived on the WebSocket yet.
+  const [pollForInterrupt, setPollForInterrupt] = useState(false);
   const [streamPhase, setStreamPhase] = useState<"thinking" | "memory_search">("thinking");
   const [pendingContext, setPendingContext] = useState<string[]>([]);
   const [agents, setAgents] = useState<AgentSpec[]>([]);
@@ -359,7 +363,9 @@ export default function ChatPage() {
           }));
           const apiMerged = mergeToolMessages(raw);
           setMessages((prev) => {
-            if (apiMerged.length < prev.length) return prev;
+            if (apiMerged.length < prev.length) {
+              return appendMissingInterrupts(prev, apiMerged) ?? prev;
+            }
             if (apiMerged.length === prev.length) {
               const lastApi = apiMerged[apiMerged.length - 1];
               const lastLocal = prev[prev.length - 1];
@@ -855,16 +861,27 @@ export default function ChatPage() {
     }
     if (msg.type === "hitl_request" || msg.type === "ask_user") {
       setIsStreaming(false);
+      setPollForInterrupt(false);
+      // Approval cards must be visible even if the user had scrolled up
+      // while the agent was working.
+      isPinnedToBottomRef.current = true;
       if (sid) { unwatchSession(sid); notify("hitl", sid); }
       const chatMsg: ChatMessage = { id: `msg-${++msgIdRef.current}`, type: msg.type, content: msg.content, metadata: msg.metadata, timestamp: new Date(), sessionId: sid || undefined };
       setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        let base = prev;
+        if (last && last.type === "agent" && last.metadata?.streaming) {
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...last, metadata: { ...last.metadata, streaming: false } };
+          base = updated;
+        }
         // Dedupe re-emitted interrupts: the backend re-pushes pending
         // interrupts on every WS (re)connect so dropped deliveries
         // recover, but if the client already received it we'd otherwise
         // render two identical approval cards.  Compare against the most
         // recent unresolved interrupt in state.
-        for (let i = prev.length - 1; i >= 0; i--) {
-          const m = prev[i];
+        for (let i = base.length - 1; i >= 0; i--) {
+          const m = base[i];
           if (m.type !== "hitl_request" && m.type !== "ask_user") continue;
           if (m.metadata?.resolved) break;
           if (
@@ -872,11 +889,11 @@ export default function ChatPage() {
             && m.content === msg.content
             && JSON.stringify(m.metadata) === JSON.stringify(msg.metadata)
           ) {
-            return prev;
+            return base;
           }
           break;
         }
-        return [...prev, chatMsg];
+        return [...base, chatMsg];
       });
       return;
     }
@@ -945,11 +962,18 @@ export default function ChatPage() {
       }
       let base = prev;
       if (hasStreamingPlaceholder && msg.type === "tool_call") {
-        // The streamed text was a preamble on a tool-calling turn — the
-        // backend suppresses the final "agent" event for those (see
-        // session_manager._do_stream), so drop the orphaned placeholder
-        // before appending the tool_call row below.
-        base = prev.slice(0, -1);
+        // Keep streamed preamble as a thought above the tool row.  Empty
+        // placeholders (token stream produced no text) are still dropped.
+        if (last.content.trim()) {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...last,
+            metadata: { ...last.metadata, streaming: false },
+          };
+          base = updated;
+        } else {
+          base = prev.slice(0, -1);
+        }
       } else if (hasStreamingPlaceholder) {
         // Some other event (e.g. an error) ended the turn without a proper
         // finalizer — stop treating the placeholder as in-progress.
@@ -1016,27 +1040,34 @@ export default function ChatPage() {
         // yet, preserve the local pending interrupt instead of wiping it.
         setMessages((prev) => {
           const withLocal = reconcileApiMessages(apiMerged, prev);
-          const apiHasPendingHitl = withLocal.some(
-            (m) => (m.type === "hitl_request" || m.type === "ask_user") && !m.metadata?.resolved,
-          );
+          const apiHasPendingHitl = pendingInterrupts(withLocal).length > 0;
           if (!apiHasPendingHitl) {
-            const localPending = prev.filter(
-              (m) => (m.type === "hitl_request" || m.type === "ask_user") && !m.metadata?.resolved,
-            );
+            const withHitl = appendMissingInterrupts(prev, apiMerged);
+            if (withHitl) return withHitl;
+            const localPending = pendingInterrupts(prev);
             if (localPending.length > 0) return [...withLocal, ...localPending];
           }
           return withLocal;
         });
-        if (!status.running && !sendingRef.current) setIsStreaming(false);
+        if (status.awaiting_input && pendingInterrupts(apiMerged).length === 0) {
+          setPollForInterrupt(true);
+          if (!sendingRef.current) setIsStreaming(false);
+        } else if (pendingInterrupts(apiMerged).length > 0) {
+          setPollForInterrupt(false);
+          if (!sendingRef.current) setIsStreaming(false);
+        } else if (!status.running && !sendingRef.current) {
+          setIsStreaming(false);
+        }
       }).catch(() => {
         if (!status.running && !sendingRef.current) setIsStreaming(false);
       });
     }).catch(() => {});
   }, [connected, currentSessionId]);
 
-  // Polling safety-net: while isStreaming=true, fetch messages + status from
-  // the API every 2 s so that any WS message that was lost (hitl_request,
-  // agent responses, done) will still appear within a couple of seconds.
+  // Polling safety-net: while isStreaming=true (or pollForInterrupt after the
+  // agent task has paused for HITL), fetch messages + status from the API
+  // every 2 s so that any WS message that was lost (hitl_request, agent
+  // responses, done) will still appear within a couple of seconds.
   //
   // Design notes:
   //   • No sendingRef.current guard here — the effect re-runs whenever
@@ -1046,11 +1077,14 @@ export default function ChatPage() {
   //     so in-progress tool calls and text responses also appear promptly.
   //   • We reuse existing message IDs by position to avoid remounting
   //     components (which would reset any typed credential input state).
-  //   • The interval stops itself once status.running = false to avoid
-  //     hammering the API after the session finishes.
+  //   • The interval stops once the run is idle *and* no approval card is
+  //     still expected.  ``status.running`` goes false as soon as the
+  //     stream task exits, which is also when execute HITL pauses — so
+  //     awaiting_input / an unmatched execute call keep polling until the
+  //     approval card is in the transcript.
   const streamingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
-    if (!isStreaming || !currentSessionId) {
+    if ((!isStreaming && !pollForInterrupt) || !currentSessionId) {
       if (streamingPollRef.current) {
         clearInterval(streamingPollRef.current);
         streamingPollRef.current = null;
@@ -1069,6 +1103,7 @@ export default function ChatPage() {
         // fetch was in flight.
         if (sid !== sessionIdRef.current) return;
 
+        let apiMerged: ChatMessage[] = [];
         if (msgs && msgs.length > 0) {
           // Use session-scoped positional IDs so the same backend message
           // always gets the same React key even across multiple poll cycles.
@@ -1080,7 +1115,7 @@ export default function ChatPage() {
             timestamp: new Date(),
             sessionId: sid,
           }));
-          const apiMerged = mergeToolMessages(raw);
+          apiMerged = mergeToolMessages(raw);
           setMessages((prev) => {
             // Keep local state when it has more messages than the API (in-flight
             // WS messages not yet persisted).  When counts are equal, compare
@@ -1088,7 +1123,9 @@ export default function ChatPage() {
             // (e.g. a final agent response replaced a "thinking" chunk that
             // arrived via WS before it was persisted) apply the API state.
             // Reuse existing IDs by position so components don't remount.
-            if (apiMerged.length < prev.length) return prev;
+            if (apiMerged.length < prev.length) {
+              return appendMissingInterrupts(prev, apiMerged) ?? prev;
+            }
             const merged = reconcileApiMessages(apiMerged, prev);
             if (merged.length === prev.length) {
               const lastApi = merged[merged.length - 1];
@@ -1105,10 +1142,31 @@ export default function ChatPage() {
           });
         }
 
-        if (status && !status.running) {
-          clearInterval(streamingPollRef.current!);
-          streamingPollRef.current = null;
+        const apiHasHitl = pendingInterrupts(apiMerged).length > 0;
+        const awaiting =
+          !!status?.awaiting_input
+          || (!!status && !status.running && hasUnmatchedApprovalTool(apiMerged));
+        if (apiHasHitl) {
+          setPollForInterrupt(false);
           setIsStreaming(false);
+          if (streamingPollRef.current) {
+            clearInterval(streamingPollRef.current);
+            streamingPollRef.current = null;
+          }
+          return;
+        }
+        if (awaiting) {
+          setPollForInterrupt(true);
+          setIsStreaming(false);
+          return;
+        }
+        if (status && !status.running) {
+          setPollForInterrupt(false);
+          setIsStreaming(false);
+          if (streamingPollRef.current) {
+            clearInterval(streamingPollRef.current);
+            streamingPollRef.current = null;
+          }
         }
       } catch {
         // ignore transient errors — next tick will retry
@@ -1120,7 +1178,7 @@ export default function ChatPage() {
         streamingPollRef.current = null;
       }
     };
-  }, [isStreaming, currentSessionId]);
+  }, [isStreaming, pollForInterrupt, currentSessionId]);
 
   // Context-hint nudge: after streaming starts, show a timed reminder that
   // the user can type to steer the agent.  Cycle: 4 s delay → visible 5 s →
@@ -1174,6 +1232,7 @@ export default function ChatPage() {
         : m,
     ));
     setIsStreaming(true);
+    setPollForInterrupt(false);
   }, [sendHitlResponse, clearSession, watchSession, currentSessionId, sessionId]);
 
   // Per-session auto-approve: enabled by the "Approve all" action and
@@ -1183,6 +1242,7 @@ export default function ChatPage() {
   useEffect(() => {
     setSessionAutoApprove(false);
     hitlSubmittedRef.current = new Set();
+    setPollForInterrupt(false);
   }, [currentSessionId]);
 
   const handleApproveAllSession = useCallback((messageId: string, decisions: Array<Record<string, unknown>>) => {
@@ -1414,6 +1474,7 @@ export default function ChatPage() {
     localStorage.removeItem("chatSelectedAgent");
     setStreamPhase("thinking");
     setIsStreaming(true);
+    setPollForInterrupt(false);
 
     try {
       let sid = currentSessionId;
@@ -1856,20 +1917,10 @@ export default function ChatPage() {
     return { total: agent.length, hits: withMemory.length };
   }, [sessionMessages]);
 
-  const thoughtFlags = useMemo(() => {
-    const flags = new Array<boolean>(sessionMessages.length).fill(false);
-    let hasFollowUp = false;
-    for (let i = sessionMessages.length - 1; i >= 0; i--) {
-      const m = sessionMessages[i];
-      if (m.type === "agent" && !m.metadata?.subagent) {
-        flags[i] = hasFollowUp;
-        hasFollowUp = true;
-      } else if (m.type === "tool_call") {
-        hasFollowUp = true;
-      }
-    }
-    return flags;
-  }, [sessionMessages]);
+  const thoughtFlags = useMemo(
+    () => computeThoughtFlags(sessionMessages),
+    [sessionMessages],
+  );
 
   const latestTodoFlags = useMemo(() => {
     const flags = new Array<boolean>(sessionMessages.length).fill(false);
@@ -2047,6 +2098,12 @@ export default function ChatPage() {
     const subagentPrefixes = new Set<string>();
     let generation = 0;
     let prevWasSubagent = false;
+    let thoughtBuf: ChatMessage[] = [];
+    const flushThoughts = () => {
+      if (thoughtBuf.length === 0) return;
+      items.push({ kind: "thought-group", messages: thoughtBuf });
+      thoughtBuf = [];
+    };
     for (let i = 0; i < sessionMessages.length; i++) {
       const msg = sessionMessages[i];
       // Errors are pulled out of the inline flow and pinned to the end of the
@@ -2054,6 +2111,7 @@ export default function ChatPage() {
       if (msg.type === "error") continue;
       const subagent = msg.metadata?.subagent as string | undefined;
       if (subagent) {
+        flushThoughts();
         subagentPrefixes.add(subagent.replace(/ #\d+$/, ""));
         const groupKey = `${subagent}::${generation}`;
         let group = groups.get(groupKey);
@@ -2064,12 +2122,18 @@ export default function ChatPage() {
         }
         group.messages.push(msg);
         prevWasSubagent = true;
+      } else if (msg.type === "agent" && thoughtFlags[i]) {
+        if (prevWasSubagent) generation++;
+        prevWasSubagent = false;
+        thoughtBuf.push(msg);
       } else {
         if (prevWasSubagent) generation++;
         prevWasSubagent = false;
+        flushThoughts();
         items.push({ kind: "message", message: msg, index: i });
       }
     }
+    flushThoughts();
     if (subagentPrefixes.size === 0) return items;
     return items.filter((item) => {
       if (item.kind !== "message") return true;
@@ -2078,7 +2142,7 @@ export default function ChatPage() {
       const agentType = (msg.metadata?.args as Record<string, unknown>)?.subagent_type as string | undefined;
       return !agentType || !subagentPrefixes.has(agentType);
     });
-  }, [sessionMessages]);
+  }, [sessionMessages, thoughtFlags]);
 
   // Errors are surfaced at the very end of the chat (after the latest agent
   // turn) rather than inline where they occurred, so they're never buried.
@@ -2926,6 +2990,15 @@ const MessageList = memo(function MessageList({
               modelFamily={model.family}
               sessionId={currentSessionId ?? undefined}
               onOpenArtifact={onOpenArtifact}
+            />
+          );
+        }
+        if (item.kind === "thought-group") {
+          const streaming = item.messages.some((m) => m.metadata?.streaming);
+          return (
+            <ThoughtBlock
+              key={`thought-${item.messages.map((m) => m.id).join("-")}-${streaming ? "live" : "done"}`}
+              messages={item.messages}
             />
           );
         }

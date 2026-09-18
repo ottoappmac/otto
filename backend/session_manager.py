@@ -475,6 +475,78 @@ def _stream_chunk_text(content: Any) -> str:
     return ""
 
 
+def _ws_events_from_ai_message(
+    msg: Any,
+    *,
+    stats: dict[str, Any] | None = None,
+    memory_topics: Any = None,
+) -> list[dict[str, Any]]:
+    """Build the chat WS events for one ``AIMessage``.
+
+    Text on a tool-calling turn is emitted as a preceding ``agent`` event so
+    the UI can keep the model's thought/preamble above the tool rows. Stats
+    still attach to the first ``tool_call`` (or to the agent event on
+    text-only turns) so the live session panel counts each turn once.
+    """
+    content = extract_text_content(msg.content)
+    thought = (getattr(msg, "additional_kwargs", None) or {}).get("thought")
+    tool_calls = getattr(msg, "tool_calls", None) or []
+    events: list[dict[str, Any]] = []
+    if content:
+        meta: dict[str, Any] = {}
+        if memory_topics:
+            meta["memory_topics"] = memory_topics
+        if thought:
+            meta["thought"] = thought
+        if stats and not tool_calls:
+            meta["stats"] = stats
+        resp: dict[str, Any] = {"type": "agent", "content": content}
+        if meta:
+            resp["metadata"] = meta
+        events.append(resp)
+    for idx, tc in enumerate(tool_calls):
+        tool_name = tc.get("name", "")
+        tc_id = tc.get("id", "")
+        tc_meta: dict[str, Any] = {"args": tc.get("args", {})}
+        if tc_id:
+            tc_meta["tool_call_id"] = tc_id
+        if stats and idx == 0:
+            tc_meta["stats"] = stats
+        events.append({
+            "type": "tool_call",
+            "content": tool_name,
+            "metadata": tc_meta,
+        })
+    return events
+
+
+def _normalize_interrupt_value(hitl_value: Any) -> Any:
+    """Unwrap LangGraph interrupt payloads into a JSON-safe mapping."""
+    if isinstance(hitl_value, (list, tuple)) and hitl_value:
+        hitl_value = hitl_value[0]
+    dump = getattr(hitl_value, "model_dump", None)
+    if callable(dump):
+        try:
+            return dump()
+        except Exception:
+            pass
+    as_dict = getattr(hitl_value, "dict", None)
+    if callable(as_dict):
+        try:
+            return as_dict()
+        except Exception:
+            pass
+    return hitl_value
+
+
+def _interrupts_from_state(state: Any) -> list[Any]:
+    pending: list[Any] = []
+    for task in (getattr(state, "tasks", None) or ()):
+        for intr in (getattr(task, "interrupts", None) or ()):
+            pending.append(intr)
+    return pending
+
+
 _PLAYWRIGHT_SERVER_ID = "playwright-mcp"
 
 
@@ -3550,8 +3622,6 @@ class SessionManager:
                     if memory_topics:
                         yield {"type": "memory_context", "content": "", "metadata": {"topics": memory_topics}}
 
-                    content = extract_text_content(msg.content)
-
                     # Extract MLX generation stats (cache hit ratio, TPS, peak
                     # memory, etc.) built by ChatMLXText.  Done once per
                     # AIMessage so both tool-call and text turns contribute to
@@ -3605,60 +3675,29 @@ class SessionManager:
                         session.input_tokens += in_tok
                         session.output_tokens += out_tok
 
-                    if msg.tool_calls:
-                        # Emit tool_call rows; skip any text in the same
-                        # AIMessage.  Models sometimes include a preamble or
-                        # summary ("I'll run these…") alongside tool_calls.
-                        # Suppressing it here keeps the approval bubble
-                        # directly below the tool rows without stray text
-                        # appearing above or between them.  The final summary
-                        # always arrives in a text-only AIMessage after the
-                        # tool results, so nothing meaningful is lost.
-                        for idx, tc in enumerate(msg.tool_calls):
-                            tool_name = tc.get("name", "")
-                            tc_id = tc.get("id", "")
+                    for resp in _ws_events_from_ai_message(
+                        msg, stats=stats, memory_topics=memory_topics,
+                    ):
+                        if resp["type"] == "tool_call":
+                            tool_name = resp["content"]
+                            tc_id = (resp.get("metadata") or {}).get("tool_call_id", "")
                             logger.info("[stream] TOOL_CALL %s (id=%s)", tool_name, tc_id)
                             _pending_tools[tc_id] = (tool_name, time.monotonic())
                             if tool_name and tool_name not in session.tools_used:
                                 session.tools_used.append(tool_name)
-                            tc_meta: dict[str, Any] = {"args": tc.get("args", {})}
-                            if tc_id:
-                                tc_meta["tool_call_id"] = tc_id
-                            # Attach the turn's stats to the first tool_call row
-                            # only so the live session panel counts each turn
-                            # once (a single AIMessage may emit several calls).
-                            if stats and idx == 0:
-                                tc_meta["stats"] = stats
-                            resp = {
-                                "type": "tool_call",
-                                "content": tool_name,
-                                "metadata": tc_meta,
-                            }
                             await _append_message_async(session_id, resp)
                             await _transcript(
-                                session_id, "tool_call", tc.get("args", {}),
+                                session_id, "tool_call",
+                                (resp.get("metadata") or {}).get("args", {}),
                                 tool_name=tool_name, tool_call_id=tc_id,
                             )
                             yield resp
-                    elif content:
-                        resp = {"type": "agent", "content": content}
-                        # Forward the model's hidden reasoning (set by the
-                        # MLX ReAct wrapper / middleware via
-                        # ``additional_kwargs["thought"]``) so the frontend
-                        # can render it as a collapsible Thinking block.
-                        thought = (msg.additional_kwargs or {}).get("thought")
-                        meta: dict[str, Any] = {}
-                        if memory_topics:
-                            meta["memory_topics"] = memory_topics
-                        if thought:
-                            meta["thought"] = thought
-                        if stats:
-                            meta["stats"] = stats
-                        if meta:
-                            resp["metadata"] = meta
-                        await _append_message_async(session_id, resp)
-                        await _transcript(session_id, "assistant", content, role="assistant")
-                        yield resp
+                        else:
+                            await _append_message_async(session_id, resp)
+                            await _transcript(
+                                session_id, "assistant", resp["content"], role="assistant",
+                            )
+                            yield resp
                 elif isinstance(msg, ToolMessage):
                     metadata: dict[str, Any] = {"name": getattr(msg, "name", "tool")}
                     tc_id_done = getattr(msg, "tool_call_id", None)
@@ -3770,6 +3809,7 @@ class SessionManager:
     def _interrupt_value_to_message(hitl_value: Any) -> dict[str, Any]:
         """Translate a LangGraph interrupt payload into the WS message dict
         the frontend understands.  Pure function — no I/O."""
+        hitl_value = _normalize_interrupt_value(hitl_value)
         if isinstance(hitl_value, dict) and hitl_value.get("type") == "ask_user":
             return {
                 "type": "ask_user",
@@ -3783,7 +3823,7 @@ class SessionManager:
         return {
             "type": "hitl_request",
             "content": "Tool execution requires approval",
-            "metadata": hitl_value,
+            "metadata": hitl_value if isinstance(hitl_value, dict) else {"value": hitl_value},
         }
 
     async def get_pending_interrupt(self, session_id: str) -> Optional[dict[str, Any]]:
@@ -3800,10 +3840,9 @@ class SessionManager:
 
         run_config = {"configurable": {"thread_id": session_id}}
         state = await session.graph.aget_state(run_config)
-
-        for task in (state.tasks or ()):
-            for intr in (getattr(task, "interrupts", None) or ()):
-                return self._interrupt_value_to_message(intr.value)
+        pending = _interrupts_from_state(state)
+        if pending:
+            return self._interrupt_value_to_message(pending[0].value)
         return None
 
     async def _check_interrupts_or_done(
@@ -3816,12 +3855,17 @@ class SessionManager:
         Yields either a ``hitl_request`` (graph is paused) or ``done``.
         """
         run_config = {"configurable": {"thread_id": session_id}}
-        state = await session.graph.aget_state(run_config)
-
-        pending = []
-        for task in (state.tasks or ()):
-            for intr in (getattr(task, "interrupts", None) or ()):
-                pending.append(intr)
+        # LangGraph can finish astream a tick before the interrupt is visible
+        # on aget_state.  A short retry avoids yielding ``done`` (which stops
+        # the chat UI) while the graph is actually waiting for approval.
+        pending: list[Any] = []
+        for attempt in range(8):
+            state = await session.graph.aget_state(run_config)
+            pending = _interrupts_from_state(state)
+            if pending:
+                break
+            if attempt < 7:
+                await asyncio.sleep(0.05)
 
         if pending:
             resp = self._interrupt_value_to_message(pending[0].value)

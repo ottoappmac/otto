@@ -129,6 +129,42 @@ function parseUserAttachments(content: string): {
   return { files, folders, urls, text };
 }
 
+function thoughtPreview(text: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  if (!line) return "";
+  return line.length <= 80 ? line : `${line.slice(0, 79).trimEnd()}…`;
+}
+
+/** Collapsed-by-default reasoning, matching ChatGPT / Claude / Cursor. */
+export function ThoughtBlock({ messages }: { messages: ChatMessage[] }) {
+  const streaming = messages.some((m) => m.metadata?.streaming);
+  const combined = messages.map((m) => m.content).filter(Boolean).join("\n\n");
+  const preview = thoughtPreview(combined);
+  return (
+    <details
+      className="ml-11 group"
+      open={streaming || undefined}
+    >
+      <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-th-text-muted hover:text-th-text-tertiary inline-flex items-center gap-1.5 list-none select-none max-w-full [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={11} className="transition-transform group-open:rotate-90 shrink-0" />
+        <span className="shrink-0">{streaming ? "Thinking" : "Thought"}</span>
+        {!streaming && preview && (
+          <span className="normal-case tracking-normal font-normal text-th-text-muted/70 truncate">
+            {preview}
+          </span>
+        )}
+      </summary>
+      <div className="mt-1.5 ml-4 pl-3 border-l-2 border-th-border text-xs text-th-text-tertiary italic prose prose-sm max-w-none leading-relaxed break-words [&_p]:mb-1.5 [&_p:last-child]:mb-0 [&_p]:italic">
+        {messages.map((m) => (
+          <ReactMarkdown key={m.id} remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {linkifyContent(m.content)}
+          </ReactMarkdown>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export const MessageBubble = memo(function MessageBubble({ message, isThought, isLatestTodo, canEdit, inGroup, sessionId, onEdit, onHitlDecision, onApproveAllSession, onOpenArtifact }: MessageBubbleProps) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -301,15 +337,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
     }
 
     if (isThought) {
-      return (
-        <div className="ml-10">
-          <div className="py-1">
-            <div className="text-xs text-th-text-tertiary prose prose-sm max-w-none leading-relaxed break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:bg-th-code-bg [&_pre]:border [&_pre]:border-th-border [&_pre]:rounded-lg [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_code]:text-th-text-secondary [&_code]:break-words">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{linkifyContent(message.content)}</ReactMarkdown>
-            </div>
-          </div>
-        </div>
-      );
+      return <ThoughtBlock messages={[message]} />;
     }
 
     const memoryTopics = message.metadata?.memory_topics as string[] | undefined;
@@ -321,15 +349,9 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
     return (
       <div className="flex flex-col gap-2">
         {thought && (
-          <details className="ml-11 group">
-            <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-th-text-muted hover:text-th-text-tertiary inline-flex items-center gap-1 list-none select-none [&::-webkit-details-marker]:hidden">
-              <ChevronRight size={11} className="transition-transform group-open:rotate-90" />
-              Thinking
-            </summary>
-            <div className="mt-1 ml-4 pl-3 border-l-2 border-th-border text-xs text-th-text-tertiary italic whitespace-pre-wrap leading-relaxed">
-              {thought}
-            </div>
-          </details>
+          <ThoughtBlock
+            messages={[{ ...message, id: `${message.id}-thought`, content: thought }]}
+          />
         )}
         <div className="flex gap-3 justify-start items-start">
           <div className="w-7 h-7 rounded-full border border-th-border/70 bg-th-inset-bg flex items-center justify-center shrink-0 mt-1">
