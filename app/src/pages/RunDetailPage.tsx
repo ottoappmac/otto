@@ -48,6 +48,7 @@ import { BreakdownBar } from "../components/runs/BreakdownBar";
 import { StatCard } from "../components/runs/StatCard";
 import { getSourceIcon, getSourceLabel, getProviderIcon } from "../utils/entityIcons";
 import { familyChipClasses } from "../utils/subagentModelChip";
+import { applyLiveTimelineMessage } from "../utils/liveTimeline";
 import { WS_BASE } from "../config/apiBase";
 
 const POLL_MS = 4_000;
@@ -817,21 +818,8 @@ export default function RunDetailPage() {
         if (raw.type === "tool_call" || raw.type === "tool_result" || raw.type === "agent") {
           setSessionMessages((prev) => [...prev, raw as unknown as Record<string, unknown>]);
         }
-        // Normalise into the flattened TimelineEvent shape the timeline renderer
-        // expects (top-level subagent/args/tool, "assistant" instead of "agent").
-        const meta = raw.metadata ?? {};
-        const ev: TimelineEvent = {
-          type: raw.type === "agent" ? "assistant" : raw.type,
-          content: raw.content,
-          subagent: meta.subagent as string | undefined,
-          args: meta.args as Record<string, unknown> | undefined,
-          tool: raw.type === "tool_result"
-            ? (meta.name as string | undefined)
-            : (typeof raw.content === "string" ? raw.content : undefined),
-          tool_call_id: meta.tool_call_id as string | undefined,
-          images: meta.images as { base64: string; mime_type: string }[] | undefined,
-        };
-        setLiveEvents((prev) => [...prev, ev]);
+        // Fold token deltas into one assistant row (same contract as chat).
+        setLiveEvents((prev) => applyLiveTimelineMessage(prev, raw));
       } catch { /* ignore */ }
     };
 
@@ -840,6 +828,10 @@ export default function RunDetailPage() {
       wsRef.current = null;
     };
   }, [id, run?.status]);
+
+  useEffect(() => {
+    setLiveEvents([]);
+  }, [id]);
 
   // Combine persisted + live events
   const allEvents: TimelineEvent[] = [

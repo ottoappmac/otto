@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { TimelineEvent } from "../../types";
 import { getToolIcon } from "../../utils/entityIcons";
+import { TIMELINE_RENDER_TYPES } from "../../utils/liveTimeline";
 
 interface RunTimelineProps {
   events: TimelineEvent[];
@@ -69,7 +70,7 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
       <>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">
-            {event.subagent && !inGroup ? event.subagent : "Agent"}
+            {event.subagent && !inGroup ? event.subagent : event.meta?.streaming ? "Thinking" : "Agent"}
           </span>
           {event.ts && <span className="text-[10px] text-th-text-muted/50 tabular-nums">{formatTs(event.ts)}</span>}
         </div>
@@ -314,7 +315,7 @@ export function RunTimeline({ events }: RunTimelineProps) {
     );
   }
 
-  const merged = mergeToolEvents(events);
+  const merged = mergeToolEvents(events.filter((ev) => TIMELINE_RENDER_TYPES.has(ev.type)));
   const items = groupEvents(merged);
 
   return (
