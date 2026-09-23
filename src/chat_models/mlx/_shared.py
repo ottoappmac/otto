@@ -248,6 +248,8 @@ def evict_all_mlx_models() -> int:
 
     The static-prompt-prefix snapshots (:mod:`chat_models.mlx._prefix_store`)
     go too: they hold KV state computed with these weights (~0.4 GB each).
+    Their SSD copies (:mod:`chat_models.mlx._prefix_disk`) stay: they're keyed
+    by the weight files, so a reload of the same weights can use them again.
 
     Returns the number of cache entries that were evicted (diagnostics).
     """

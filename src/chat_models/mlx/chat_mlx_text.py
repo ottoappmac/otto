@@ -20,7 +20,8 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, List, Optional, Sequence, Union
+from hashlib import sha256
+from typing import Any, List, NamedTuple, Optional, Sequence, Union
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -54,7 +55,7 @@ from chat_models.mlx._shared import (
     _WARMED_UP,
     _load_or_reuse,
 )
-from chat_models.mlx import _prefix_store
+from chat_models.mlx import _prefix_disk, _prefix_store
 
 logger = logging.getLogger(__name__)
 
@@ -164,10 +165,41 @@ def _looks_repetitive(text: str) -> bool:
 _STATIC_PREFIX_MIN_TOKENS = 1024
 
 
+# How the "KV prefix cache" log line names where the reused tokens came from
+# (``_CachePlan.source``, also ``response_metadata["prefix_cache_source"]``).
+_REUSE_SOURCES = {
+    "session": " from this session's cache",
+    "ram": " (static prefix) from the RAM store",
+    "ssd": " (static prefix) from SSD",
+    "none": "",
+}
+
+
+class _CachePlan(NamedTuple):
+    """What :meth:`ChatMLXText._prepare_prompt_cache` put in the prompt cache."""
+
+    reused: int  # restored: from this instance's cache or a stored snapshot
+    prefilled: int  # fed before ``stream_generate`` runs...
+    seconds: float  # ...in this many seconds
+    source: str  # where *reused* came from: a ``_REUSE_SOURCES`` key
+
+
 def _common_prefix(a: str, b: str) -> str:
     """The longest common prefix of *a* and *b*."""
     n = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
     return a[:n]
+
+
+def _tools_key(tools: list[dict]) -> str:
+    """A stable fingerprint of a bound tool set: its static snapshots' family."""
+    return sha256(json.dumps(tools, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _snapshot_nbytes(layers: List[Any]) -> int:
+    """Bytes held by the arrays of a prompt-cache snapshot."""
+    from mlx.utils import tree_flatten
+
+    return sum(x.nbytes for layer in layers for _, x in tree_flatten(layer.state) if hasattr(x, "nbytes"))
 
 
 def _trimmable(layer: Any) -> bool:
@@ -250,7 +282,7 @@ class ChatMLXText(BaseChatModel):
     # alone exceeds the cap.  ``0`` disables the cap and reverts to the
     # legacy unbounded behaviour.  Default 32 768 tokens ≈ 1 GB on a 7B
     # 4-bit model.  Static prompt prefixes longer than the cap aren't
-    # snapshotted for other sessions either (see ``_static_prefix_lengths``).
+    # snapshotted for other sessions either (see ``_static_prefixes``).
     prompt_cache_max_tokens: int = 32768
 
     # Exposes the effective input budget to framework helpers such as
@@ -269,14 +301,22 @@ class ChatMLXText(BaseChatModel):
     _tokenizer: Any = None
     _draft_model: Any = None
     _prompt_cache: Any = None
-    # The token prefix the prompt cache can be rolled back to exactly (see
-    # ``_rollback_cache_to``).  ``_cache_snapshot`` maps layer index → copy of
-    # each non-trimmable layer taken at exactly ``len(_last_prompt_tokens)``.
+    # The longest token prefix the prompt cache can be rolled back to exactly
+    # (see ``_rollback_cache_to``).  ``_reuse_points`` maps each shorter or
+    # equal length it can also return to → copies of the non-trimmable layers
+    # taken at exactly that many tokens (see ``_add_reuse_point``);
+    # ``_query_point`` is the one where the latest user turn's generation
+    # prompt started.
     _last_prompt_tokens: Optional[List[int]] = None
-    _cache_snapshot: Optional[dict] = None
-    # ``_static_prefix_lengths`` memo: the leading system messages and tools
-    # it last probed, and the static token prefixes they render to.
+    _reuse_points: dict = {}
+    _query_point: int = 0
+    # ``_static_prefixes`` memo: the leading system messages and tools it last
+    # probed, the static token prefixes they render to and the tools' key.
     _static_probe: Optional[tuple] = None
+    # ``_turn_start`` memo: the tokens of the template's generation prompt.
+    _scaffold: Optional[List[int]] = None
+    # ``_ssd_key`` memo: ``(fingerprint of the weights or None,)``.
+    _weights_fingerprint: Optional[tuple] = None
     # Native tool-calling state — populated in __init__ once the tokenizer is loaded.
     # ``_native_tools_supported`` gates ``bind_tools``; ``_tool_family`` selects the
     # parser used by ``_generate`` to extract structured tool calls from output.
@@ -553,6 +593,7 @@ class ChatMLXText(BaseChatModel):
         self,
         messages: List[BaseMessage],
         tools: Optional[list[dict]] = None,
+        add_generation_prompt: bool = True,
     ) -> str:
         """Convert LangChain messages to a single prompt string.
 
@@ -567,7 +608,7 @@ class ChatMLXText(BaseChatModel):
         chat_messages = [self._message_to_chat_dict(m) for m in messages]
 
         if hasattr(self._tokenizer, "apply_chat_template"):
-            base_kwargs: dict = {"tokenize": False, "add_generation_prompt": True}
+            base_kwargs: dict = {"tokenize": False, "add_generation_prompt": add_generation_prompt}
             if tools:
                 base_kwargs["tools"] = tools
             # Qwen3 passes enable_thinking through **kwargs to its Jinja chat template,
@@ -638,6 +679,7 @@ class ChatMLXText(BaseChatModel):
         cache_offset_before: int,
         prefilled_before: int = 0,
         prefill_seconds_before: float = 0.0,
+        source: Optional[str] = None,
     ) -> dict:
         """Build response metadata attached to ``AIMessage.response_metadata``.
 
@@ -646,9 +688,11 @@ class ChatMLXText(BaseChatModel):
         preserved through any number of wrapper layers.
 
         *prefilled_before* tokens were prefilled in *prefill_seconds_before*
-        before ``stream_generate`` ran (a static prefix being snapshotted, see
-        :meth:`_prepare_prompt_cache`); they count as prefilled and in the
-        prompt throughput, which the session stats turn back into prefill time.
+        before ``stream_generate`` ran (static prefixes being snapshotted, the
+        turn start of a hybrid model, see :meth:`_prepare_prompt_cache`); they
+        count as prefilled and in the prompt throughput, which the session
+        stats turn back into prefill time.
+        *source* says where the cached tokens came from (see ``_CachePlan``).
         """
         tokens_prefilled = last_response.prompt_tokens + prefilled_before
         prompt_tps = last_response.prompt_tps
@@ -663,7 +707,7 @@ class ChatMLXText(BaseChatModel):
         # right up to ``max_tokens`` instead of stopping on an EOS/control
         # token.  Surfaced so callers can detect cut-off output (see _generate).
         finish_reason = "length" if generation_tokens >= self.max_tokens else "stop"
-        return {
+        metadata = {
             "tokens_from_cache": tokens_from_cache,
             "tokens_prefilled": tokens_prefilled,
             "cache_hit_ratio": round(tokens_from_cache / total, 3) if total else 0.0,
@@ -674,6 +718,9 @@ class ChatMLXText(BaseChatModel):
             "peak_memory_gb": round(last_response.peak_memory, 3),
             "finish_reason": finish_reason,
         }
+        if source is not None:
+            metadata["prefix_cache_source"] = source
+        return metadata
 
     # ── Prefix-aware caching helpers ──────────────────────────────────────────
 
@@ -693,25 +740,36 @@ class ChatMLXText(BaseChatModel):
 
         self._prompt_cache = make_prompt_cache(self._model)
         self._last_prompt_tokens = None
-        self._cache_snapshot = None
+        self._reuse_points = {}
+        self._query_point = 0
+
+    def _resume_point(self, common: int) -> int:
+        """The longest prefix of at most *common* tokens the cache can return to exactly.
+
+        KV layers trim back to any length.  A cache with other layers — e.g.
+        the ``ArraysCache`` recurrent state of a hybrid model's
+        linear-attention layers — can only return to a reuse point (see
+        :meth:`_add_reuse_point`).
+        """
+        if all(_trimmable(layer) for layer in self._prompt_cache):
+            return common
+        return max((n for n in self._reuse_points if n <= common), default=0)
 
     def _rollback_cache_to(self, target: int) -> bool:
         """Roll the prompt cache back to exactly its first *target* tokens.
 
-        Trimmable (KV) layers are trimmed.  Other layers — e.g. the
-        ``ArraysCache`` recurrent state of a hybrid model's linear-attention
-        layers — are restored from the snapshot taken at the prompt boundary
-        (see :meth:`_prompt_boundary_hook`), so they can only return to exactly
-        that boundary.  A cache that can't be rolled back exactly is rebuilt
-        instead: trimming only some layers leaves them describing different
-        token sequences, which corrupts every later generation.
+        Trimmable (KV) layers are trimmed.  Other layers are restored from the
+        copies taken at the reuse point *target*, so they can only return to
+        one (see :meth:`_resume_point`).  A cache that can't be rolled back
+        exactly is rebuilt instead: trimming only some layers leaves them
+        describing different token sequences, which corrupts every later
+        generation.
 
         Returns ``True`` when the cache now holds *target* tokens, ``False``
         when it was rebuilt empty.
         """
-        snapshot = self._cache_snapshot or {}
-        boundary = len(self._last_prompt_tokens or ())
-        exact = not snapshot or target == boundary
+        snapshot = self._reuse_points.get(target, {})
+        exact = True
         for i, layer in enumerate(self._prompt_cache):
             if not exact:
                 break
@@ -724,9 +782,9 @@ class ChatMLXText(BaseChatModel):
                 exact = False
         if not exact:
             logger.info(
-                "KV prefix cache: can't roll back exactly to %d tokens (reusable "
-                "boundary %d) — rebuilding the cache",
-                target, boundary,
+                "KV prefix cache: can't roll back exactly to %d tokens (reuse points %s) "
+                "— rebuilding the cache",
+                target, sorted(self._reuse_points),
             )
             self._reset_prompt_cache()
         return exact
@@ -735,34 +793,52 @@ class ChatMLXText(BaseChatModel):
         """Prepare the prompt cache for *tokens*; return how many are already cached.
 
         The cache is rolled back to the longest common prefix it can restore
-        exactly, or rebuilt empty — stale context never leaks into a prompt.
-        At least one token is always left to feed: ``stream_generate`` needs
-        it to produce the first logits.
+        exactly — on a hybrid model the longest reuse point inside it — or
+        rebuilt empty: stale context never leaks into a prompt.  At least one
+        token is always left to feed: ``stream_generate`` needs it to produce
+        the first logits.
         """
         common = min(self._find_common_prefix(tokens), len(tokens) - 1)
-        if common > 0 and self._rollback_cache_to(common):
-            # Until the boundary hook records this prompt, ``common`` is where
+        target = self._resume_point(common) if common > 0 else 0
+        if target > 0 and self._rollback_cache_to(target):
+            if target < common:
+                logger.info(
+                    "KV prefix cache: prompt diverges after %d tokens — resuming "
+                    "from the %d-token reuse point", common, target,
+                )
+            # Until the boundary hook records this prompt, ``target`` is where
             # a failed or cancelled generation can still be resumed from.
-            self._last_prompt_tokens = tokens[:common]
-            return common
+            self._reuse_points = {n: s for n, s in self._reuse_points.items() if n <= target}
+            self._last_prompt_tokens = tokens[:target]
+            return target
+        if common > 0:
+            logger.info(
+                "KV prefix cache: prompt diverges after %d tokens, before any reuse "
+                "point (%s) — rebuilding the cache", common, sorted(self._reuse_points),
+            )
         self._reset_prompt_cache()
         return 0
 
-    def _mark_reusable(self, tokens: List[int]) -> None:
+    def _add_reuse_point(self, tokens: List[int], query: bool = False) -> None:
         """Record that the prompt cache holds exactly *tokens* and can return to them.
 
         KV layers can always be trimmed back later; every other layer (e.g.
         the GatedDeltaNet ``ArraysCache`` of Qwen3.5 / Qwen3-Next, whose state
-        folds in every token processed — generated ones included) is
-        snapshotted now.  That state is small (~50 MB for Qwen3.5-9B), so a
-        copy per turn is cheap.
+        folds in every token processed — generated ones included) is copied
+        now: ~50 MB for Qwen3.8-9B.  *query* marks where the generation prompt
+        of a prompt ending with a user turn starts (see :meth:`_turn_start`).
         """
-        self._cache_snapshot = {
+        snapshot = {
             i: _clone_cache_layer(layer)
             for i, layer in enumerate(self._prompt_cache)
             if not _trimmable(layer)
         }
-        self._last_prompt_tokens = tokens
+        # A new dict: ``copy.copy`` of this model shares the old one.
+        self._reuse_points = {**self._reuse_points, len(tokens): snapshot}
+        if query:
+            self._query_point = len(tokens)
+        if len(tokens) >= len(self._last_prompt_tokens or ()):
+            self._last_prompt_tokens = tokens
 
     def _prompt_boundary_hook(self, tokens: List[int]):
         """Return a ``prompt_progress_callback`` that records the reusable prompt boundary.
@@ -771,8 +847,14 @@ class ChatMLXText(BaseChatModel):
         the cache and reporting ``(processed, total)`` after each chunk; the
         last token goes in with the first decode step.  At ``processed ==
         total - 1`` the cache therefore holds exactly ``tokens[:-1]`` — the
-        furthest point the next call can resume from (see
-        :meth:`_mark_reusable`).
+        furthest point the next call can resume from.
+
+        Two reuse points are kept: this boundary, from which the next agent
+        step (a tool result appended) resumes, and the start of the latest
+        user turn's generation prompt, from which a follow-up resumes — it
+        re-renders every assistant turn after that user turn (see
+        :meth:`_turn_start`).  At ~50 MB each for Qwen3.8-9B, the others
+        (static prefixes: the process-wide store has those) are dropped.
         """
         boundary = len(tokens) - 1
         cache = self._prompt_cache
@@ -781,17 +863,51 @@ class ChatMLXText(BaseChatModel):
             # Also bail if another call on this instance replaced the cache.
             if processed != total - 1 or cache is not self._prompt_cache:
                 return
-            self._mark_reusable(tokens[:boundary])
+            self._add_reuse_point(tokens[:boundary])
+            keep = (boundary, self._query_point)
+            self._reuse_points = {n: s for n, s in self._reuse_points.items() if n in keep}
 
         return _on_prompt_progress
 
-    def _static_prefix_lengths(
+    def _turn_start(self, tokens: List[int]) -> int:
+        """Where the generation prompt — the assistant-turn scaffold — starts in *tokens*; 0 if unknown.
+
+        Once the turn is in the history the template may render it
+        differently.  The Qwen3.5 template drops the empty reasoning block
+        ``<think>\\n\\n</think>\\n\\n`` from assistant turns before the last user
+        query, so the prompt after a direct answer (a follow-up, or an agent
+        observation sent as a user message) diverges 3 tokens after this point
+        — before the ``len(prompt) - 1`` boundary.  The scaffold is found by
+        rendering a probe with and without the generation prompt, and counts
+        only if it tokenizes the same at the end of *tokens*.
+        """
+        if self._scaffold is None:
+            self._scaffold = self._probe_scaffold()
+        start = len(tokens) - len(self._scaffold)
+        if self._scaffold and start > 0 and tokens[start:] == self._scaffold:
+            return start
+        return 0
+
+    def _probe_scaffold(self) -> List[int]:
+        """Tokenize the template's generation prompt (``[]`` if it has none)."""
+        probe = [HumanMessage("x")]
+        try:
+            with_prompt = self._to_prompt(probe)
+            without = self._to_prompt(probe, add_generation_prompt=False)
+        except Exception:  # noqa: BLE001 — a template the probe doesn't fit
+            logger.debug("KV prefix cache: generation prompt probe failed", exc_info=True)
+            return []
+        if len(with_prompt) <= len(without) or not with_prompt.startswith(without):
+            return []
+        return self._tokenizer.encode(with_prompt[len(without):], add_special_tokens=False)
+
+    def _static_prefixes(
         self,
         messages: List[BaseMessage],
         tools: Optional[list[dict]],
         tokens: List[int],
-    ) -> List[int]:
-        """Lengths of the static prefixes of *tokens* worth a stored snapshot, ascending.
+    ) -> tuple[Optional[str], List[int]]:
+        """The tools' key and the lengths of the static prefixes of *tokens* worth a stored snapshot.
 
         A tool-calling agent's prompt opens with a block the conversation
         doesn't change.  Two points in it are worth a snapshot:
@@ -812,10 +928,11 @@ class ChatMLXText(BaseChatModel):
         tokens), is at least ``_STATIC_PREFIX_MIN_TOKENS`` long, leaves a token
         to feed and fits the cache budget.  Prompts without tools — title
         generation, memory ranking — have none, so they never evict an
-        agent's snapshots.
+        agent's snapshots.  The lengths are ascending; the key (see
+        ``_tools_key``) names the agent's family in the store.
         """
         if not tools:
-            return []
+            return None, []
         lead: List[BaseMessage] = []
         for message in messages:
             if not isinstance(message, SystemMessage):
@@ -825,7 +942,9 @@ class ChatMLXText(BaseChatModel):
         if self._static_probe is None or self._static_probe[0] != probe_key:
             # Rendering and tokenizing ~35k tokens takes ~0.1 s: only redo it
             # when the system messages or the tools change.
-            self._static_probe = (probe_key, self._probe_static_prefixes(lead, tools))
+            self._static_probe = (
+                probe_key, self._probe_static_prefixes(lead, tools), _tools_key(tools),
+            )
         budget = int(self.prompt_cache_max_tokens or 0)
         lengths: List[int] = []
         for prefix in self._static_probe[1]:
@@ -837,7 +956,7 @@ class ChatMLXText(BaseChatModel):
                 and tokens[:n] == prefix
             ):
                 lengths.append(n)
-        return lengths
+        return self._static_probe[2], lengths
 
     def _probe_static_prefixes(
         self, lead: List[BaseMessage], tools: list[dict],
@@ -859,59 +978,120 @@ class ChatMLXText(BaseChatModel):
         return [self._tokenizer.encode(prefix) for prefix in prefixes]
 
     def _prepare_prompt_cache(
-        self, tokens: List[int], static_lengths: List[int],
-    ) -> tuple[int, int, float]:
-        """Prepare the prompt cache for *tokens*; return ``(reused, prefilled, seconds)``.
+        self,
+        tokens: List[int],
+        static_lengths: List[int],
+        tools_key: Optional[str] = None,
+        turn_start: int = 0,
+    ) -> _CachePlan:
+        """Prepare the prompt cache for *tokens*.
 
         The cache ends up holding ``tokens[:reused + prefilled]``.  *reused*
         came from this instance's own cache (:meth:`_reuse_prefix`) or a
-        snapshot restored from the process-wide store; *prefilled* were fed
-        here, in *seconds*, to snapshot static prefixes the store lacked.
+        static-prefix snapshot restored from the process-wide RAM store or,
+        after a restart, from SSD; *prefilled* were fed here, before
+        ``stream_generate`` runs.
 
         Of the prompt's static prefixes (*static_lengths*, see
-        :meth:`_static_prefix_lengths`) the longest one the instance's cache
-        doesn't cover is restored if stored; each longer one is prefilled and
-        stored, at exactly its length, for the next session.  The instance
-        records every restored or stored prefix as its own reusable point, and
-        the prompt-boundary snapshot still covers the append-only steps of an
-        agent run.  Called under ``MLX_GEN_LOCK``: rolling back, restoring and
-        prefilling are Metal work.
+        :meth:`_static_prefixes`) the longest one the instance's cache doesn't
+        cover is restored if stored; each longer one is prefilled and stored,
+        at exactly its length, for the next session — in the family of the
+        agent's tools (*tools_key*).  On a cache that can't be trimmed (a
+        hybrid model), a prompt ending with a user turn is prefilled up to its
+        *turn_start* as well and gets a reuse point there: the next prompt
+        re-renders this turn (see :meth:`_turn_start`).  Every restored or
+        stored point is a reuse point of the instance too.  Called under
+        ``MLX_GEN_LOCK``: rolling back, restoring and prefilling are Metal
+        work.
         """
         reused = self._reuse_prefix(tokens)
-        store = _prefix_store.STATIC_PREFIXES
-        settings = (self.kv_bits, self.kv_group_size)
-        restored = False
+        source = "session" if reused else "none"
         for n in reversed(static_lengths):
             if n <= reused:
                 break
-            layers = store.get(self._model, settings, tokens[:n])
+            layers, where = self._stored_static_prefix(tokens[:n], tools_key)
             if layers is not None:
                 # Private copies: this instance writes into its cache.
                 self._prompt_cache = [_clone_cache_layer(layer) for layer in layers]
-                self._mark_reusable(tokens[:n])
-                reused, restored = n, True
+                self._add_reuse_point(tokens[:n])
+                reused, source = n, where
                 break
         cached, started = reused, time.perf_counter()
         for n in static_lengths:
             if n <= cached:
                 continue
             self._prefill(tokens[cached:n])
-            store.put(
-                self._model, settings, tokens[:n],
-                [_clone_cache_layer(layer) for layer in self._prompt_cache],
-            )
-            self._mark_reusable(tokens[:n])
+            self._store_static_prefix(tokens[:n], tools_key)
+            self._add_reuse_point(tokens[:n])
             cached = n
-            logger.info(
-                "KV prefix cache: stored the %d-token static prefix for other "
-                "sessions (%d stored)", n, len(store),
-            )
+        if cached < turn_start and not all(_trimmable(layer) for layer in self._prompt_cache):
+            self._prefill(tokens[cached:turn_start])
+            self._add_reuse_point(tokens[:turn_start], query=True)
+            cached = turn_start
         logger.info(
             "KV prefix cache: %d total tokens, %d reused%s, %d new (%.0f%% hit)",
-            len(tokens), reused, " (static prefix)" if restored else "",
-            len(tokens) - reused, (reused / len(tokens)) * 100 if tokens else 0,
+            len(tokens), reused, _REUSE_SOURCES[source], len(tokens) - reused,
+            (reused / len(tokens)) * 100 if tokens else 0,
         )
-        return reused, cached - reused, time.perf_counter() - started
+        return _CachePlan(reused, cached - reused, time.perf_counter() - started, source)
+
+    def _stored_static_prefix(
+        self, prefix: List[int], tools_key: Optional[str],
+    ) -> tuple[Optional[List[Any]], Optional[str]]:
+        """The stored snapshot of exactly *prefix* and where it came from: ``"ram"``, else ``"ssd"``.
+
+        A snapshot loaded from SSD joins the RAM store (in *tools_key*'s
+        family), so the next session gets it from there.
+        """
+        store = _prefix_store.STATIC_PREFIXES
+        settings = (self.kv_bits, self.kv_group_size)
+        layers = store.get(self._model, settings, prefix)
+        if layers is not None:
+            return layers, "ram"
+        key = self._ssd_key(prefix)
+        if key is None:
+            return None, None
+        started = time.perf_counter()
+        layers = _prefix_disk.SSD_PREFIXES.load(key, len(prefix), len(self._prompt_cache))
+        if layers is None:
+            return None, None
+        store.put(
+            self._model, settings, prefix, layers,
+            family=tools_key, nbytes=_snapshot_nbytes(layers),
+        )
+        logger.info(
+            "KV prefix cache: loaded the %d-token static prefix from SSD in %.2f s",
+            len(prefix), time.perf_counter() - started,
+        )
+        return layers, "ssd"
+
+    def _store_static_prefix(self, prefix: List[int], tools_key: Optional[str]) -> None:
+        """Snapshot the prompt cache, which holds exactly *prefix*, into the RAM store and to SSD."""
+        store = _prefix_store.STATIC_PREFIXES
+        layers = [_clone_cache_layer(layer) for layer in self._prompt_cache]
+        store.put(
+            self._model, (self.kv_bits, self.kv_group_size), prefix, layers,
+            family=tools_key, nbytes=_snapshot_nbytes(layers),
+        )
+        key, started = self._ssd_key(prefix), time.perf_counter()
+        saved = key is not None and _prefix_disk.SSD_PREFIXES.save(key, layers, len(prefix))
+        logger.info(
+            "KV prefix cache: stored the %d-token static prefix for other sessions "
+            "(%d in RAM across %d agents%s)",
+            len(prefix), len(store), store.family_count,
+            f"; written to SSD in {time.perf_counter() - started:.2f} s" if saved else "",
+        )
+
+    def _ssd_key(self, prefix: List[int]) -> Optional[str]:
+        """The SSD file key of the snapshot of *prefix*; ``None`` without an SSD tier or local weights."""
+        if _prefix_disk.SSD_PREFIXES.directory is None:
+            return None
+        if self._weights_fingerprint is None:
+            self._weights_fingerprint = (_prefix_disk.model_fingerprint(self.model_path),)
+        fingerprint = self._weights_fingerprint[0]
+        if fingerprint is None:
+            return None
+        return _prefix_disk.snapshot_key(fingerprint, (self.kv_bits, self.kv_group_size), prefix)
 
     def _prefill(self, tokens: List[int]) -> None:
         """Feed *tokens* into the prompt cache without generating anything.
@@ -999,15 +1179,20 @@ class ChatMLXText(BaseChatModel):
 
         prompt: Any = prompt_str
         boundary_hook = None
-        prefilled, prefill_seconds = 0, 0.0
+        prefilled, prefill_seconds, source = 0, 0.0, None
         if self.enable_system_prompt_cache and self._prompt_cache is not None:
             full_tokens = self._tokenizer.encode(prompt_str)
-            static_lengths = self._static_prefix_lengths(messages, tools, full_tokens)
+            tools_key, static_lengths = self._static_prefixes(messages, tools, full_tokens)
+            # The next prompt re-renders a user turn's reply: resume before it.
+            turn_start = (
+                self._turn_start(full_tokens)
+                if messages and isinstance(messages[-1], HumanMessage) else 0
+            )
             # Rolling the cache back, restoring snapshots and prefilling static
             # prefixes run Metal work, so they hold the generation lock too.
             with MLX_GEN_LOCK:
-                common, prefilled, prefill_seconds = self._prepare_prompt_cache(
-                    full_tokens, static_lengths,
+                common, prefilled, prefill_seconds, source = self._prepare_prompt_cache(
+                    full_tokens, static_lengths, tools_key, turn_start,
                 )
             prompt = full_tokens[common + prefilled:]
             boundary_hook = self._prompt_boundary_hook(full_tokens)
@@ -1087,7 +1272,7 @@ class ChatMLXText(BaseChatModel):
                         break
 
         response_metadata = self._build_response_metadata(
-            last_response, cache_offset_before, prefilled, prefill_seconds,
+            last_response, cache_offset_before, prefilled, prefill_seconds, source,
         )
 
         # Soft cap on the KV cache size — the only defence against unbounded

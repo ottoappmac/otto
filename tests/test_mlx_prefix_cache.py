@@ -178,6 +178,12 @@ class _Harness:
         return full, reused, ai
 
 
+def _from_cache(ai):
+    """Tokens the prompt cache supplied (the harness's ``reused`` also counts
+    tokens prefilled before ``stream_generate``, e.g. up to a turn start)."""
+    return ai.response_metadata["tokens_from_cache"]
+
+
 def _agent_loop(steps, system_repeats=3):
     """Append-only history of one agent run: action, tool result, repeat."""
     messages = [
@@ -247,13 +253,13 @@ def test_diverging_history_never_reuses_stale_state(monkeypatch, kinds):
     # now diverge inside the previous prompt.
     rewritten = [SystemMessage("You are OTTO. Tools: read_file, search. " * 3),
                  HumanMessage("Summarise the annual report instead.")]
-    full, reused, _ = h.step(rewritten)
+    full, _, ai = h.step(rewritten)
     common = next(i for i, (a, b) in enumerate(zip(first, full)) if a != b)
     if "linear" in kinds:
         # A recurrent state can't be rolled back to an arbitrary point.
-        assert reused == 0
+        assert _from_cache(ai) == 0
     else:
-        assert reused == common
+        assert _from_cache(ai) == common
     # ...and reuse resumes on the next append-only step.
     _, reused, _ = h.step(rewritten + [AIMessage("Action: search()"),
                                        ToolMessage("no hits", tool_call_id="c")])
@@ -275,9 +281,9 @@ def test_unrelated_prompt_starts_from_an_empty_cache(monkeypatch, kinds):
     # is reusable, and the previous context must not leak into its prompt.
     h = _Harness(monkeypatch, kinds)
     h.step(next(_agent_loop(1)))
-    _, reused, _ = h.step([SystemMessage("Memory ranker: score each note."),
-                           HumanMessage("Which notes matter?")])
-    assert reused == 0
+    _, _, ai = h.step([SystemMessage("Memory ranker: score each note."),
+                       HumanMessage("Which notes matter?")])
+    assert _from_cache(ai) == 0
 
 
 @KINDS
@@ -357,6 +363,6 @@ def test_ssd_prime_only_reuses_caches_it_can_roll_back_exactly(monkeypatch, kind
     h.llm.turbo_level = "ssd"
     h.llm._ssd_store = _FakeSSDStore(saved, prefix_len)
 
-    _, reused, _ = h.step(messages)
+    _, _, ai = h.step(messages)
 
-    assert reused == (prefix_len if reusable else 0)
+    assert _from_cache(ai) == (prefix_len if reusable else 0)

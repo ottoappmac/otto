@@ -31,7 +31,7 @@ pytest.importorskip("mlx_lm")
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage  # noqa: E402
 
-from chat_models.mlx import _prefix_store, _shared, chat_mlx_text  # noqa: E402
+from chat_models.mlx import _prefix_disk, _prefix_store, _shared, chat_mlx_text  # noqa: E402
 from chat_models.mlx.chat_mlx_text import ChatMLXText  # noqa: E402
 from tests.test_mlx_prefix_cache import (  # noqa: E402
     ALL_KINDS,
@@ -134,6 +134,16 @@ def _static_ends(h, messages, tools):
     return text.index("\n") + 1, text.index("<user>") + len("<user>")
 
 
+_SCAFFOLD = "<assistant><think>"  # _QwenLikeTokenizer's generation prompt
+
+
+def _turn_start(h, messages, tools):
+    """Token index where the prompt's generation prompt (the assistant scaffold) starts."""
+    text = h.llm._to_prompt(messages, tools=tools)
+    assert text.endswith(_SCAFFOLD)
+    return len(text) - len(_SCAFFOLD)
+
+
 class _Sessions(_Harness):
     """Sessions — separate ``ChatMLXText`` instances — on one loaded model."""
 
@@ -164,9 +174,10 @@ def _on_fresh_thread(fn, *args):
 
 @pytest.fixture(autouse=True)
 def store(monkeypatch):
-    """A fresh process-wide store for every test."""
+    """A fresh process-wide store for every test, and no SSD tier."""
     fresh = _prefix_store.PrefixSnapshotStore()
     monkeypatch.setattr(_prefix_store, "STATIC_PREFIXES", fresh)
+    monkeypatch.setattr(_prefix_disk, "SSD_PREFIXES", _prefix_disk.DiskPrefixStore(None))
     return fresh
 
 
@@ -236,9 +247,10 @@ def test_first_call_prefills_and_stores_the_static_prefixes(
     with caplog.at_level(logging.INFO, logger=chat_mlx_text.__name__):
         full, cached, ai = h.step(messages, tools)
     tool_end, system_end = _static_ends(h, messages, tools)
-    # The model got a cache holding exactly the static prefix (checked by
-    # the harness) and was fed the rest; nothing came from a cache.
-    assert cached == system_end
+    # The model got a cache holding exactly the static prefix — a hybrid one
+    # also the question, up to its turn start (checked by the harness) — and
+    # was fed the rest; nothing came from a cache.
+    assert cached == (_turn_start(h, messages, tools) if "linear" in kinds else system_end)
     meta = ai.response_metadata
     assert meta["tokens_from_cache"] == 0
     assert meta["tokens_prefilled"] == len(full)
@@ -259,7 +271,8 @@ def test_new_session_restores_the_static_prefix(monkeypatch, caplog, kinds, kv_b
     with caplog.at_level(logging.INFO, logger=chat_mlx_text.__name__):
         full, cached, ai = h.step(messages, tools)
     _, system_end = _static_ends(h, messages, tools)
-    assert cached == _reused(ai) == system_end
+    assert _reused(ai) == system_end
+    assert cached == (_turn_start(h, messages, tools) if "linear" in kinds else system_end)
     meta = ai.response_metadata
     assert meta["tokens_prefilled"] == len(full) - system_end
     assert meta["cache_hit_ratio"] == round(system_end / len(full), 3)
@@ -280,7 +293,7 @@ def test_new_session_with_its_own_system_prompt_restores_the_tool_block(monkeypa
 
 
 @ALL_KINDS
-def test_new_user_message_restores_the_static_prefix(monkeypatch, kinds):
+def test_new_user_message_resumes_before_the_rerendered_turns(monkeypatch, kinds):
     h = _Sessions(monkeypatch, kinds)
     tools = _tools()
     for messages in _run(steps=3):
@@ -298,8 +311,11 @@ def test_new_user_message_restores_the_static_prefix(monkeypatch, kinds):
     diverged = next(i for i, (a, b) in enumerate(zip(previous, full)) if a != b)
     assert system_end < diverged
     if "linear" in kinds:
-        # A recurrent state can only return to a snapshot.
-        assert _reused(ai) == system_end
+        # A recurrent state can only return to a reuse point: the start of the
+        # reply to the first question, just before the divergence.
+        first_turn_start = _turn_start(h, next(_run()), tools)
+        assert system_end < first_turn_start == diverged - len("<assistant>")
+        assert _reused(ai) == first_turn_start
     else:
         # KV layers trim back to the divergence, past the static prefix.
         assert _reused(ai) == diverged
