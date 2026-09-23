@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -122,45 +123,115 @@ def _scan_topic_files() -> list[dict[str, str]]:
     return results
 
 
+def _read_topics() -> str:
+    """Topic files as ``- name: description`` lines for the prompt."""
+    return "\n".join(
+        "- {}: {}".format(
+            t.get("name", t["path"]),
+            t.get("description", "(no description)"),
+        )
+        for t in _scan_topic_files()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 — Gather: read candidate transcripts
 # ---------------------------------------------------------------------------
 
 
+# Transcripts keep *full* tool output (page dumps, file contents), base64
+# screenshots in ``meta``, and JSON-escape every non-ASCII character
+# (``\u0437`` costs ~5 tokens per Cyrillic letter).  The durable knowledge
+# is in what the user asked and what the agent answered, so each event is
+# rendered as one decoded line: messages clipped to _MESSAGE_MAX_CHARS,
+# tool calls and results to a short _TOOL_MAX_CHARS preview.
+_MESSAGE_MAX_CHARS = 2_000
+_TOOL_MAX_CHARS = 200
+_EVENT_LABELS = {
+    "user": "User",
+    "assistant": "Assistant",
+    "tool_call": "Tool call",
+    "tool_result": "Tool result",
+}
+
+
+def _clip_middle(text: str, max_chars: int) -> str:
+    """Cut *text* to at most *max_chars*, keeping its head and tail."""
+    if len(text) <= max_chars:
+        return text
+    keep = max(0, max_chars - len(f"\n[... {len(text)} chars omitted ...]\n"))
+    marker = f"\n[... {len(text) - keep} chars omitted ...]\n"
+    head = keep - keep // 2
+    return text[:head] + marker + text[len(text) - keep // 2:]
+
+
+def _render_event(record: dict[str, Any]) -> str:
+    """One compact line for a transcript event, or ``""`` if it is empty."""
+    kind = str(record.get("type") or "event")
+    content = record.get("content")
+    if isinstance(content, list):
+        content = " ".join(
+            p.get("text", "") for p in content if isinstance(p, dict)
+        )
+    if not isinstance(content, str):
+        content = json.dumps(content, ensure_ascii=False, default=str)
+    label = _EVENT_LABELS.get(kind, kind)
+    if kind.startswith("tool"):
+        label += f" {record.get('tool') or ''}".rstrip()
+        text = _clip_middle(" ".join(content.split()), _TOOL_MAX_CHARS)
+    else:
+        text = _clip_middle(content.strip(), _MESSAGE_MAX_CHARS)
+    return f"{label}: {text}" if text else ""
+
+
+def _render_transcript(session_id: str, raw: str) -> str:
+    """Compact a JSONL transcript into one ``--- Session ... ---`` block."""
+    lines: list[str] = []
+    started = ""
+    for raw_line in raw.splitlines():
+        try:
+            record = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue  # blank or partially written line
+        if not isinstance(record, dict):
+            continue
+        started = started or str(record.get("ts") or "")[:10]
+        line = _render_event(record)
+        if line:
+            lines.append(line)
+    if not lines:
+        return ""
+    date = f" ({started})" if started else ""
+    return f"--- Session {session_id}{date} ---\n" + "\n".join(lines)
+
+
 def _read_transcripts(
     candidates: list[dict[str, Any]],
-    max_chars: int = 200_000,
-) -> str:
-    """Concatenate transcript content up to *max_chars*."""
+) -> list[tuple[str, str]]:
+    """Return ``(session_id, compact block)`` per transcript, oldest first.
+
+    Oldest first so that, as batches are folded into the index one after
+    another, the most recent sessions are applied last.
+    """
     from backend.session_transcript import _transcript_path
 
-    parts: list[str] = []
-    total = 0
-    for c in candidates:
+    blocks: list[tuple[str, str]] = []
+    for c in sorted(candidates, key=lambda c: c["mtime_ms"]):
         sid = c["session_id"]
         p = _transcript_path(sid)
         if not p.exists():
             continue
         try:
-            text = p.read_text(encoding="utf-8")
-            if total + len(text) > max_chars:
-                remaining = max_chars - total
-                if remaining > 500:
-                    parts.append(
-                        f"--- Session {sid} (truncated)"
-                        f" ---\n{text[:remaining]}"
-                    )
-                break
-            parts.append(
-                f"--- Session {sid} ---\n{text}"
-            )
-            total += len(text)
+            block = _render_transcript(sid, p.read_text(encoding="utf-8"))
         except Exception:
             logger.debug(
                 "Failed to read transcript %s",
                 sid, exc_info=True,
             )
-    return "\n\n".join(parts)
+            continue
+        if block:
+            blocks.append((sid, block))
+    return blocks
 
 
 # ---------------------------------------------------------------------------
@@ -240,14 +311,89 @@ preserved automatically.
 """
 
 
-async def _run_consolidation_llm(
-    index: str, topics: str, transcripts: str, *, session_ids: str = "",
-) -> dict[str, Any]:
-    """Execute the consolidation LLM call."""
+_CONSOLIDATION_REQUEST = "Analyze the transcripts above and produce memory updates."
+
+# Input budget, in estimated tokens, for ONE consolidation request.  Local
+# models prefill at a few hundred tokens/s while holding the process-wide
+# MLX lock, so every chat waits behind the request: 16k tokens is about a
+# minute on a 9B model.  Transcripts that don't fit go out in several
+# requests, each folded into the index written by the one before.
+_LOCAL_INPUT_BUDGET_TOKENS = 16_384
+# Cloud models neither share the local GPU nor block chat; this is about
+# the old 200 000-character transcript cap.
+_CLOUD_INPUT_BUDGET_TOKENS = 64_000
+# Output cap for the consolidation JSON; also kept free in the context.
+_MAX_OUTPUT_TOKENS = 8192
+# With less room than this for transcripts a request can't make progress.
+_MIN_TRANSCRIPT_TOKENS = 2_048
+# Cheap, deterministic estimate: ~3 chars/token, as SmallContextTruncation-
+# Middleware uses.  Qwen3's tokenizer measures ~3.6 chars/token on decoded
+# Russian and ~3.3 on English, so this errs on the safe side for prose.
+_CHARS_PER_TOKEN = 3
+
+
+def _estimate_tokens(text: str) -> int:
+    return math.ceil(len(text) / _CHARS_PER_TOKEN)
+
+
+def _consolidation_prompt(
+    index: str, topics: str, batch: list[tuple[str, str]],
+) -> str:
+    return CONSOLIDATION_PROMPT.format(
+        index=index or "(empty)",
+        topics=topics or "(none)",
+        transcripts="\n\n".join(block for _, block in batch),
+        session_ids=", ".join(sid[:8] for sid, _ in batch) or "(unknown)",
+    )
+
+
+def _next_batch(
+    pending: list[tuple[str, str]], index: str, topics: str, budget: int,
+) -> tuple[str, list[str]]:
+    """Pop the transcripts for the next request off *pending*.
+
+    Takes transcripts while the whole request stays within *budget*
+    estimated tokens.  A transcript too big for a request of its own is
+    clipped to the room left beside the index and topics, keeping its
+    head (the opening request) and tail (the final answer).
+
+    Returns the system prompt and the session IDs it covers.
+    """
+    def cost(batch: list[tuple[str, str]]) -> int:
+        prompt = _consolidation_prompt(index, topics, batch)
+        return _estimate_tokens(prompt + _CONSOLIDATION_REQUEST)
+
+    room = budget - cost([])
+    if room < _MIN_TRANSCRIPT_TOKENS:
+        raise RuntimeError(
+            f"MEMORY.md and the topic list alone take ~{budget - room} of the "
+            f"{budget}-token budget for a consolidation request; prune "
+            "memory files so transcripts fit.",
+        )
+    batch: list[tuple[str, str]] = []
+    while pending and cost(batch + pending[:1]) <= budget:
+        batch.append(pending.pop(0))
+    if not batch:
+        sid, block = pending.pop(0)
+        logger.warning(
+            "[memory] transcript %s is ~%d tokens, over the %d-token room of "
+            "a consolidation request — keeping only its head and tail",
+            sid, _estimate_tokens(block), room,
+        )
+        batch.append((sid, _clip_middle(block, room * _CHARS_PER_TOKEN)))
+    return (
+        _consolidation_prompt(index, topics, batch),
+        [sid for sid, _ in batch],
+    )
+
+
+async def _load_consolidation_model() -> tuple[Any, int]:
+    """Build the consolidation model and its per-request input budget."""
     from backend.config import AppConfig
     from backend.memory_relevance import (
         _create_ranking_model,
     )
+    from utilities.environment import Environment
 
     cfg = await AppConfig.aload()
     cfg.apply_to_environ()
@@ -257,25 +403,32 @@ async def _run_consolidation_llm(
     # so we lift the cap for this call only.  Frontier models ignore the
     # override (Anthropic / Bedrock cap is server-side).
     model = _create_ranking_model(
-        cfg.memory, cfg.llm.provider, mlx_max_tokens=8192,
+        cfg.memory, cfg.llm.provider, mlx_max_tokens=_MAX_OUTPUT_TOKENS,
     )
 
-    prompt = CONSOLIDATION_PROMPT.format(
-        index=index or "(empty)",
-        topics=topics or "(none)",
-        transcripts=transcripts,
-        session_ids=session_ids or "(unknown)",
+    # Mirrors _create_ranking_model: does the model run on local hardware?
+    family = (cfg.memory.llm_family or "follow_main").lower()
+    local = family == "exo" or (
+        family != "frontier"
+        and Environment.is_oss_local_provider(cfg.llm.provider)
     )
+    budget = (
+        _LOCAL_INPUT_BUDGET_TOKENS if local else _CLOUD_INPUT_BUDGET_TOKENS
+    )
+    window = (getattr(model, "profile", None) or {}).get("max_input_tokens")
+    if isinstance(window, int) and window > 0:
+        budget = min(budget, window - _MAX_OUTPUT_TOKENS)
+    return model, budget
 
+
+async def _run_consolidation_llm(model: Any, prompt: str) -> dict[str, Any]:
+    """Execute one consolidation LLM call."""
     from langchain_core.messages import (
         HumanMessage, SystemMessage,
     )
     response = await model.ainvoke([
         SystemMessage(content=prompt),
-        HumanMessage(
-            content="Analyze the transcripts above "
-            "and produce memory updates.",
-        ),
+        HumanMessage(content=_CONSOLIDATION_REQUEST),
     ])
 
     text = response.content
@@ -605,31 +758,18 @@ async def execute_consolidation(
     _status.error = None
     _status.transcripts_processed = 0
 
+    def _mark_cancelled() -> None:
+        _status.state = RunState.CANCELLED
+        _status.finished_at = datetime.now(timezone.utc).isoformat()
+        release(rollback_to_ms=watermark_ms)
+
     try:
         if _cancel_event.is_set():
-            _status.state = RunState.CANCELLED
-            _status.finished_at = datetime.now(timezone.utc).isoformat()
-            release(rollback_to_ms=watermark_ms)
-            return
-
-        index = await asyncio.to_thread(_read_index)
-        topics_list = await asyncio.to_thread(_scan_topic_files)
-        topics_str = "\n".join(
-            "- {}: {}".format(
-                t.get("name", t["path"]),
-                t.get("description", "(no description)"),
-            )
-            for t in topics_list
-        )
-
-        if _cancel_event.is_set():
-            _status.state = RunState.CANCELLED
-            _status.finished_at = datetime.now(timezone.utc).isoformat()
-            release(rollback_to_ms=watermark_ms)
+            _mark_cancelled()
             return
 
         transcripts = await asyncio.to_thread(_read_transcripts, candidates)
-        if not transcripts.strip():
+        if not transcripts:
             logger.info("[memory] no transcript content to process")
             _status.state = RunState.SUCCESS
             _status.finished_at = datetime.now(timezone.utc).isoformat()
@@ -637,53 +777,61 @@ async def execute_consolidation(
             return
 
         if _cancel_event.is_set():
-            _status.state = RunState.CANCELLED
-            _status.finished_at = datetime.now(timezone.utc).isoformat()
-            release(rollback_to_ms=watermark_ms)
+            _mark_cancelled()
             return
 
-        # Short session ID prefixes for the provenance prompt
-        session_ids_str = ", ".join(
-            c["session_id"][:8] for c in candidates[:20]
-        )
-
-        # Run the LLM call as a separate task so the cancel event can
-        # interrupt it mid-flight without waiting for the full response.
-        llm_task = asyncio.create_task(
-            _run_consolidation_llm(
-                index, topics_str, transcripts, session_ids=session_ids_str,
+        model, budget = await _load_consolidation_model()
+        written = 0
+        while transcripts:
+            # A local model can't be stopped once generating, so honour a
+            # cancel before starting the next batch.
+            if _cancel_event.is_set():
+                _mark_cancelled()
+                return
+            # Re-read each time: the previous batch may have rewritten both.
+            index = await asyncio.to_thread(_read_index)
+            topics_str = await asyncio.to_thread(_read_topics)
+            prompt, session_ids = _next_batch(
+                transcripts, index, topics_str, budget,
             )
-        )
-        cancel_waiter = asyncio.create_task(_cancel_event.wait())
-        done, pending = await asyncio.wait(
-            {llm_task, cancel_waiter},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for t in pending:
-            t.cancel()
+            logger.info(
+                "[memory] consolidating %d transcript(s) in ~%d tokens "
+                "(budget %d), %d left",
+                len(session_ids), _estimate_tokens(prompt), budget,
+                len(transcripts),
+            )
 
-        if cancel_waiter in done:
-            llm_task.cancel()
-            try:
-                await llm_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            _status.state = RunState.CANCELLED
-            _status.finished_at = datetime.now(timezone.utc).isoformat()
-            release(rollback_to_ms=watermark_ms)
-            return
+            # Run the LLM call as a separate task so the cancel event can
+            # interrupt it mid-flight without waiting for the full response.
+            llm_task = asyncio.create_task(
+                _run_consolidation_llm(model, prompt)
+            )
+            cancel_waiter = asyncio.create_task(_cancel_event.wait())
+            done, pending = await asyncio.wait(
+                {llm_task, cancel_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
 
-        result = await llm_task
+            if cancel_waiter in done:
+                llm_task.cancel()
+                try:
+                    await llm_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                _mark_cancelled()
+                return
 
-        if _cancel_event.is_set():
-            _status.state = RunState.CANCELLED
-            _status.finished_at = datetime.now(timezone.utc).isoformat()
-            release(rollback_to_ms=watermark_ms)
-            return
+            result = await llm_task
 
-        written = await asyncio.to_thread(
-            _apply_updates, result,
-        )
+            if _cancel_event.is_set():
+                _mark_cancelled()
+                return
+
+            written += await asyncio.to_thread(
+                _apply_updates, result,
+            )
         await asyncio.to_thread(_prune, cfg)
 
         # Re-index memory files now that content has changed
