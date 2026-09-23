@@ -246,10 +246,16 @@ def evict_all_mlx_models() -> int:
     returned to the OS must therefore (1) drop those instances, (2) call
     this, and only then (3) ``gc.collect()`` + ``mx.clear_cache()``.
 
+    The static-prompt-prefix snapshots (:mod:`chat_models.mlx._prefix_store`)
+    go too: they hold KV state computed with these weights (~0.4 GB each).
+
     Returns the number of cache entries that were evicted (diagnostics).
     """
+    from chat_models.mlx._prefix_store import STATIC_PREFIXES
+
     with _LOAD_LOCK:
         count = len(_LOADED_MODELS)
         _LOADED_MODELS.clear()
         _WARMED_UP.clear()
+    STATIC_PREFIXES.clear()
     return count

@@ -131,9 +131,9 @@ def _fresh_prefill(model, tokens):
 class _Harness:
     """A ``ChatMLXText`` wired to ``_TinyLM`` with a spy on ``stream_generate``."""
 
-    def __init__(self, monkeypatch, kinds, cls=ChatMLXText, **llm_kwargs):
+    def __init__(self, monkeypatch, kinds, cls=ChatMLXText, tokenizer=None, **llm_kwargs):
         self.model = _TinyLM(kinds)
-        self.tokenizer = TokenizerWrapper(_CharTokenizer())
+        self.tokenizer = TokenizerWrapper(tokenizer or _CharTokenizer())
         monkeypatch.setattr(
             chat_mlx_text, "_load_or_reuse",
             lambda *_: ((self.model, self.tokenizer, None), False),
@@ -158,13 +158,13 @@ class _Harness:
             **llm_kwargs,
         )
 
-    def step(self, messages):
+    def step(self, messages, tools=None):
         """Generate once; assert the cache handed to the model was consistent.
 
         Returns ``(prompt_tokens, reused, ai_message)``.
         """
-        ai = self.llm.invoke(messages)
-        full = self.tokenizer.encode(self.llm._to_prompt(messages))
+        ai = self.llm.invoke(messages, tools=tools)
+        full = self.tokenizer.encode(self.llm._to_prompt(messages, tools=tools))
         fed, cache_at_start = self.starts[-1]
         reused = len(full) - len(fed)
         assert fed == full[reused:], "the model must be fed the suffix of the prompt"
