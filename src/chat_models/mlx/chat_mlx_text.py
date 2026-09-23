@@ -16,7 +16,6 @@ Usage::
     )
 """
 
-import asyncio
 import json
 import logging
 from typing import Any, List, Optional, Sequence, Union
@@ -762,6 +761,9 @@ class ChatMLXText(BaseChatModel):
         if native_mode:
             active_stop_tokens = stop_tokens_for(self._tool_family) or _STOP_TOKENS
 
+        # Set by ``_agenerate`` when its awaiting task is cancelled (Stop).
+        cancel_event = kwargs.pop("cancel_event", None)
+
         # Hold the process-wide MLX generation lock for the entire stream.
         # Releasing between tokens would let another thread sneak in a
         # ``stream_generate`` call and trigger the Metal command-buffer
@@ -775,6 +777,14 @@ class ChatMLXText(BaseChatModel):
             ):
                 text += response.text
                 last_response = response
+                # Nobody will read the rest: stop now rather than decode on to
+                # max_tokens while every other MLX request waits for the lock.
+                if cancel_event is not None and cancel_event.is_set():
+                    logger.info(
+                        "MLX generation cancelled after %d tokens — stopping decode.",
+                        response.generation_tokens,
+                    )
+                    break
                 if not native_mode and _action_block_complete(text):
                     break
                 # Some mlx_lm / tokenizer combinations don't honour every stop
@@ -893,8 +903,14 @@ class ChatMLXText(BaseChatModel):
         run_manager=None,
         **kwargs,
     ) -> ChatResult:
-        """Run generation in a thread pool to avoid blocking the event loop."""
-        return await asyncio.to_thread(
+        """Run generation in a thread pool to avoid blocking the event loop.
+
+        Cancelling this coroutine also stops the worker thread's decode — see
+        :func:`chat_models.mlx._shared.to_thread_cancellable`.
+        """
+        from chat_models.mlx._shared import to_thread_cancellable
+
+        return await to_thread_cancellable(
             self._generate, messages, stop=stop, **kwargs
         )
 

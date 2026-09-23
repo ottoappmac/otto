@@ -24,8 +24,9 @@ backward-compatibility with modules that do
 
 from __future__ import annotations
 
+import asyncio
 import threading
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 
 # ── Shared model registry ─────────────────────────────────────────────────────
@@ -68,6 +69,36 @@ _LOAD_LOCK = threading.Lock()
 # same process.
 
 MLX_GEN_LOCK = threading.Lock()
+
+
+# ── Cancellable generation ────────────────────────────────────────────────────
+#
+# Async callers run the blocking ``_generate`` in a worker thread.  Cancelling
+# the awaiting task (the session Stop button) only cancels the *await*: a
+# thread cannot be interrupted, so left alone it would decode on to
+# ``max_tokens`` while holding ``MLX_GEN_LOCK``, with every other MLX request
+# queued behind output nobody reads.  Cancellation is therefore cooperative —
+# the thread gets a per-call event and checks it after every token.
+
+
+async def to_thread_cancellable(
+    generate: Callable[..., Any], /, *args: Any, **kwargs: Any,
+) -> Any:
+    """Await ``generate(*args, cancel_event=<event>, **kwargs)`` in a worker thread.
+
+    *generate* must stop decoding once ``cancel_event`` is set; the event is
+    set as soon as the await ends, so a cancelled caller (which still gets
+    :class:`asyncio.CancelledError`) no longer leaves a decode running.
+    """
+    cancel_event = threading.Event()
+    try:
+        return await asyncio.to_thread(
+            generate, *args, cancel_event=cancel_event, **kwargs
+        )
+    finally:
+        # No-op when the thread already returned; otherwise the await was
+        # interrupted and the still-running decode must stop.
+        cancel_event.set()
 
 
 # ── Loop-recovery temperature bump ────────────────────────────────────────────
