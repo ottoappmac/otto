@@ -3,25 +3,34 @@
 The RAM store (:mod:`chat_models.mlx._prefix_store`) dies with the process,
 so after every backend restart each agent paid a full cold prefill of its
 tool block and system turn again (~130 s each for OTTO's ~35k tokens on
-Qwen3.8-9B).  Each newly prefilled static snapshot is therefore also written
-here with ``mlx_lm``'s ``save_prompt_cache`` — which serialises any cache
-class through ``.state`` / ``.meta_state`` — and a RAM-store miss loads the
-exact-length snapshot back with ``load_prompt_cache``.
+Qwen3.8-9B).  Static snapshots that can be hit again are therefore also
+written here with ``mlx_lm``'s ``save_prompt_cache`` — which serialises any
+cache class through ``.state`` / ``.meta_state`` — and a RAM-store miss loads
+the exact-length snapshot back with ``load_prompt_cache``.
+
+Not every static snapshot can: OTTO's system turn names the session's files
+directory and the current time, so no other session — and no session after a
+restart — ever hits it.  Written are a prompt's first static prefix (the tool
+block, shared by every session of its agent) and any other from its second
+use in this process on (e.g. a subagent's unchanging system turn); see
+:meth:`DiskPrefixStore.wants`.
 
 A file is named by the sha256 of everything its contents depend on: the
-model weights (path, size and mtime of every weight file), the ``mlx_lm``
-version (cache-class layout), the KV settings (``kv_bits``,
-``kv_group_size``) and the exact prefix token ids.  A file is written to a
+loaded model weights (path, size and mtime of every weight file and of
+``config.json``, taken when they were loaded), the ``mlx_lm`` version
+(cache-class layout), the KV settings (``kv_bits``, ``kv_group_size``) and the
+exact prefix token ids.  A file is written to a
 ``tmp/`` sibling and renamed into place, so a crash never leaves a partial
 file under a real name; a file that still fails to load, or whose contents
 don't match its name (token count, layer count, layer offsets), is deleted
 and the caller prefills instead.
 
 Writing costs one sequential write of the snapshot (~0.37 GB for a 4-bit
-35k-token Qwen3.8-9B prefix: ~0.1-0.3 s), paid only right after the ~130 s
-prefill that produced it; loading is a read of the same size.  The
-directory is capped at ``MAX_BYTES``, least recently used (by mtime — a load
-touches its file) first.
+35k-token Qwen3.8-9B prefix: ~0.1-0.3 s), done once the reply is generated,
+outside ``MLX_GEN_LOCK``; loading is a read of the same size.  The directory
+is capped at ``MAX_BYTES``, least recently used (by mtime) first: every use
+of a snapshot — loaded from here or served from the RAM store — touches its
+file.
 
 The directory is ``~/Library/Caches/otto/prefix``; the ``OTTO_MLX_PREFIX_CACHE_DIR``
 environment variable moves it, and an empty value turns the tier off.
@@ -45,6 +54,7 @@ CACHE_DIR_ENV = "OTTO_MLX_PREFIX_CACHE_DIR"
 DEFAULT_DIR = Path.home() / "Library" / "Caches" / "otto" / "prefix"
 MAX_BYTES = 4 * 1024**3
 _FORMAT = "otto-prefix-1"
+_WEIGHT_SUFFIXES = (".safetensors", ".npz")
 _STALE_TMP_SECONDS = 3600
 
 
@@ -56,25 +66,26 @@ def cache_dir_from_env() -> Optional[Path]:
     return Path(value).expanduser() if value.strip() else None
 
 
-def model_fingerprint(model_path: str) -> Optional[str]:
-    """Identify the weights of *model_path*, or ``None`` when they aren't local files.
+def model_fingerprint(local_dir: str) -> Optional[str]:
+    """Identify the model files in *local_dir*, or ``None`` when it holds no weights.
 
-    Without a fingerprint nothing may be shared across restarts: another
-    model could later load under the same name.
+    Taken when the model is loaded from there (see
+    ``_shared.weights_fingerprint``): the files may change later — a catalog
+    re-download — while those weights stay loaded.  Without a fingerprint
+    nothing may be shared across restarts: another model could later load
+    under the same name.
     """
-    from chat_models.mlx._shared import _resolve_local_path
-
     try:
-        local = Path(_resolve_local_path(model_path)).resolve()
-        weights = sorted(p for p in local.iterdir() if p.suffix in (".safetensors", ".npz"))
-    except Exception:  # noqa: BLE001 — not a local model directory
+        local = Path(local_dir).resolve()
+        files = sorted(p for p in local.iterdir() if p.suffix in _WEIGHT_SUFFIXES or p.name == "config.json")
+        if not any(p.suffix in _WEIGHT_SUFFIXES for p in files):
+            return None
+        digest = hashlib.sha256(str(local).encode())
+        for path in files:
+            stat = path.stat()
+            digest.update(f"|{path.name}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+    except OSError:  # not a local model directory
         return None
-    if not weights:
-        return None
-    digest = hashlib.sha256(str(local).encode())
-    for path in weights:
-        stat = path.stat()
-        digest.update(f"|{path.name}:{stat.st_size}:{stat.st_mtime_ns}".encode())
     return digest.hexdigest()
 
 
@@ -90,12 +101,42 @@ def snapshot_key(fingerprint: str, settings: Any, tokens: Sequence[int]) -> str:
 class DiskPrefixStore:
     """Static-prefix snapshots as safetensors files in *directory* (``None``: disabled).
 
-    Called under ``MLX_GEN_LOCK``: loading evaluates arrays.
+    ``load`` and ``wants`` are called under ``MLX_GEN_LOCK`` (loading
+    evaluates arrays); ``save``, which only writes arrays already evaluated,
+    outside it.
     """
 
     def __init__(self, directory: Optional[Path], max_bytes: int = MAX_BYTES) -> None:
         self.directory = directory
         self.max_bytes = max_bytes
+        # Keys of the snapshots used in this process (see ``wants``).
+        self._used: set = set()
+
+    def wants(self, key: str, first_prefix: bool) -> bool:
+        """Whether to write the snapshot *key*, just used (restored from RAM or prefilled).
+
+        A snapshot already on SSD isn't: its file is touched instead — most
+        recently used.  Written is a prompt's *first_prefix* — its tool
+        block, shared by every session of the agent — and any other from its
+        second use in this process on.  A system turn that names its session
+        and the current time is never used again, not even after a restart:
+        writing it (~0.37 GB) would only push reusable files out.
+        """
+        if self.touch(key):
+            return False
+        used_before = key in self._used
+        self._used.add(key)
+        return first_prefix or used_before
+
+    def touch(self, key: str) -> bool:
+        """Mark the snapshot *key* most recently used; ``False`` if it has no file."""
+        if self.directory is None:
+            return False
+        try:
+            os.utime(self.directory / f"{key}.safetensors")
+        except OSError:  # not written, or evicted meanwhile (e.g. by another process)
+            return False
+        return True
 
     def load(self, key: str, n_tokens: int, n_layers: int) -> Optional[List[Any]]:
         """Return the evaluated snapshot stored under *key*, or ``None``.
@@ -117,7 +158,7 @@ class DiskPrefixStore:
             )
             path.unlink(missing_ok=True)
             return None
-        os.utime(path)  # most recently used
+        self.touch(key)
         return layers
 
     @staticmethod

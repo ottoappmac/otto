@@ -124,6 +124,30 @@ def test_memory_cap_evicts_least_recently_used_families_but_keeps_the_newest():
     assert store.get(model, "kv4", [3]) == ["b2"]
 
 
+_MB = 1024**2
+
+
+def test_the_ram_store_keeps_two_agents_within_1_5_gib_by_default():
+    # Idle snapshots stay resident next to the weights, and the SSD tier
+    # restores an evicted family's tool block in ~0.1-0.3 s.
+    store = _prefix_store.PrefixSnapshotStore()
+    model = _Model()
+    # 4-bit Qwen3.8-9B: the orchestrator's and the browser agent's tool block + system turn.
+    store.put(model, "kv4", [1], ["o tools"], family="orchestrator", nbytes=356 * _MB)
+    store.put(model, "kv4", [1, 2], ["o system"], family="orchestrator", nbytes=370 * _MB)
+    store.put(model, "kv4", [7], ["b tools"], family="browser", nbytes=286 * _MB)
+    store.put(model, "kv4", [7, 8], ["b system"], family="browser", nbytes=318 * _MB)
+    assert len(store) == 4
+    # A third agent evicts the least recently used one.
+    store.put(model, "kv4", [5], ["c tools"], family="coder", nbytes=10 * _MB)
+    assert store.family_count == 2
+    assert store.get(model, "kv4", [1]) is None
+    # A bf16 family (~1.1 GB per entry) is kept alone.
+    store.put(model, "kv4", [9], ["bf16 tools"], family="bf16", nbytes=1100 * _MB)
+    store.put(model, "kv4", [9, 10], ["bf16 system"], family="bf16", nbytes=1100 * _MB)
+    assert store.family_count == 1
+
+
 def _browser_run(question="Open example.com and read the title."):
     return [
         SystemMessage("You are the browser agent. Report what the page shows. " * 3),

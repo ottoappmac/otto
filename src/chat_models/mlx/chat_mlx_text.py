@@ -54,6 +54,7 @@ from chat_models.mlx._shared import (
     _LOADED_MODELS,
     _WARMED_UP,
     _load_or_reuse,
+    weights_fingerprint,
 )
 from chat_models.mlx import _prefix_disk, _prefix_store
 
@@ -315,8 +316,9 @@ class ChatMLXText(BaseChatModel):
     _static_probe: Optional[tuple] = None
     # ``_turn_start`` memo: the tokens of the template's generation prompt.
     _scaffold: Optional[List[int]] = None
-    # ``_ssd_key`` memo: ``(fingerprint of the weights or None,)``.
-    _weights_fingerprint: Optional[tuple] = None
+    # Static-prefix snapshots to write to SSD once the reply is generated:
+    # ``(key, layers, n_tokens)`` (see ``_keep_on_ssd``).
+    _ssd_writes: list = []
     # Native tool-calling state — populated in __init__ once the tokenizer is loaded.
     # ``_native_tools_supported`` gates ``bind_tools``; ``_tool_family`` selects the
     # parser used by ``_generate`` to extract structured tool calls from output.
@@ -996,7 +998,8 @@ class ChatMLXText(BaseChatModel):
         :meth:`_static_prefixes`) the longest one the instance's cache doesn't
         cover is restored if stored; each longer one is prefilled and stored,
         at exactly its length, for the next session — in the family of the
-        agent's tools (*tools_key*).  On a cache that can't be trimmed (a
+        agent's tools (*tools_key*); the ones worth a file are queued for SSD
+        (see :meth:`_keep_on_ssd`).  On a cache that can't be trimmed (a
         hybrid model), a prompt ending with a user turn is prefilled up to its
         *turn_start* as well and gets a reuse point there: the next prompt
         re-renders this turn (see :meth:`_turn_start`).  Every restored or
@@ -1009,10 +1012,8 @@ class ChatMLXText(BaseChatModel):
         for n in reversed(static_lengths):
             if n <= reused:
                 break
-            layers, where = self._stored_static_prefix(tokens[:n], tools_key)
-            if layers is not None:
-                # Private copies: this instance writes into its cache.
-                self._prompt_cache = [_clone_cache_layer(layer) for layer in layers]
+            where = self._restore_static_prefix(tokens[:n])
+            if where is not None:
                 self._add_reuse_point(tokens[:n])
                 reused, source = n, where
                 break
@@ -1021,7 +1022,7 @@ class ChatMLXText(BaseChatModel):
             if n <= cached:
                 continue
             self._prefill(tokens[cached:n])
-            self._store_static_prefix(tokens[:n], tools_key)
+            self._store_static_prefix(tokens[:n], tools_key, first=(n == static_lengths[0]))
             self._add_reuse_point(tokens[:n])
             cached = n
         if cached < turn_start and not all(_trimmable(layer) for layer in self._prompt_cache):
@@ -1035,60 +1036,95 @@ class ChatMLXText(BaseChatModel):
         )
         return _CachePlan(reused, cached - reused, time.perf_counter() - started, source)
 
-    def _stored_static_prefix(
-        self, prefix: List[int], tools_key: Optional[str],
-    ) -> tuple[Optional[List[Any]], Optional[str]]:
-        """The stored snapshot of exactly *prefix* and where it came from: ``"ram"``, else ``"ssd"``.
+    def _restore_static_prefix(self, prefix: List[int]) -> Optional[str]:
+        """Make the prompt cache the stored snapshot of exactly *prefix*.
 
-        A snapshot loaded from SSD joins the RAM store (in *tools_key*'s
-        family), so the next session gets it from there.
+        Returns where it came from — ``"ram"``, ``"ssd"`` — or ``None`` when
+        it isn't stored.  A RAM hit is copied (the store's snapshot is
+        shared) and counts as a use on SSD too (see :meth:`_keep_on_ssd`).  A
+        snapshot loaded from SSD is this instance's own: it becomes the cache
+        as is and stays out of the RAM store, where it would take another
+        ~0.37 GB although the next session can load it again in ~0.1-0.3 s.
         """
-        store = _prefix_store.STATIC_PREFIXES
-        settings = (self.kv_bits, self.kv_group_size)
-        layers = store.get(self._model, settings, prefix)
-        if layers is not None:
-            return layers, "ram"
+        layers = _prefix_store.STATIC_PREFIXES.get(
+            self._model, (self.kv_bits, self.kv_group_size), prefix,
+        )
         key = self._ssd_key(prefix)
+        if layers is not None:
+            # Private copies: this instance writes into its cache.
+            self._prompt_cache = [_clone_cache_layer(layer) for layer in layers]
+            self._keep_on_ssd(key, layers, len(prefix))
+            return "ram"
         if key is None:
-            return None, None
+            return None
         started = time.perf_counter()
         layers = _prefix_disk.SSD_PREFIXES.load(key, len(prefix), len(self._prompt_cache))
         if layers is None:
-            return None, None
-        store.put(
-            self._model, settings, prefix, layers,
-            family=tools_key, nbytes=_snapshot_nbytes(layers),
-        )
+            return None
+        self._prompt_cache = layers
         logger.info(
             "KV prefix cache: loaded the %d-token static prefix from SSD in %.2f s",
             len(prefix), time.perf_counter() - started,
         )
-        return layers, "ssd"
+        return "ssd"
 
-    def _store_static_prefix(self, prefix: List[int], tools_key: Optional[str]) -> None:
-        """Snapshot the prompt cache, which holds exactly *prefix*, into the RAM store and to SSD."""
+    def _store_static_prefix(
+        self, prefix: List[int], tools_key: Optional[str], first: bool,
+    ) -> None:
+        """Snapshot the prompt cache, which holds exactly *prefix*, into the RAM store.
+
+        *first*: *prefix* is the prompt's first static prefix, its tool block
+        — written to SSD as well (see :meth:`_keep_on_ssd`).
+        """
         store = _prefix_store.STATIC_PREFIXES
         layers = [_clone_cache_layer(layer) for layer in self._prompt_cache]
         store.put(
             self._model, (self.kv_bits, self.kv_group_size), prefix, layers,
             family=tools_key, nbytes=_snapshot_nbytes(layers),
         )
-        key, started = self._ssd_key(prefix), time.perf_counter()
-        saved = key is not None and _prefix_disk.SSD_PREFIXES.save(key, layers, len(prefix))
+        self._keep_on_ssd(self._ssd_key(prefix), layers, len(prefix), first)
         logger.info(
             "KV prefix cache: stored the %d-token static prefix for other sessions "
-            "(%d in RAM across %d agents%s)",
+            "(%d in RAM across %d agents)",
             len(prefix), len(store), store.family_count,
-            f"; written to SSD in {time.perf_counter() - started:.2f} s" if saved else "",
         )
+
+    def _keep_on_ssd(
+        self, key: Optional[str], layers: List[Any], n_tokens: int, first: bool = False,
+    ) -> None:
+        """Count a use of the static-prefix snapshot *layers* (*key*: its SSD file) on SSD.
+
+        Its file is touched — the SSD tier evicts least recently used first —
+        or, when it has none yet and is worth one (see
+        ``DiskPrefixStore.wants``; *first*: the prompt's tool block), it is
+        queued for :meth:`_write_ssd_snapshots`.
+        """
+        if key is not None and _prefix_disk.SSD_PREFIXES.wants(key, first):
+            self._ssd_writes = [*self._ssd_writes, (key, layers, n_tokens)]
+
+    def _write_ssd_snapshots(self) -> None:
+        """Write the snapshots :meth:`_keep_on_ssd` queued.
+
+        Runs once the reply is generated and outside ``MLX_GEN_LOCK``, so a
+        write (~0.37 GB for OTTO's tool block) holds up neither this call's
+        first token nor another agent.  The layers are evaluated copies that
+        nothing writes into, built on this thread, so writing them doesn't
+        need the lock.
+        """
+        writes, self._ssd_writes = self._ssd_writes, []
+        for key, layers, n_tokens in writes:
+            started = time.perf_counter()
+            if _prefix_disk.SSD_PREFIXES.save(key, layers, n_tokens):
+                logger.info(
+                    "KV prefix cache: wrote the %d-token static prefix to SSD in %.2f s",
+                    n_tokens, time.perf_counter() - started,
+                )
 
     def _ssd_key(self, prefix: List[int]) -> Optional[str]:
         """The SSD file key of the snapshot of *prefix*; ``None`` without an SSD tier or local weights."""
         if _prefix_disk.SSD_PREFIXES.directory is None:
             return None
-        if self._weights_fingerprint is None:
-            self._weights_fingerprint = (_prefix_disk.model_fingerprint(self.model_path),)
-        fingerprint = self._weights_fingerprint[0]
+        fingerprint = weights_fingerprint(self._model)
         if fingerprint is None:
             return None
         return _prefix_disk.snapshot_key(fingerprint, (self.kv_bits, self.kv_group_size), prefix)
@@ -1270,6 +1306,7 @@ class ChatMLXText(BaseChatModel):
                             len(text), self.max_tokens,
                         )
                         break
+        self._write_ssd_snapshots()
 
         response_metadata = self._build_response_metadata(
             last_response, cache_offset_before, prefilled, prefill_seconds, source,

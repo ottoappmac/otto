@@ -6,8 +6,9 @@ change: the tool schemas and the system prompt.  OTTO's orchestrator block is
 new ``ChatMLXText`` instance, empty cache) used to prefill it again.  This
 store keeps prompt-cache snapshots taken at exactly the end of such prefixes,
 so any instance running the same loaded model can restore one instead (see
-``ChatMLXText._prepare_prompt_cache``).  Snapshots also go to SSD
-(:mod:`chat_models.mlx._prefix_disk`) so they survive a restart.
+``ChatMLXText._prepare_prompt_cache``).  Snapshots worth it also go to SSD
+(:mod:`chat_models.mlx._prefix_disk`) so they survive a restart; one loaded
+back from there goes to its session only, not to this store.
 
 Entries are keyed by the loaded model object, the cache-affecting settings
 and the exact prefix tokens.  The dict lookup hashes the tokens and then
@@ -32,8 +33,11 @@ attention layers × 4 KV heads × 256 dims, 24 GatedDeltaNet layers) at
 ``kv_bits=4`` the KV is ~9.2 KB per token — ~0.32 GB for a 34.6k-token
 prefix (bf16: ~1.1 GB) — and the recurrent state ~49 MB (a float32
 32×128×128 SSM state per layer), ~0.37 GB per entry.  A family of two is
-~0.7 GB; four families ~3 GB, under the 4 GiB ``MAX_BYTES`` cap, which
-instead bounds the bf16 case (~2.2 GB per family) to one or two families.
+~0.6-0.7 GB: the orchestrator and a browser agent running at the same time
+take ~1.3 GB, under the 1.5 GiB ``MAX_BYTES`` cap, which keeps a bf16 family
+(~1.1 GB per entry) alone.  The entries are MLX buffers that stay resident
+next to the weights during every generation, so the store stays small: an
+evicted family's tool block comes back from SSD in ~0.1-0.3 s.
 """
 
 from __future__ import annotations
@@ -46,8 +50,8 @@ from typing import Any, Hashable, List, Optional, Sequence
 # third prefix evicts that family's least recently used one.
 MAX_ENTRIES = 2
 # Agents whose snapshots are kept at once, and the memory they may take.
-MAX_FAMILIES = 4
-MAX_BYTES = 4 * 1024**3
+MAX_FAMILIES = 2
+MAX_BYTES = 3 * 1024**3 // 2
 
 
 class PrefixSnapshotStore:
