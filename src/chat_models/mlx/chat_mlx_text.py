@@ -155,6 +155,35 @@ def _looks_repetitive(text: str) -> bool:
         return False
 
 
+def _trimmable(layer: Any) -> bool:
+    """Whether a prompt-cache layer can be rolled back by trimming.
+
+    True for KV caches (``KVCache``, ``QuantizedKVCache``, a
+    ``RotatingKVCache`` that hasn't wrapped yet).  False for layers whose
+    state folds in every processed token — e.g. the ``ArraysCache`` holding
+    the GatedDeltaNet recurrent state of Qwen3.5 / Qwen3-Next linear-attention
+    layers — which can only be restored from a snapshot.
+    """
+    return layer.is_trimmable() and isinstance(getattr(layer, "offset", None), int)
+
+
+def _clone_cache_layer(layer: Any) -> Any:
+    """Return an evaluated, independent copy of a prompt-cache layer.
+
+    ``mx.array`` copies, so in-place writes to one copy (``RotatingKVCache``
+    updates its buffers in place) never reach the other.  Evaluating right
+    away matters: MLX cannot evaluate a lazy array on a thread other than the
+    one that built it, and consecutive generations may run on different
+    ``asyncio.to_thread`` workers.
+    """
+    import mlx.core as mx
+    from mlx.utils import tree_map
+
+    state = tree_map(lambda x: mx.array(x) if isinstance(x, mx.array) else x, layer.state)
+    mx.eval(state)
+    return type(layer).from_state(state, layer.meta_state)
+
+
 class ChatMLXText(BaseChatModel):
     """``BaseChatModel`` backed by a local ``mlx_lm`` text model.
 
@@ -201,10 +230,11 @@ class ChatMLXText(BaseChatModel):
     kv_group_size: int = 64
     # Soft cap on the KV prefix cache, in tokens.  After each generation
     # the cumulative cache offset is checked against this value; if it's
-    # over, the cache is trimmed to roughly half the cap so the next turn
-    # has headroom and we don't trim every single call.  ``0`` disables
-    # the cap and reverts to the legacy unbounded behaviour.  Default
-    # 32 768 tokens ≈ 1 GB on a 7B 4-bit model.
+    # over, the generated tail is dropped (the cache rolls back to the
+    # reusable prompt prefix), or the cache is rebuilt when that prefix
+    # alone exceeds the cap.  ``0`` disables the cap and reverts to the
+    # legacy unbounded behaviour.  Default 32 768 tokens ≈ 1 GB on a 7B
+    # 4-bit model.
     prompt_cache_max_tokens: int = 32768
 
     # Exposes the effective input budget to framework helpers such as
@@ -223,7 +253,11 @@ class ChatMLXText(BaseChatModel):
     _tokenizer: Any = None
     _draft_model: Any = None
     _prompt_cache: Any = None
+    # The token prefix the prompt cache can be rolled back to exactly (see
+    # ``_rollback_cache_to``).  ``_cache_snapshot`` maps layer index → copy of
+    # each non-trimmable layer taken at exactly ``len(_last_prompt_tokens)``.
     _last_prompt_tokens: Optional[List[int]] = None
+    _cache_snapshot: Optional[dict] = None
     # Native tool-calling state — populated in __init__ once the tokenizer is loaded.
     # ``_native_tools_supported`` gates ``bind_tools``; ``_tool_family`` selects the
     # parser used by ``_generate`` to extract structured tool calls from output.
@@ -609,7 +643,7 @@ class ChatMLXText(BaseChatModel):
     # ── Prefix-aware caching helpers ──────────────────────────────────────────
 
     def _find_common_prefix(self, tokens: List[int]) -> int:
-        """Return the length of the longest common token prefix with the previous turn."""
+        """Return the length of the longest common token prefix with the cache's reusable prefix."""
         if not self._last_prompt_tokens:
             return 0
         limit = min(len(self._last_prompt_tokens), len(tokens))
@@ -618,42 +652,112 @@ class ChatMLXText(BaseChatModel):
                 return i
         return limit
 
-    def _trim_cache_to(self, target: int) -> None:
-        """Roll the KV cache back to *target* tokens by trimming the excess.
+    def _reset_prompt_cache(self) -> None:
+        """Replace the prompt cache with an empty one; nothing is reusable."""
+        from mlx_lm.models.cache import make_prompt_cache
 
-        Trims each layer individually so that mixed caches (e.g. Qwen3.5's
-        ArraysCache + KVCache) are handled gracefully — non-trimmable layers
-        are skipped.
+        self._prompt_cache = make_prompt_cache(self._model)
+        self._last_prompt_tokens = None
+        self._cache_snapshot = None
+
+    def _rollback_cache_to(self, target: int) -> bool:
+        """Roll the prompt cache back to exactly its first *target* tokens.
+
+        Trimmable (KV) layers are trimmed.  Other layers — e.g. the
+        ``ArraysCache`` recurrent state of a hybrid model's linear-attention
+        layers — are restored from the snapshot taken at the prompt boundary
+        (see :meth:`_prompt_boundary_hook`), so they can only return to exactly
+        that boundary.  A cache that can't be rolled back exactly is rebuilt
+        instead: trimming only some layers leaves them describing different
+        token sequences, which corrupts every later generation.
+
+        Returns ``True`` when the cache now holds *target* tokens, ``False``
+        when it was rebuilt empty.
         """
-        current = self._cache_offset()
-        excess = current - target
-        if excess <= 0:
-            return
-        trimmed = 0
-        for c in self._prompt_cache:
-            if c.is_trimmable():
-                n = c.trim(excess)
-                if not trimmed:
-                    trimmed = n  # all trimmable layers return the same value; log first
-        logger.debug(
-            "Cache trimmed by %d tokens (%d → %d)",
-            trimmed, current, self._cache_offset(),
-        )
+        snapshot = self._cache_snapshot or {}
+        boundary = len(self._last_prompt_tokens or ())
+        exact = not snapshot or target == boundary
+        for i, layer in enumerate(self._prompt_cache):
+            if not exact:
+                break
+            if i in snapshot:
+                self._prompt_cache[i] = _clone_cache_layer(snapshot[i])
+            elif _trimmable(layer) and layer.offset >= target:
+                layer.trim(layer.offset - target)
+                exact = layer.offset == target
+            else:
+                exact = False
+        if not exact:
+            logger.info(
+                "KV prefix cache: can't roll back exactly to %d tokens (reusable "
+                "boundary %d) — rebuilding the cache",
+                target, boundary,
+            )
+            self._reset_prompt_cache()
+        return exact
+
+    def _reuse_prefix(self, tokens: List[int]) -> int:
+        """Prepare the prompt cache for *tokens*; return how many are already cached.
+
+        The cache is rolled back to the longest common prefix it can restore
+        exactly, or rebuilt empty — stale context never leaks into a prompt.
+        At least one token is always left to feed: ``stream_generate`` needs
+        it to produce the first logits.
+        """
+        common = min(self._find_common_prefix(tokens), len(tokens) - 1)
+        if common > 0 and self._rollback_cache_to(common):
+            # Until the boundary hook records this prompt, ``common`` is where
+            # a failed or cancelled generation can still be resumed from.
+            self._last_prompt_tokens = tokens[:common]
+            return common
+        self._reset_prompt_cache()
+        return 0
+
+    def _prompt_boundary_hook(self, tokens: List[int]):
+        """Return a ``prompt_progress_callback`` that records the reusable prompt boundary.
+
+        ``generate_step`` prefills every prompt token but the last, evaluating
+        the cache and reporting ``(processed, total)`` after each chunk; the
+        last token goes in with the first decode step.  At ``processed ==
+        total - 1`` the cache therefore holds exactly ``tokens[:-1]`` — the
+        furthest point the next call can resume from.  KV layers can always be
+        trimmed back to it later; every other layer (e.g. the GatedDeltaNet
+        ``ArraysCache`` of Qwen3.5 / Qwen3-Next, whose state folds in every
+        token processed — generated ones included) is snapshotted here.  That
+        state is small (~25 MB for a 32-layer Qwen3.5), so a copy per turn is
+        cheap.
+        """
+        boundary = len(tokens) - 1
+        cache = self._prompt_cache
+
+        def _on_prompt_progress(processed: int, total: int) -> None:
+            # Also bail if another call on this instance replaced the cache.
+            if processed != total - 1 or cache is not self._prompt_cache:
+                return
+            self._cache_snapshot = {
+                i: _clone_cache_layer(layer)
+                for i, layer in enumerate(cache)
+                if not _trimmable(layer)
+            }
+            self._last_prompt_tokens = tokens[:boundary]
+
+        return _on_prompt_progress
 
     def _enforce_cache_budget(self) -> None:
-        """Trim (or rebuild) the KV prompt cache when it exceeds the budget.
+        """Keep the prompt cache under the budget without breaking prefix reuse.
 
         Long autonomous sessions can otherwise grow the cache without bound
         and trip macOS into swap or OOM.  Strategy:
 
         * No cap (``prompt_cache_max_tokens == 0``) → no-op (legacy behaviour).
-        * Cache empty / disabled → no-op.
-        * Cache at or under cap → no-op.
-        * Cache over cap → trim down to roughly half the cap, so the next
-          turn has headroom and we don't trim on every call.  If trimming
-          fails (e.g. all-non-trimmable cache layers like ``ArraysCache``),
-          rebuild the cache from scratch via ``make_prompt_cache`` so we
-          drop the memory in one decisive step rather than leaking it.
+        * Cache empty / disabled, or at or under the cap → no-op.
+        * Over the cap, but the reusable prompt prefix fits → roll back to
+          that prefix, dropping only the generated tail.  Trimming below it
+          would throw away exactly what the next call reuses (and can't be
+          done exactly on hybrid caches at all).
+        * Prefix itself over the cap (or unknown) → rebuild the cache from
+          scratch so the memory is actually released; the next call pays a
+          full prefill.
 
         Releasing the Metal allocator pool (``mx.clear_cache``) is left to
         the caller — :meth:`_generate` already does it once per turn.
@@ -665,33 +769,22 @@ class ChatMLXText(BaseChatModel):
         if current <= budget:
             return
 
-        target = max(1, budget // 2)
-        logger.info(
-            "MLX KV cache exceeded budget (%d > %d tokens) — trimming to %d",
-            current, budget, target,
+        prefix = self._last_prompt_tokens or []
+        if prefix and len(prefix) <= budget and self._rollback_cache_to(len(prefix)):
+            logger.info(
+                "MLX KV cache exceeded budget (%d > %d tokens) — dropped the "
+                "generated tail, keeping the %d-token reusable prompt prefix",
+                current, budget, len(prefix),
+            )
+            return
+        self._reset_prompt_cache()
+        logger.warning(
+            "MLX KV cache exceeded budget (%d > %d tokens) and the reusable "
+            "prompt prefix (%d tokens) doesn't fit — rebuilt from scratch. "
+            "Next turn will pay a full prefill; raise prompt_cache_max_tokens "
+            "above the prompt size to keep prefix reuse.",
+            current, budget, len(prefix),
         )
-        self._trim_cache_to(target)
-
-        after = self._cache_offset()
-        if after > budget:
-            # Trim was a no-op (e.g. non-trimmable cache type) — rebuild.
-            try:
-                from mlx_lm.models.cache import make_prompt_cache
-                self._prompt_cache = make_prompt_cache(self._model)
-                self._last_prompt_tokens = None
-                logger.warning(
-                    "MLX KV cache could not be trimmed (%d → %d) — rebuilt "
-                    "from scratch. Next turn will pay a full prefill.",
-                    current, after,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("MLX KV cache rebuild failed: %s", exc)
-        else:
-            # Keep _last_prompt_tokens consistent with the trimmed cache so
-            # the next call's prefix matcher doesn't claim a hit beyond the
-            # actual cache offset.
-            if self._last_prompt_tokens is not None and len(self._last_prompt_tokens) > after:
-                self._last_prompt_tokens = self._last_prompt_tokens[:after]
 
     # ── Synchronous generation ────────────────────────────────────────────────
 
@@ -715,33 +808,26 @@ class ChatMLXText(BaseChatModel):
         prompt_str = self._to_prompt(messages, tools=tools)
 
         prompt: Any = prompt_str
+        boundary_hook = None
         if self.enable_system_prompt_cache and self._prompt_cache is not None:
             full_tokens = self._tokenizer.encode(prompt_str)
-            common = self._find_common_prefix(full_tokens)
-            new_tokens = len(full_tokens) - common
-            if common > 0:
-                self._trim_cache_to(common)
-                if self._cache_offset() == common:
-                    prompt = full_tokens[common:]
-                else:
-                    logger.warning(
-                        "KV prefix trim failed (wanted %d, got %d) — sending full prompt",
-                        common, self._cache_offset(),
-                    )
-                    common = 0
-                    new_tokens = len(full_tokens)
+            common = self._reuse_prefix(full_tokens)
+            prompt = full_tokens[common:]
             logger.info(
                 "KV prefix cache: %d total tokens, %d reused, %d new (%.0f%% hit)",
-                len(full_tokens), common, new_tokens,
+                len(full_tokens), common, len(prompt),
                 (common / len(full_tokens)) * 100 if full_tokens else 0,
             )
-            self._last_prompt_tokens = full_tokens
-
-        cache_offset_before = self._cache_offset()
+            boundary_hook = self._prompt_boundary_hook(full_tokens)
+            cache_offset_before = common
+        else:
+            cache_offset_before = self._cache_offset()
 
         gen_kwargs: dict = {"max_tokens": self.max_tokens, **self._sampler_kwargs()}
         if self._prompt_cache is not None:
             gen_kwargs["prompt_cache"] = self._prompt_cache
+        if boundary_hook is not None:
+            gen_kwargs["prompt_progress_callback"] = boundary_hook
         if self.kv_bits is not None:
             gen_kwargs["kv_bits"] = self.kv_bits
             gen_kwargs["kv_group_size"] = self.kv_group_size
