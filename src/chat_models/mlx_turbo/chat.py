@@ -16,7 +16,7 @@ opt-in features on top:
   :mod:`chat_models.mlx_turbo._registry` hands out a process-wide
   singleton per ``(model_path, draft_path, …)`` key.  With
   ``enable_prompt_cache=True`` + ``enable_system_prompt_cache=True``
-  force-enabled, the inherited ``_find_common_prefix`` / ``_trim_cache_to``
+  force-enabled, the inherited ``_find_common_prefix`` / ``_rollback_cache_to``
   logic in :class:`ChatMLXText` now spans sessions: the first session
   pays the system-prompt prefill, every subsequent session re-uses the
   KV cache for that prefix.
@@ -232,29 +232,22 @@ class TurboMLXChat(ChatMLXText):
         if not cache:
             return
 
-        # Replace the in-memory cache with the one we just read back.
-        # The cache's KV offset equals the saved token length (with
-        # potentially trailing generated tokens — we trim to prefix_len
-        # below so the parent ``_generate`` sees a clean state).
+        # Replace the in-memory cache with the one we just read back and roll
+        # it back to the matched prefix: the snapshot was saved after a full
+        # turn, so it extends past the prefix into generated tokens.  KV
+        # layers trim back exactly; a cache with non-trimmable layers (the
+        # recurrent ``ArraysCache`` state of hybrid models) can't be rolled
+        # back at all, so ``_rollback_cache_to`` swaps in a fresh one.
         self._prompt_cache = cache
         self._last_prompt_tokens = list(tokens[:prefix_len])
-
-        # If the saved snapshot extends past the prompt prefix (because
-        # we saved after a full turn that included generated tokens),
-        # roll it back to the prefix length.  This is the standard
-        # prompt-cache trim path; it's cheap when the cache layer type
-        # supports trim() and skipped otherwise.
-        try:
-            current_offset = self._cache_offset()
-            excess = current_offset - prefix_len
-            if excess > 0:
-                for c in self._prompt_cache:
-                    if c.is_trimmable():
-                        c.trim(excess)
-        except Exception:
-            # Trim failure just means the parent's ``_find_common_prefix``
-            # path will recompute the right state.  No data loss.
-            pass
+        self._reuse_points = {}
+        if not self._rollback_cache_to(prefix_len):
+            logger.info(
+                "SSD prime: saved cache for %s can't be rolled back to its "
+                "%d-token prefix — ignored.",
+                self.model_path, prefix_len,
+            )
+            return
 
         logger.info(
             "SSD prime: warmed cache for %s with %d-token prefix from %s",
@@ -279,8 +272,9 @@ class TurboMLXChat(ChatMLXText):
 
         The in-memory prompt cache still holds ``prompt + generated``
         tokens — we don't touch it.  ``_maybe_prime_from_ssd`` trims
-        the loaded cache back to the saved prefix length on restore,
-        so the length mismatch between the key and the cache is safe.
+        the loaded cache back to the saved prefix length on restore (and
+        drops caches that can't be trimmed back exactly), so the length
+        mismatch between the key and the cache is safe.
 
         If the chat template doesn't produce a strict token-prefix for
         the system-only render (unusual but possible for exotic

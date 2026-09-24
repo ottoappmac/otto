@@ -13,6 +13,7 @@ This module centralises the globals that both the existing
 * :data:`_WARMED_UP` — set of cache keys that have already paid the graph
   compilation cost (see ``ChatMLXText._warmup``).
 * :func:`_load_or_reuse` — thread-safe factory for the triple.
+* :func:`weights_fingerprint` — which files a loaded model came from.
 * :func:`loaded_mlx_models` — introspection helper for diagnostics.
 
 Nothing here changes behaviour on its own; it's a pure refactor so that a
@@ -25,6 +26,7 @@ backward-compatibility with modules that do
 from __future__ import annotations
 
 import threading
+import weakref
 from typing import Any, List, Optional, Tuple
 
 
@@ -41,6 +43,9 @@ _ModelTriple = Tuple[Any, Any, Optional[Any]]
 _LOADED_MODELS: dict[Tuple[str, Optional[str]], _ModelTriple] = {}
 _WARMED_UP: set[Tuple[str, Optional[str]]] = set()
 _LOAD_LOCK = threading.Lock()
+# id(model) → (weak reference to the model, fingerprint of the files it was
+# loaded from); see ``weights_fingerprint``.
+_WEIGHTS_FINGERPRINTS: dict[int, Tuple[Any, Optional[str]]] = {}
 
 
 # ── Process-wide MLX generation lock ──────────────────────────────────────────
@@ -208,7 +213,11 @@ def _load_or_reuse(
 
         from mlx_lm import load  # lazy import — only required on Apple Silicon
 
+        from chat_models.mlx._prefix_disk import model_fingerprint
+
+        fingerprint = model_fingerprint(resolved_path)
         model, tokenizer = load(resolved_path)
+        _WEIGHTS_FINGERPRINTS[id(model)] = (weakref.ref(model), fingerprint)
         draft_model: Optional[Any] = None
         if resolved_draft_path:
             draft_model, draft_tokenizer = load(resolved_draft_path)
@@ -220,6 +229,19 @@ def _load_or_reuse(
         triple = (model, tokenizer, draft_model)
         _LOADED_MODELS[key] = triple
         return triple, True
+
+
+def weights_fingerprint(model: Any) -> Optional[str]:
+    """The fingerprint of the files *model* was loaded from; ``None`` if unknown.
+
+    Taken at load time (see ``_prefix_disk.model_fingerprint``), not from
+    the files now on disk: a re-download can replace them while this model
+    stays loaded, and state computed with it must not be filed under the new
+    weights.  Held by weak reference, like the prefix store, so a new model
+    that gets a dead one's ``id`` never inherits its fingerprint.
+    """
+    entry = _WEIGHTS_FINGERPRINTS.get(id(model))
+    return entry[1] if entry is not None and entry[0]() is model else None
 
 
 def loaded_mlx_models() -> List[Tuple[str, Optional[str]]]:
@@ -246,10 +268,18 @@ def evict_all_mlx_models() -> int:
     returned to the OS must therefore (1) drop those instances, (2) call
     this, and only then (3) ``gc.collect()`` + ``mx.clear_cache()``.
 
+    The static-prompt-prefix snapshots (:mod:`chat_models.mlx._prefix_store`)
+    go too: they hold KV state computed with these weights (~0.4 GB each).
+    Their SSD copies (:mod:`chat_models.mlx._prefix_disk`) stay: they're keyed
+    by the weight files, so a reload of the same weights can use them again.
+
     Returns the number of cache entries that were evicted (diagnostics).
     """
+    from chat_models.mlx._prefix_store import STATIC_PREFIXES
+
     with _LOAD_LOCK:
         count = len(_LOADED_MODELS)
         _LOADED_MODELS.clear()
         _WARMED_UP.clear()
+    STATIC_PREFIXES.clear()
     return count
