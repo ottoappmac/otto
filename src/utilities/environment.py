@@ -9,6 +9,27 @@ from utilities.logger import get_logger
 logger = get_logger()
 
 
+def _resolve_distill_pair(model_id: str | None, adapter_path: str | None) -> tuple[str, str]:
+    """Map ``otto-distill/…`` catalog ids to ``(student_hub_id, adapter_dir)``.
+
+    Non-catalog ids pass through.  Import of the distillation package is
+    lazy so Environment stays importable in tests that don't load backend.
+    """
+    model = model_id or ""
+    adapter = (adapter_path or "").strip()
+    if not model.strip().startswith("otto-distill/"):
+        return model, adapter
+    try:
+        from backend.distillation.catalog import resolve_catalog_id
+
+        rec = resolve_catalog_id(model.strip())
+    except Exception:
+        return model, adapter
+    if not rec:
+        return model, adapter
+    return str(rec.get("base_repo_id") or model), str(rec.get("adapter_path") or adapter)
+
+
 class Environment:
     """Environment configuration management."""
 
@@ -73,6 +94,8 @@ class Environment:
     MLX_TURBO_SSD_MAX_GB = "50"
     MLX_TURBO_TQ_BITS = "4"
     MLX_TURBO_BLOCK_SIZE = "256"
+    # Optional LoRA adapter path for mlx_lm.load(..., adapter_path=).
+    MLX_ADAPTER_PATH = ""
     # HuggingFace repo ID — MLX models are loaded from HuggingFace Hub (mlx-community)
     HF_LLM_MODEL_ID = "mlx-community/quantized-gemma-2b-it"
     HF_VLM_MODEL_ID = ""
@@ -363,8 +386,18 @@ class Environment:
 
     @classmethod
     def get_hf_llm_model_id(cls) -> str:
-        """Get HuggingFace repo ID for MLX model (models load from HuggingFace Hub)."""
-        return os.getenv("HF_LLM_MODEL_ID", cls.HF_LLM_MODEL_ID)
+        """Get HuggingFace repo ID for MLX model (models load from HuggingFace Hub).
+
+        Distilled catalog ids (``otto-distill/…``) resolve to the student
+        Hub repo the LoRA was trained on.
+        """
+        raw = os.getenv("HF_LLM_MODEL_ID", cls.HF_LLM_MODEL_ID)
+        if not (raw or "").strip().startswith("otto-distill/"):
+            return raw
+        model, _adapter = _resolve_distill_pair(
+            raw, os.getenv("MLX_ADAPTER_PATH", cls.MLX_ADAPTER_PATH),
+        )
+        return model
 
     @classmethod
     def get_hf_vlm_model_id(cls) -> str | None:
@@ -386,6 +419,23 @@ class Environment:
         """
         val = os.getenv("HF_DRAFT_LLM_MODEL_ID", cls.HF_DRAFT_LLM_MODEL_ID).strip()
         return val or None
+
+    @classmethod
+    def get_mlx_adapter_path(cls) -> str | None:
+        """Optional LoRA adapter directory/path for the MLX text model.
+
+        Empty / unset returns ``None`` (no adapter).  The inference path
+        still refuses to apply an adapter whose ``adapter_meta.json``
+        ``base_repo_id`` does not match the live model.
+
+        When the selected model is an ``otto-distill/…`` catalog id, the
+        matching adapter directory is returned even if ``MLX_ADAPTER_PATH``
+        is empty.
+        """
+        model = os.getenv("HF_LLM_MODEL_ID", cls.HF_LLM_MODEL_ID)
+        adapter = os.getenv("MLX_ADAPTER_PATH", cls.MLX_ADAPTER_PATH)
+        _base, path = _resolve_distill_pair(model, adapter)
+        return path or None
 
     @classmethod
     def get_anthropic_api_key(cls) -> str:

@@ -242,11 +242,16 @@ class SessionInfo(BaseModel):
     eval_overall_score: Optional[float] = None  # mean metric score (0..1)
     eval_pass_count: Optional[int] = None  # metrics that met their threshold
     eval_total: Optional[int] = None  # total scored metrics
+    # Per-session distilled LoRA (``otto-distill/…``).  Not global Settings.
+    distill_catalog_id: Optional[str] = None
 
 
 class SessionCreateRequest(BaseModel):
     agent_name: Optional[str] = None
     trigger_source: Optional[str] = None
+    # When set, the new session's graph is built on this ``otto-distill/…``
+    # LoRA (Standard / in-process MLX) even if global Settings still say Turbo.
+    distill_catalog_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

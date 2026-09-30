@@ -284,6 +284,15 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
+# Tools whose JSON result the chat UI parses to render a "go to session" link
+# (MessageBubble.tsx).  Kept in sync with backend/spawn_tools.py and
+# backend/distillation_tools.py's spawn-on-LoRA tools.
+_SPAWN_TOOL_NAMES = frozenset({
+    "spawn_followup_session",
+    "use_distilled_model",
+    "clear_distilled_model",
+})
+
 
 def _validate_session_id(session_id: str) -> None:
     if not _UUID_RE.match(session_id):
@@ -687,7 +696,7 @@ def _model_input_budget(model: Any) -> int | None:
 
 def _maybe_context_truncation(model: Any) -> Any | None:
     """Return a ``SmallContextTruncationMiddleware`` instance when *model*
-    has a sub-8 K input budget.
+    has a sub-64 K input budget.
 
     The deepagents framework hardcodes :class:`TodoListMiddleware`,
     :class:`FilesystemMiddleware`, and :class:`SubAgentMiddleware`, each
@@ -707,7 +716,7 @@ def _maybe_context_truncation(model: Any) -> Any | None:
     except ImportError:
         return None
     budget = _model_input_budget(model)
-    if budget is None or budget >= 8000:
+    if budget is None or budget >= 65536:
         return None
     return SmallContextTruncationMiddleware(max_input_tokens=budget)
 
@@ -1235,6 +1244,185 @@ def _hf_llm_id_override(repo_id: str | None) -> Iterator[None]:
             os.environ.pop(key, None)
         else:
             os.environ[key] = prev
+
+
+@contextlib.contextmanager
+def _mlx_adapter_override(adapter_path: str | None) -> Iterator[None]:
+    """Temporarily set ``MLX_ADAPTER_PATH`` around one ``create_llm("mlx")`` call."""
+    path = (adapter_path or "").strip()
+    key = "MLX_ADAPTER_PATH"
+    if not path:
+        yield
+        return
+    prev = os.environ.get(key)
+    os.environ[key] = path
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prev
+
+
+def _resolved_distill_catalog_id(
+    catalog_id: str | None,
+    config: Any | None = None,
+) -> str | None:
+    """Return a live ``otto-distill/…`` id, or ``None``.
+
+    *catalog_id* wins when passed.  Otherwise, if the Standard MLX setting is
+    itself a distilled catalog id, use that so a Settings / chat-picker pick
+    actually attaches at session start (Turbo cannot load LoRA).
+    """
+    cid = (catalog_id or "").strip() or None
+    if not cid and config is not None:
+        provider = (getattr(getattr(config, "llm", None), "provider", None) or "").strip()
+        mlx = getattr(getattr(config, "llm", None), "mlx", None)
+        mid = (getattr(mlx, "hf_llm_model_id", None) or "").strip()
+        # Only auto-attach from Settings when Standard is the live provider.
+        # Turbo/cluster cannot load LoRA — the chat picker passes catalog_id
+        # explicitly when the user picks a distilled row there.
+        if provider == "mlx" and mid.startswith("otto-distill/"):
+            cid = mid
+        elif provider == "omlx":
+            from backend.distillation.catalog import catalog_id_for_omlx_model
+
+            omlx_name = (getattr(getattr(config, "omlx", None), "model_name", None) or "").strip()
+            cid = catalog_id_for_omlx_model(omlx_name)
+    if not cid:
+        return None
+    try:
+        from backend.distillation.catalog import resolve_catalog_id
+
+        if resolve_catalog_id(cid) is None:
+            logger.warning("Ignoring unknown distilled catalog id %r", cid)
+            return None
+    except Exception:
+        logger.debug("distill catalog resolve failed for %r", cid, exc_info=True)
+        return None
+    return cid
+
+
+@contextlib.contextmanager
+def _distill_llm_override(catalog_id: str | None) -> Iterator[None]:
+    """Point MLX env at an ``otto-distill/…`` catalog id for this graph build only."""
+    cid = (catalog_id or "").strip()
+    if not cid:
+        yield
+        return
+    from backend.distillation.catalog import resolve_catalog_id
+
+    rec = resolve_catalog_id(cid)
+    adapter = str((rec or {}).get("adapter_path") or "")
+    with _hf_llm_id_override(cid), _mlx_adapter_override(adapter or None):
+        yield
+
+
+def _omlx_native_context_window(model_name: str) -> int | None:
+    """Read ``max_position_embeddings`` from a fused or local MLX config.json."""
+    name = (model_name or "").strip()
+    if not name:
+        return None
+    from backend.distillation.paths import fused_model_path
+
+    cfg_path = fused_model_path(name) / "config.json"
+    if not cfg_path.is_file():
+        return None
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    for field in (
+        "max_position_embeddings",
+        "max_sequence_length",
+        "context_length",
+        "max_seq_len",
+        "model_max_length",
+    ):
+        val = data.get(field)
+        if isinstance(val, int) and val > 0:
+            return val
+    return None
+
+
+def _omlx_input_budget(config: Any, model_name: str) -> int:
+    """Input tokens the live oMLX model can actually take.
+
+    Settings default to 131072, but a fused Qwen3-8B student is 40960.
+    Leave room for ``max_tokens`` so prompt + completion fit the window.
+    """
+    configured = int(getattr(getattr(config, "omlx", None), "max_context_window", 0) or 131072)
+    native = _omlx_native_context_window(model_name) or configured
+    window = max(2048, min(configured, native))
+    gen = int(getattr(getattr(config, "omlx", None), "max_tokens", 0) or 8192)
+    gen = max(256, min(gen, window // 4))
+    return max(2048, window - gen)
+
+
+def _omlx_ids_match(left: str, right: str) -> bool:
+    """True when two oMLX/HF ids name the same weights folder."""
+    a = (left or "").strip()
+    b = (right or "").strip()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    ashort, bshort = a.rsplit("/", 1)[-1], b.rsplit("/", 1)[-1]
+    return ashort == bshort or a.replace("/", "--") == b or b.replace("/", "--") == a
+
+
+def _effective_distill_catalog_id(catalog_id: str | None, config: Any) -> str | None:
+    """Drop a distilled bind when Turbo is pointed at a different live model.
+
+    Leftover ``otto-distill/…`` session/settings state used to rewrite
+    ``OMLX_MODEL_NAME`` back to the fused student after the user loaded
+    MiniMax / Qwen3.6.
+    """
+    cid = (catalog_id or "").strip() or None
+    if not cid:
+        return None
+    provider = (getattr(getattr(config, "llm", None), "provider", None) or "").strip()
+    if provider != "omlx":
+        return cid
+    selected = (getattr(getattr(config, "omlx", None), "model_name", None) or "").strip()
+    fused = _fused_omlx_model_id(cid)
+    if fused and selected and not _omlx_ids_match(selected, fused):
+        return None
+    return cid
+
+
+def _fused_omlx_model_id(catalog_id: str | None) -> str | None:
+    """Fused Turbo slug for *catalog_id*, or None if the fuse is missing."""
+    cid = (catalog_id or "").strip()
+    if not cid:
+        return None
+    try:
+        from backend.distillation.catalog import resolve_catalog_id
+
+        rec = resolve_catalog_id(cid)
+    except Exception:
+        return None
+    oid = str((rec or {}).get("omlx_model_id") or "").strip()
+    return oid or None
+
+
+def _distill_session_provider(
+    catalog_id: str | None,
+    config: Any,
+) -> str:
+    """Provider that should own a session bound to *catalog_id*.
+
+    Turbo can run a fused distilled copy via oMLX.  Forcing ``mlx`` in that
+    case loads a second in-process student on the GPU and leaves Turbo empty.
+    """
+    cid = (catalog_id or "").strip()
+    provider = (getattr(getattr(config, "llm", None), "provider", None) or "").strip()
+    if cid and provider == "omlx" and _fused_omlx_model_id(cid):
+        return "omlx"
+    if cid:
+        return "mlx"
+    return provider or getattr(config.llm, "provider", "mlx")
 
 
 def _build_orch_llm_sync(config: Any, base_llm: Any) -> Any:
@@ -1912,6 +2100,7 @@ class Session:
         parent_session_id: Optional[str] = None,
         chain_depth: int = 0,
         llm_provider: str = "",
+        distill_catalog_id: Optional[str] = None,
     ) -> None:
         self.id = session_id
         self.agent_name = agent_name
@@ -1931,6 +2120,7 @@ class Session:
         # creation so per-turn privacy checks can inspect it without
         # re-reading the config (the user may change the config mid-session).
         self.llm_provider = llm_provider
+        self.distill_catalog_id: Optional[str] = distill_catalog_id
         self.memory_inject = False
         self.recursion_limit: int = 10000
         self.live_output_queue: asyncio.Queue = asyncio.Queue()
@@ -2038,6 +2228,7 @@ class Session:
             eval_pass_count=self.eval_pass_count,
             eval_total=self.eval_total,
             workspace=self.workspace,
+            distill_catalog_id=self.distill_catalog_id or None,
             **self._throughput_fields(),
         )
 
@@ -2091,7 +2282,7 @@ async def _ensure_omlx_model_loaded(config: "AppConfig") -> None:
     """
     from backend.omlx_provisioner import (
         _resolve_omlx_model_id, adopt_existing_admin_key, afetch_status,
-        aload_model, astart,
+        aload_model, astart, status_loaded_ids,
     )
 
     model_name = (config.omlx.model_name or "").strip()
@@ -2126,7 +2317,7 @@ async def _ensure_omlx_model_loaded(config: "AppConfig") -> None:
                 )
 
         resolved = await _resolve_omlx_model_id(config.omlx, model_name)
-        loaded_ids = [m["id"] for m in (status.get("models") or [])]
+        loaded_ids = status_loaded_ids(status)
         if resolved is not None and resolved in loaded_ids:
             logger.info(
                 "oMLX: model '%s' (oMLX id '%s') already loaded — skipping auto-load",
@@ -2145,7 +2336,7 @@ async def _ensure_omlx_model_loaded(config: "AppConfig") -> None:
         )
 
         verify = await afetch_status(config.omlx)
-        verify_ids = [m["id"] for m in (verify.get("models") or [])]
+        verify_ids = status_loaded_ids(verify)
         resolved = await _resolve_omlx_model_id(config.omlx, model_name)
         if resolved is not None and resolved in verify_ids:
             logger.info(
@@ -2200,6 +2391,7 @@ class SessionManager:
         is_scheduled_run: bool = False,
         schedule_id: Optional[str] = None,
         live_output_queue: Optional[asyncio.Queue] = None,
+        distill_catalog_id: Optional[str] = None,
     ) -> tuple[Any, Any, asyncio.Queue]:
         """Build the agent graph and MCP tool set.
 
@@ -2224,6 +2416,14 @@ class SessionManager:
         t_graph_start = time.monotonic()
         logger.info("[build_graph] START session=%s agent=%s", session_id, agent_name)
 
+        if not distill_catalog_id:
+            existing = self._active.get(session_id)
+            if existing is not None:
+                distill_catalog_id = existing.distill_catalog_id
+        if not distill_catalog_id:
+            distill_catalog_id = _resolved_distill_catalog_id(None, config)
+        distill_catalog_id = _effective_distill_catalog_id(distill_catalog_id, config)
+
         system_prompt: Optional[str] = None
         tool_mcp_ids: set[str] = set()
 
@@ -2237,7 +2437,7 @@ class SessionManager:
             from deep_agent.prompt import build_orchestrator_prompt
             from utilities.environment import Environment
 
-            use_lite = Environment.use_lite_orchestrator_prompt()
+            use_lite = Environment.use_lite_orchestrator_prompt() or bool(distill_catalog_id)
             system_prompt = build_orchestrator_prompt([], lite=use_lite)
             logger.info(
                 "[build_graph] orchestrator prompt mode=%s (provider=%s, da_provider=%s)",
@@ -2279,22 +2479,52 @@ class SessionManager:
         from backend.omlx_tools import build_omlx_tools
         from backend.privacy_tools import build_privacy_tools
         from backend.settings_tools import build_settings_tools
+        from backend.distillation_tools import (
+            build_distillation_tools,
+            build_distilled_adapters_prompt_block,
+        )
         from backend.spawn_tools import build_spawn_tools
         from backend.session_search_tools import build_session_search_tools
         from deep_agent.model_factory import create_llm, create_mlx_vlm, supports_vision
         from deepagents import create_deep_agent
+
+        # Distilled catalog on Turbo uses the fused oMLX copy.  Forcing
+        # in-process MLX here double-loads the student and leaves Turbo empty.
+        _main_provider = _distill_session_provider(distill_catalog_id, config)
+        _fused_omlx = (
+            _fused_omlx_model_id(distill_catalog_id)
+            if _main_provider == "omlx" and distill_catalog_id
+            else None
+        )
+        if _fused_omlx:
+            selected = (config.omlx.model_name or "").strip()
+            if selected and not _omlx_ids_match(selected, _fused_omlx):
+                distill_catalog_id = None
+                _fused_omlx = None
+                _main_provider = config.llm.provider
+            elif not selected:
+                config.omlx.model_name = _fused_omlx
+                os.environ["OMLX_MODEL_NAME"] = _fused_omlx
 
         # oMLX: ensure the configured model is actually loaded in the server
         # before we wire up the LLM client.  The server starts empty — a
         # model must be explicitly loaded (via CLI or a restart) before any
         # /v1/chat/completions request can succeed.  We do this here so the
         # user gets a clear progress log instead of a cryptic 404 mid-chat.
-        if config.llm.provider == "omlx" and config.omlx.model_name:
+        if _main_provider == "omlx" and config.omlx.model_name:
             await _ensure_omlx_model_loaded(config)
 
         # create_llm for MLX loads (and on a cache miss would download) the
         # model weights — must run in a thread, never on the event loop.
-        llm = await asyncio.to_thread(create_llm, config.llm.provider)
+        # A Standard distilled catalog id still forces in-process MLX + LoRA
+        # without writing global Settings.
+        def _create_main_llm():
+            if distill_catalog_id and _main_provider == "mlx":
+                with _distill_llm_override(distill_catalog_id):
+                    return create_llm("mlx")
+            return create_llm(_main_provider)
+
+        llm = await asyncio.to_thread(_create_main_llm)
 
         # Stamp .profile on local-server models (oMLX, exo) so that
         # compute_summarization_defaults uses the fraction-based trigger
@@ -2302,12 +2532,16 @@ class SessionManager:
         # silently exceeds these models' actual context windows and causes
         # "prompt too long" errors.  ChatMLXText sets its own profile in
         # __init__; cloud models (Anthropic, OpenAI) are handled by deepagents.
-        if config.llm.provider == "omlx":
-            _budget = int(getattr(config.omlx, "max_context_window", 0) or 131072)
+        if _main_provider == "omlx":
+            _budget = _omlx_input_budget(config, getattr(config.omlx, "model_name", "") or "")
             try:
                 llm.profile = {"max_input_tokens": _budget}
             except Exception:
                 object.__setattr__(llm, "profile", {"max_input_tokens": _budget})
+            logger.info(
+                "oMLX context budget=%d (model=%s)",
+                _budget, getattr(config.omlx, "model_name", "") or "",
+            )
 
         # Resolve the orchestrator model.  When orchestrator.llm_family is
         # "follow_main" (the default) orch_llm == llm.  Otherwise it is the
@@ -2328,7 +2562,8 @@ class SessionManager:
         # or a text-only local MLX model.  For cloud providers (Anthropic, OpenAI)
         # that already handle images natively, supports_vision returns True and we
         # skip this entirely, forwarding raw image blocks as before.
-        _main_provider = config.llm.provider
+        # ``_main_provider`` was already set above (mlx when a distilled
+        # catalog is bound to this session).
         # Resolve the model id for the *active* provider.  ``config.llm.mlx``
         # carries a non-empty default model id even when the provider is oMLX
         # or exo, so a naive ``mlx or omlx or exo`` fallback would wrongly pick
@@ -2338,7 +2573,7 @@ class SessionManager:
         elif _main_provider == "exo":
             _main_model_id = getattr(config.exo, "model_name", "") or ""
         elif _main_provider == "mlx":
-            _main_model_id = getattr(config.llm.mlx, "hf_llm_model_id", "") or ""
+            _main_model_id = distill_catalog_id or getattr(config.llm.mlx, "hf_llm_model_id", "") or ""
         else:
             _main_model_id = ""
         _main_supports_vision = supports_vision(_main_provider, _main_model_id)
@@ -2417,6 +2652,7 @@ class SessionManager:
         # settings_tools let the agent inspect and adjust orchestrator,
         # generation, memory, and MCP server settings at runtime.
         settings_tools = build_settings_tools()
+        distillation_tools = build_distillation_tools(session_id)
         privacy_tools = build_privacy_tools()
         # spawn_tools let the orchestrator hand off the current request
         # to a fresh session — typically used after building new MCP
@@ -2533,7 +2769,7 @@ class SessionManager:
         # ``orch_llm`` in both GP and direct-agent mode.  When the orchestrator
         # model could not be created (e.g. MLX weights not yet downloaded),
         # ``orch_llm`` already fell back to the main chat LLM (``llm``).
-        graph_llm: Any = orch_llm
+        graph_llm: Any = llm if distill_catalog_id else orch_llm
 
         # Vision capability of the model that actually runs the main graph
         # (the orchestrator / direct agent).  Drives the macos-native
@@ -2579,6 +2815,7 @@ class SessionManager:
                 + exo_tools
                 + omlx_tools
                 + settings_tools
+                + distillation_tools
                 + privacy_tools
                 + file_tools
                 + video_tools
@@ -2693,6 +2930,7 @@ class SessionManager:
                 + exo_tools
                 + omlx_tools
                 + settings_tools
+                + distillation_tools
                 + privacy_tools
                 + file_tools
                 + video_tools
@@ -2956,6 +3194,8 @@ class SessionManager:
                 f"schedule when continuity with previous runs is useful.\n"
             )
 
+        system_prompt += "\n" + build_distilled_adapters_prompt_block(distill_catalog_id)
+
         _insert_repeated_thought_guard(extra_middleware, scope="orchestrator")
         graph = await asyncio.to_thread(
             create_deep_agent,
@@ -2987,6 +3227,7 @@ class SessionManager:
         trigger_id: Optional[str] = None,
         parent_session_id: Optional[str] = None,
         chain_depth: int = 0,
+        distill_catalog_id: Optional[str] = None,
     ) -> Session:
         config.apply_to_environ()
         session_id = str(uuid.uuid4())
@@ -2995,10 +3236,15 @@ class SessionManager:
         checkpointer = AsyncSqliteSaver(sqlite_conn)
         await checkpointer.setup()
 
+        cid = _effective_distill_catalog_id(
+            _resolved_distill_catalog_id(distill_catalog_id, config),
+            config,
+        )
         graph, mcp_mgr, live_output_queue = await self._build_graph(
             config, agent_name, session_id, checkpointer,
             is_scheduled_run=is_scheduled_run,
             schedule_id=schedule_id,
+            distill_catalog_id=cid,
         )
 
         session = Session(
@@ -3013,8 +3259,15 @@ class SessionManager:
             trigger_id=trigger_id,
             parent_session_id=parent_session_id,
             chain_depth=chain_depth,
-            llm_provider=config.llm.provider,
+            llm_provider=_distill_session_provider(cid, config),
+            distill_catalog_id=cid,
         )
+        if cid:
+            session.model = cid
+            logger.info(
+                "Session %s using distilled catalog %s (provider=%s)",
+                session_id, cid, session.llm_provider,
+            )
         session.live_output_queue = live_output_queue
         # Drives the "Searching memory…" UI event per turn; only the realtime
         # layer actually performs per-turn retrieval.
@@ -3039,6 +3292,8 @@ class SessionManager:
         self,
         parent_session_id: str,
         prompt: str,
+        *,
+        distill_catalog_id: Optional[str] = None,
     ) -> Session:
         """Create a fresh session linked to *parent_session_id* and inheriting
         its agent selection.
@@ -3048,6 +3303,11 @@ class SessionManager:
         parent's turn are now bound to it) and its own checkpoint thread.
         The parent's session-files directory is **shared**, so files the
         parent wrote during the build phase remain visible to the child.
+
+        ``distill_catalog_id``:
+          * omitted / ``None`` — inherit the parent's distilled LoRA (if any)
+          * non-empty — bind that ``otto-distill/…`` catalog on the child
+          * ``""`` — explicit unbind (child uses global Settings)
 
         The caller is responsible for actually firing *prompt* on the new
         session; this method only sets up state.  See
@@ -3069,6 +3329,11 @@ class SessionManager:
                 f"child to avoid runaway loops."
             )
 
+        if distill_catalog_id is None:
+            cid = parent.distill_catalog_id
+        else:
+            cid = (distill_catalog_id or "").strip() or None
+
         cfg = await AppConfig.aload()
         child = await self.create_session(
             config=cfg,
@@ -3076,6 +3341,7 @@ class SessionManager:
             parent_session_id=parent_session_id,
             chain_depth=parent.chain_depth + 1,
             trigger_source="spawn",
+            distill_catalog_id=cid,
         )
         # Pre-fill the title so the session list is informative before the
         # first turn finishes streaming.
@@ -3118,6 +3384,7 @@ class SessionManager:
             config, info.agent_name, session_id, checkpointer,
             is_scheduled_run=info.trigger_source == "schedule",
             schedule_id=info.schedule_id,
+            distill_catalog_id=info.distill_catalog_id,
         )
 
         session = Session(
@@ -3132,7 +3399,8 @@ class SessionManager:
             trigger_id=info.trigger_id,
             parent_session_id=info.parent_session_id,
             chain_depth=info.chain_depth,
-            llm_provider=config.llm.provider,
+            llm_provider=_distill_session_provider(info.distill_catalog_id, config),
+            distill_catalog_id=info.distill_catalog_id,
         )
         session.live_output_queue = live_output_queue
         session.memory_inject = config.memory.effective_inject_realtime
@@ -3225,6 +3493,7 @@ class SessionManager:
             is_scheduled_run=session.trigger_source == "schedule",
             schedule_id=session.schedule_id,
             live_output_queue=session.live_output_queue,
+            distill_catalog_id=session.distill_catalog_id,
         )
         session.graph = graph
         session.tool_set = mcp_mgr
@@ -3233,6 +3502,14 @@ class SessionManager:
                 await old_tool_set.close()
             except Exception:
                 logger.debug("Error closing old tool set for session %s", session.id, exc_info=True)
+
+    async def _maybe_start_deferred_distill(self) -> None:
+        try:
+            from backend.distillation.job import start_deferred_if_idle
+
+            await start_deferred_if_idle()
+        except Exception:
+            logger.debug("deferred distill start failed", exc_info=True)
 
     async def set_workspace(
         self,
@@ -3758,6 +4035,11 @@ class SessionManager:
                         preview, total_lines, truncated = _head_tail_preview(combined)
                         metadata["output_lines"] = total_lines
                         metadata["output_truncated"] = truncated
+                    elif tool_name_done in _SPAWN_TOOL_NAMES:
+                        # These return a small JSON blob (child_session_id, title,
+                        # …) that the chat UI parses to render a "go to session"
+                        # link — the 500-char generic cap truncates it mid-object.
+                        preview = combined[:2000]
                     else:
                         preview = combined[:500]
 
@@ -3882,6 +4164,7 @@ class SessionManager:
                 session.status = "awaiting_input"
             yield resp
             await session.save_meta_async()
+            await self._maybe_start_deferred_distill()
             return
 
         # Mark run complete and compute cost
@@ -3912,6 +4195,7 @@ class SessionManager:
         # kicking off the (fire-and-forget) evaluation here guarantees both run
         # for every completion path, not just ones that keep iterating.
         await session.save_meta_async()
+        await self._maybe_start_deferred_distill()
         await self._maybe_evaluate_run(session)
         yield {"type": "done", "content": ""}
 

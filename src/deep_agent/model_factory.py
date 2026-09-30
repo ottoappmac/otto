@@ -390,6 +390,7 @@ def _build_mlx_chat(
     enable_system_prompt_cache: bool,
     kv_bits: Any,
     kv_group_size: int,
+    adapter_path: str | None = None,
 ) -> BaseChatModel:
     """Return a chat model for local MLX inference.
 
@@ -403,6 +404,12 @@ def _build_mlx_chat(
     from chat_models.mlx import ChatMLXText
 
     prompt_cache_max_tokens = Environment.get_mlx_prompt_cache_max_tokens()
+
+    if adapter_path:
+        # A LoRA on the main model without a matching draft adapter tanks
+        # speculative-decoding acceptance.  Force the draft off.
+        draft_model_id = ""
+        logger.info("MLX LoRA adapter enabled: %s (speculative decoding disabled)", adapter_path)
 
     turbo_level = Environment.get_mlx_turbo_level()
     if turbo_level != "off":
@@ -428,6 +435,7 @@ def _build_mlx_chat(
         kv_bits=kv_bits,
         kv_group_size=kv_group_size,
         prompt_cache_max_tokens=prompt_cache_max_tokens,
+        adapter_path=adapter_path or None,
     )
 
 
@@ -554,6 +562,7 @@ def create_llm(provider: str) -> BaseChatModel:
             enable_system_prompt_cache=Environment.get_mlx_system_prompt_cache(),
             kv_bits=Environment.get_mlx_kv_bits(),
             kv_group_size=Environment.get_mlx_kv_group_size(),
+            adapter_path=Environment.get_mlx_adapter_path(),
         )
         return MLXReActWrapper(inner, force_action=_is_reasoning_model_id(model_id))
 
@@ -886,6 +895,7 @@ def create_deep_agent_llm(provider: str) -> BaseChatModel | None:
         enable_system_prompt_cache=Environment.get_mlx_system_prompt_cache(),
         kv_bits=Environment.get_mlx_kv_bits(),
         kv_group_size=Environment.get_mlx_kv_group_size(),
+        adapter_path=Environment.get_mlx_adapter_path(),
     )
     return MLXReActWrapper(inner, force_action=_is_reasoning_model_id(model_id))
 

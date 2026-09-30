@@ -92,6 +92,32 @@ const markdownComponents: Components = {
 };
 
 /**
+ * Extract the fields the "go to session" banner needs out of a
+ * spawn-tool result blob (``spawn_followup_session`` /
+ * ``use_distilled_model`` / ``clear_distilled_model``).
+ *
+ * Uses targeted regexes rather than ``JSON.parse`` because the backend
+ * caps tool-result previews at a fixed length — a very long ``note`` or
+ * ``display_name`` could still truncate the JSON object before the
+ * closing brace.  ``child_session_id`` is always the first key, so it
+ * survives any truncation that matters.
+ */
+function parseSpawnResult(raw: string): { childSessionId: string; title: string } | null {
+  const idMatch = /"child_session_id"\s*:\s*"([^"]+)"/.exec(raw);
+  if (!idMatch) return null;
+  const titleMatch = /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(raw);
+  let title = "";
+  if (titleMatch) {
+    try {
+      title = JSON.parse(`"${titleMatch[1]}"`);
+    } catch {
+      title = titleMatch[1];
+    }
+  }
+  return { childSessionId: idMatch[1], title };
+}
+
+/**
  * Parse the bracketed attachment prefix lines that ``ChatPage`` prepends to a
  * sent user message (``[Uploaded files: ...]``, ``[Context folders: ...]``,
  * ``[URLs: ...]``) and return them separately from the remaining message text.
@@ -432,6 +458,17 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
     const isTodoTool = toolName === "write_todos";
     const todos = isTodoTool ? parseTodos(args) : null;
 
+    // spawn_followup_session / use_distilled_model / clear_distilled_model
+    // hand off to a brand-new session the user can't otherwise reach from
+    // this chat — surface a direct link the moment the spawn succeeds so
+    // the user doesn't keep chatting in the (unrelated) parent session.
+    const isSpawnTool = toolName === "spawn_followup_session"
+      || toolName === "use_distilled_model"
+      || toolName === "clear_distilled_model";
+    const spawnResult = isSpawnTool && hasResult
+      ? parseSpawnResult(String(message.metadata!.result as string))
+      : null;
+
     const filePath = filePathFromToolArgs(args);
     const isEditTool = toolName === "edit_file" || toolName === "edit";
     const isWriteTool = toolName === "write_file";
@@ -468,6 +505,21 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           {isStopped && <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-500/10 text-th-text-muted border border-neutral-500/20 font-medium shrink-0">stopped</span>}
           {isDone && !isStopped && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0">done</span>}
         </button>
+        {spawnResult && (
+          <div className="mt-1.5 ml-6 max-w-md">
+            <Link
+              to={`/chat/${spawnResult.childSessionId}`}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-blue-500/30 bg-blue-500/[0.06] hover:bg-blue-500/[0.1] hover:border-blue-500/50 transition-colors group"
+            >
+              <MessageSquarePlus size={14} className="text-blue-400 shrink-0" />
+              <span className="text-xs text-th-text-secondary truncate flex-1">
+                {toolName === "clear_distilled_model" ? "New session (default model): " : "New session: "}
+                <span className="text-th-text-primary font-medium">{spawnResult.title || spawnResult.childSessionId}</span>
+              </span>
+              <ExternalLink size={11} className="text-blue-400 shrink-0 opacity-70 group-hover:opacity-100" />
+            </Link>
+          </div>
+        )}
         {todos && todos.length > 0 && isLatestTodo && (
           <TodoChecklist todos={todos} />
         )}

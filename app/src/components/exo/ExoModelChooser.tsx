@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
+  Layers,
   Loader2,
   RefreshCw,
   Server,
@@ -15,7 +16,9 @@ import {
 } from "lucide-react";
 import { api } from "../../hooks/useApi";
 import { usePolling } from "../../hooks/usePolling";
+import { DistilledModelsTab } from "../distillation/DistilledModelsTab";
 import type {
+  DistillAdapter,
   ExoCatalogResponse,
   ExoCatalogRow,
   ExoNodeInfo,
@@ -53,6 +56,11 @@ export interface ExoModelChooserProps {
   onPreloadComplete?: (modelId: string) => void;
   /** Called when the user picks a model that's already loaded. */
   onUseLoaded?: (modelId: string) => void;
+  /** Distilled LoRAs attach on Standard only — cluster cannot load them. */
+  onUseDistilled?: (adapter: DistillAdapter) => void;
+  /** Highlight the Distilled row matching this catalog id. */
+  selectedDistillId?: string;
+  selectedAdapterPath?: string;
   /**
    * First-run / beginner mode. Surfaces a single recommended model (best
    * comfortable fit) with everything else tucked behind a "See all models"
@@ -514,6 +522,9 @@ export default function ExoModelChooser({
   selectedModelId,
   onPreloadComplete,
   onUseLoaded,
+  onUseDistilled,
+  selectedDistillId,
+  selectedAdapterPath,
   simple = false,
 }: ExoModelChooserProps) {
   const [resp, setResp] = useState<ExoCatalogResponse | null>(null);
@@ -530,6 +541,7 @@ export default function ExoModelChooser({
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   // Track which models are currently being unloaded (by model_id).
   const [unloadingModels, setUnloadingModels] = useState<Set<string>>(new Set());
+  const [pickerTab, setPickerTab] = useState<"catalog" | "distilled">("catalog");
 
   const refresh = useCallback(
     async (overrides?: { minNodes?: number; force?: boolean }) => {
@@ -787,6 +799,39 @@ export default function ExoModelChooser({
         </div>
       )}
 
+      <div className="rounded-lg border border-th-border bg-th-inset-bg overflow-hidden">
+        <div className="flex border-b border-th-border">
+          {([
+            { id: "catalog" as const, icon: <Sparkles size={11} />, label: "Catalog" },
+            { id: "distilled" as const, icon: <Layers size={11} />, label: "Distilled" },
+          ]).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setPickerTab(t.id)}
+              className={`flex-1 px-3 py-2 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors
+                ${pickerTab === t.id
+                  ? "bg-th-tab-active-bg text-white"
+                  : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover/20"}`}
+            >
+              {t.icon}
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {pickerTab === "distilled" && (
+          <DistilledModelsTab
+            engine="exo"
+            selectedCatalogId={selectedDistillId}
+            selectedAdapterPath={selectedAdapterPath}
+            canUse={!!onUseDistilled}
+            onUse={(adapter) => onUseDistilled?.(adapter)}
+          />
+        )}
+      </div>
+
+      {pickerTab === "catalog" && (
+      <>
       {/* Simple mode: one recommended model + a disclosure to the full catalog. */}
       {condensed && (
         <div className="space-y-3">
@@ -975,6 +1020,8 @@ export default function ExoModelChooser({
             </button>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

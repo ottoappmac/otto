@@ -10,6 +10,7 @@ import ScheduleRunsPage from "./pages/ScheduleRunsPage";
 import TriggersPage from "./pages/TriggersPage";
 import TriggerRunsPage from "./pages/TriggerRunsPage";
 import ActivityPage from "./pages/ActivityPage";
+import DistillPage from "./pages/DistillPage";
 import AmbientInbox from "./components/ambient/AmbientInbox";
 import RunsPage from "./pages/RunsPage";
 import RunDetailPage from "./pages/RunDetailPage";
@@ -268,6 +269,7 @@ export default function App() {
           <Route path="/runs/:id" element={<RunDetailPage />} />
           <Route path="/history" element={<Navigate to="/runs" replace />} />
           <Route path="/activity" element={<ActivityPage />} />
+          <Route path="/distill" element={<DistillPage />} />
           <Route path="/ambient" element={<AmbientInbox />} />
         </Route>
       </Routes>

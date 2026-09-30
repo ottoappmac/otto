@@ -1,0 +1,729 @@
+# Otto Model Distillation — Amended Plan
+
+Engineering plan. Replaces the prior master plan and file-change plan.
+Not a shipped feature — do not add this to `docs/features.md` until an
+adapter actually loads in a session.
+
+**Method:** hard-label SFT on tool-call trajectories, applied as a LoRA
+adapter on a user-chosen student model (default Qwen3-8B-4bit).
+
+**First architecture:** one student base + swapable LoRA adapters (not
+full per-domain weight copies). Teacher and student are picked in
+Settings from the local MLX catalog — not hardcoded.
+
+**Trainer:** `mlx_lm.lora` on Apple Silicon. Unsloth is CUDA-only and
+is out.
+
+---
+
+## 1. Decisions (locked)
+
+These are the disagreements with the previous plan. Everything else in
+this document follows from them.
+
+| Decision | Was | Now | Why |
+|---|---|---|---|
+| Specialization vehicle | Undecided: “start with full 4.6 GB copies, LoRA later” while also building LoRA loading first | **LoRA adapter on the user-chosen student** (default 8B) | 16 GB Macs cannot keep two large models resident. `_LOADED_MODELS` already makes a full swap expensive. Adapter is ~25 MB and is bound to one student. |
+| Trainer | Unsloth (CUDA) on M2/M4 | **`mlx_lm.lora` + `mlx_lm.fuse`** | Unsloth will not run on the hardware Otto ships for. |
+| SFT record format | Homemade `System:/User:/Assistant:` string | **Student tokenizer `apply_chat_template` + that family’s native tool markup**, same path as `ChatMLXText._to_prompt` | Otto parses family-specific markers in `_native_tool_parsing.py`. Hardcoding Qwen markup breaks a Llama/Mistral student. |
+| Adapter API | PEFT `model.load_adapter(id, name=…)` | **`mlx_lm.load(path, adapter_path=…)`** (confirm in Phase 0) | Pinned `mlx-lm>=0.31.2` does not expose PEFT named adapters. One adapter per load. |
+| Where to edit | `app/src-tauri/resources/backend/_internal/src/…` | **`src/…` and `backend/…` only** | `_internal` is the PyInstaller bundle. Next backend build overwrites it. |
+| Catalog | Hardcode `mlx-community/Qwen3-8B-Blender-Distilled-4bit` | **Register a local adapter path after a successful train** | That Hub repo does not exist. A CURATED row for it breaks the picker. |
+| Domain routing | Per-task `select_model(task)` mid-turn | **Adapter chosen at session start** | Loading another 8B mid-turn is tens of seconds and a memory spike. Domain detection is deferred until two adapters exist. |
+| Blender simulation | `execute()` in “headless Blender” | **Dedicated `blender --background` harness**, *or* BlenderMCP against a fixture `.blend` | Built-in MCP is “live control of a running Blender session — not a headless wrapper.” |
+| Training location | `src/distill/` inside the agent runtime | **`backend/distillation/`** (data + glue) + **`scripts/distill_train.py`** (offline job) | Training must unload inference weights. It does not belong in the bundled LangChain package. |
+| Auto-train | `activity_auto_train` in Settings | **Manual / CLI only until Phase 4** | Training while chat weights are loaded will OOM. Exclusive GPU access is a prerequisite, not a flag. |
+| oMLX | Ignored | **Classic `ChatMLXText` (`provider=mlx`) only for v1.** oMLX is a follow-up. | Turbo is already deprecated toward omlx, but adapter loading has to exist on one path first. |
+| Teacher on 16 GB | Implied to work locally | **Teacher RAM is scored against the machine**, same fit badges as the MLX picker. Default teacher (Qwen3-32B-4bit, 18.2 GB) needs 32 GB+. A 16 GB machine can still pick a smaller teacher (e.g. Qwen3-14B) or skip fabrication. | Do not assume 32B. |
+| Teacher / student IDs | Hardcoded 32B / 8B | **User-chosen from the MLX catalog** (`DistillationConfig.teacher_model_id` / `student_model_id`), with catalog defaults. Adapter is bound to the student: it only loads when the live model is that student. | A LoRA trained on 8B is garbage on 14B. |
+
+---
+
+## 2. What we are actually building
+
+Otto already logs structured tool-call trajectories. Small local models
+miss tool choices that larger local models (and cloud models) get right.
+Distillation copies the *successful traces* onto a **student** via LoRA
+so the daily-driver can keep a small model loaded and still follow
+the **teacher**’s tool decisions.
+
+Teacher and student are the user’s choice (MLX catalog, local weights
+only). Defaults: teacher `mlx-community/Qwen3-32B-4bit`, student
+`mlx-community/Qwen3-8B-4bit`.
+
+Two data sources, one artifact type:
+
+| Path | Data | When | Artifact |
+|---|---|---|---|
+| **A. Activity** | Real sessions from `<app_data>/transcripts/*.jsonl` | Immediately — format is already structured | LoRA on the **chosen student**. Labels come from the sessions themselves (whatever model produced them), optionally filtered to sessions whose `SessionInfo.model` matches the teacher. |
+| **B. Domain** | Fabricated + simulation-validated traces for one app (Blender first) | After Path A loads an adapter in a real session | LoRA on the **same student**. Labels are generated by the **chosen teacher**. |
+
+Both are **hard-label SFT** (copy the teacher’s tool-call sequence).
+Soft-label KL, feature distillation, and relation distillation stay out.
+
+```
+transcript JSONL ──┐
+                   ├─► collector ─► quality filter ─► chat-template JSONL
+fabricator + sim ──┘                                      │
+                                                          ▼
+                                              mlx_lm.lora (offline)
+                                                          │
+                                                          ▼
+                                         <app_data>/distillation/adapters/<name>/
+                                                          │
+                                                          ▼
+                                    ChatMLXText(adapter_path=…) at session start
+```
+
+LoRA here is not a second method. SFT is the loss; LoRA is how the
+update is stored (small adapter instead of a second 4.6 GB model).
+
+---
+
+## 3. Runtime architecture
+
+### 3.1 One student, one adapter, session-scoped
+
+```
+student_model_id                 (user-chosen MLX repo, default Qwen3-8B-4bit)
+└── adapter_path = activity/     (optional, ~25 MB, trained on that student)
+    or blender/                  (optional, later, same student)
+```
+
+An adapter is **not portable across bases**. Metadata written next to
+the adapter records `base_repo_id`. At session start:
+
+- If `MlxHfConfig.adapter_path` is set **and** `hf_llm_model_id == adapter.base_repo_id`, load student + adapter.
+- If the live model is a different repo, **do not load the adapter**. Log a warning: “adapter was trained on X, live model is Y.”
+
+Never silently apply an 8B adapter onto a 14B (or any other) student.
+
+- Adapter is selected when the session graph is built, not per turn.
+- At most one adapter loaded. mlx_lm does not give us PEFT-style named stacks.
+- Speculative decoding is **disabled** while an adapter is active (draft model does not have the adapter; acceptance rate will collapse).
+- `_LOADED_MODELS` cache key in `src/chat_models/mlx/_shared.py` becomes `(model_path, draft_path, adapter_path)`. Applying an adapter to a cached bare model mutates the shared object and leaks the adapter into the next session.
+
+### 3.2 Config plumbing (this is what the old plan missed)
+
+Settings do not reach `create_llm` via Pydantic alone. MLX knobs flow:
+
+```
+AppConfig.llm.mlx  →  to_env_dict()._mlx_block()  →  os.environ  →  Environment  →  _build_mlx_chat
+```
+
+So a LoRA field must be added in **all four** places, not just `MlxHfConfig`:
+
+1. `MlxHfConfig.adapter_path: str = ""` in `backend/config.py`
+2. `"MLX_ADAPTER_PATH"` in `_mlx_block()` / `to_env_dict`
+3. `Environment.get_mlx_adapter_path()` in `src/utilities/environment.py`
+4. Passed into `ChatMLXText` from `_build_mlx_chat` in `src/deep_agent/model_factory.py`
+
+A nested `DistillationConfig` holds the teacher/student pair, dataset
+paths, and feature flags. It is **not** how the live adapter is
+selected at inference — that remains `MlxHfConfig.adapter_path`, and
+only applies when the live MLX model equals `student_model_id`.
+
+```python
+class DistillationConfig(BaseModel):
+    enabled: bool = False
+    data_dir: str = ""          # empty ⇒ <app_data>/distillation/
+    min_tool_calls: int = 2
+
+    # User-chosen. Must be local MLX catalog / cached Hub ids.
+    # Empty ⇒ the defaults below.
+    teacher_model_id: str = "mlx-community/Qwen3-32B-4bit"
+    student_model_id: str = "mlx-community/Qwen3-8B-4bit"
+
+    # Path A: if True, only keep sessions whose SessionInfo.model
+    # matches teacher_model_id. If False, keep any passing session
+    # (the historical model is the implicit teacher).
+    filter_sessions_by_teacher: bool = False
+
+    # Live adapter is MlxHfConfig.adapter_path, not a field here.
+```
+
+Do not add `activity_auto_train`, domain router strategy, or
+`max_storage_gb` until there is more than one adapter on disk.
+
+### 3.4 Choosing teacher and student
+
+Both pickers reuse the existing MLX catalog + fit badges
+(`backend/mlx_catalog.py`, `app/src/components/mlx/ModelChooser.tsx`).
+Do not invent a second catalog.
+
+| Role | What it is | Used by | Default |
+|---|---|---|---|
+| **Teacher** | Larger (or stronger) local model whose tool-call traces we want to copy | Path B fabrication; Path A filter when `filter_sessions_by_teacher`; Phase 0 baseline | `mlx-community/Qwen3-32B-4bit` |
+| **Student** | Smaller local model we train the LoRA *on* and later load it *with* | `mlx_lm.lora --model`; formatter tokenizer; inference pair | `mlx-community/Qwen3-8B-4bit` |
+
+**Constraints (enforce in Settings + CLI, do not only document):**
+
+1. **Local only.** Teacher and student must be MLX repo ids. If
+   `PrivacyConfig.enabled`, refuse anything that is not in
+   `local_only_providers`. Distillation never calls Anthropic/OpenAI
+   as a teacher.
+2. **Tool-capable.** Prefer catalog rows with `"tools"` in `role`.
+   Warn (do not hard-block) if the student has no tool-aware chat
+   template — `detect_native_tool_support` on its tokenizer. A
+   student without native tools would need a ReAct dataset, which
+   v1 does not build.
+3. **Same family, strongly recommended.** Teacher and student should
+   share a chat-template family (both Qwen, both Llama, …). Mixed
+   families mean the teacher emits Llama `<|python_tag|>` calls and
+   the student is trained to mimic tokens its Qwen parser does not
+   read. UI: amber warning, user can proceed. CLI: `--allow-family-mismatch`.
+4. **Student tokenizer owns the SFT format.** `formatter.py` loads
+   the *student* tokenizer and runs `apply_chat_template`. Trajectories
+   are converted to LangChain messages first (model-agnostic), then
+   rendered with the student template. That is how a Llama teacher
+   session can still train a Qwen student — we restamp tool calls
+   into the student’s markup rather than copying raw assistant text.
+5. **Fit scoring.** Reuse `score_catalog`. Teacher `fits == "over"`
+   is a hard refuse for fabricate/baseline (it will not load).
+   `tight` is allowed with a confirmation. Student `over` is a hard
+   refuse for train. Training also requires the chat model unloaded.
+6. **Teacher ≥ student, recommended.** If `teacher.params_b < student.params_b`
+   (or teacher is the same id as student), warn: you are distilling a
+   model into itself / a larger one. Allow it — Path A from Claude
+   sessions into an 8B student is a valid “teacher was cloud, student
+   is local” case, and `SessionInfo.model` may not even be an MLX id.
+7. **Weights must already be cached** (or the picker downloads them
+   the same way ModelChooser does) before Train / Fabricate. Do not
+   start a 18 GB Hub pull from the train script with a vague spinner.
+
+**Settings (Phase 4) layout**, under the existing Settings page, not a
+new top-level tab until there are more controls than this:
+
+- Enable collection (toggle)
+- Teacher — `ModelChooser` bound to `distillation.teacher_model_id`
+- Student — `ModelChooser` bound to `distillation.student_model_id`
+- “Only use sessions from the teacher” (`filter_sessions_by_teacher`)
+- Adapter path (existing MLX field) + note: “loads only when the
+  active MLX model is the student”
+- Fit / family warnings inline, using the same Comfortable / Tight /
+  Won’t fit badges
+
+`ModelChooser.onUseCached` today writes `llm.mlx.hf_llm_model_id`.
+The teacher/student instances must pass their own callbacks so
+picking a teacher does **not** change the live chat model. Download
+still goes through the same Hub cache — weights are shared.
+
+CLI overrides Settings, so a 32 GB machine can fabricate with a
+teacher the 16 GB daily driver would never pick:
+
+```
+scripts/distill_train.py     --model   "$STUDENT"
+scripts/distill_fabricate_blender.py --teacher "$TEACHER" --student "$STUDENT"
+scripts/distill_baseline.py  --teacher "$TEACHER" --student "$STUDENT"
+```
+
+When flags are omitted, read `DistillationConfig`.
+
+### 3.5 What “success” means for Path A
+
+Transcripts have no `success` field. Session meta does:
+
+`SessionInfo.status`: `idle | running | completed | error | stopped | awaiting_input`
+
+Include a trajectory only when **all** of:
+
+- matching `SessionInfo.status == "completed"`
+- `error` is empty
+- at least `min_tool_calls` distinct `tool_call` events
+- session was not `stopped` (user cancel)
+- if `filter_sessions_by_teacher`, `SessionInfo.model` equals
+  `teacher_model_id`
+
+Prefer, when present:
+
+- `{session_id}.eval.json` sidecar with a passing verdict (`backend/eval_runner.py`)
+
+`≥2 tool calls and no exception` alone will train on mediocre Blender
+geometry and failed-but-completed research dumps.
+
+Transcript rotator defaults (30 days, 200 files) can delete Path A
+input before `min_samples` is reached. Phase 1 collector must copy
+accepted traces into `<app_data>/distillation/activity/` immediately,
+not reread live transcripts at train time.
+
+---
+
+## 4. Data format (non-negotiable)
+
+Each SFT example is a JSONL line that `mlx_lm.lora` can consume, whose
+`text` (or `messages`) field is exactly what the **student** would have
+seen at inference.
+
+Build it by reusing `ChatMLXText._message_to_chat_dict` + the
+**student** tokenizer’s
+`apply_chat_template(..., tools=..., add_generation_prompt=False)` on
+the reconstructed LangChain messages:
+
+```
+user → assistant (tool_calls) → tool result → assistant (tool_calls) → … → assistant (final)
+```
+
+Source mapping from transcript records (`backend/session_transcript.py`):
+
+| Transcript `type` | Becomes |
+|---|---|
+| `user` | `HumanMessage` |
+| `assistant` | `AIMessage` content (thought / preamble) |
+| `tool_call` | `AIMessage.tool_calls` entry (`tool` name + `content` args) |
+| `tool_result` | `ToolMessage` (`tool_call_id` joins it to the call) |
+
+Do not concatenate `System: …\nUser: …`. Do not hardcode Qwen
+`<tool_call>` markup in the formatter — that breaks the day someone
+picks a Llama or Mistral student. Render through the student
+tokenizer. If the student has no tool-aware template, refuse to
+format (v1 does not ship a ReAct dataset).
+
+The round-trip test must run against the configured student, not a
+hardcoded Qwen3-8B id.
+
+Mask / ignore the prompt tokens; loss is on assistant + tool-call
+tokens only. mlx_lm’s chat SFT path already does this if the dataset
+is in messages form — verify in Phase 0 rather than rolling a custom
+masker.
+
+---
+
+## 5. Hardware and process isolation
+
+Fit is computed from the **chosen** models, not from 8B/32B folklore.
+Examples with catalog defaults:
+
+| Machine | Path A collect | Train LoRA on default 8B student | Default 32B teacher | Path B fabricate with default teacher |
+|---|---|---|---|---|
+| 16 GB unified | Yes | Tight, yes, **chat model unloaded** | No (`fits=over`, 18.2 GB) | No — pick a smaller teacher (14B) or skip |
+| 32 GB+ | Yes | Yes | Yes | Yes |
+
+If the user picks Qwen3-4B as student and Qwen3-8B as teacher, a 16 GB
+Mac can fabricate. If they pick Llama-3.3-70B-4bit as teacher, they
+need 64 GB+, same as the catalog already says.
+
+Rules:
+
+- Training is an offline process (`scripts/distill_train.py --model <student>`).
+  The backend must not start a train job while a session holds MLX weights.
+- Unload via existing cache clear in `_shared.py`, then `gc.collect()` +
+  `mx.clear_cache()`, then train.
+- Fabricate loads **only** the teacher (not the student). Train loads
+  **only** the student. Never co-resident: live chat + teacher, live
+  chat + trainer, or teacher + student.
+- Persist `adapter_meta.json` next to the adapter:
+  `{base_repo_id, teacher_model_id, trained_at, dataset_sha}`.
+  Inference refuses to attach the adapter to any other base.
+
+---
+
+## 6. Privacy
+
+Path A copies user sessions (mail bodies, search queries, file paths)
+into a training set.
+
+- Default **off**. No collection until `distillation.enabled` is true
+  *and* the user has confirmed in Settings (Phase 4).
+- Data stays under `get_app_data_dir() / "distillation/"`. Never uploaded.
+- Privacy lock (`PrivacyConfig.enabled`) already forbids cloud teachers.
+  Distillation must refuse a teacher/student that is not a local MLX
+  (or exo/omlx, later) repo id. No Claude/GPT teacher, even if the
+  user types one in.
+- Phase 1 may collect on a dev machine without UI, but the collector
+  must still gate on the flag so a packaged build cannot silently
+  assemble a corpus.
+
+PII redaction is a later enhancement, not a v1 blocker, because the
+corpus never leaves the machine. Document that in Settings copy.
+
+---
+
+## 7. Phases
+
+Each phase has a **gate**. The next phase does not start until the
+gate is written down with real numbers, not estimates.
+
+### Phase 0 — Feasibility spike (3–5 days)
+
+No Settings tab. No catalog row. No domain router. No auto-train.
+
+**Tasks**
+
+1. **Adapter load proof**
+   - Confirm the mlx_lm 0.31 API: `load(model, adapter_path=…)` vs
+     `mlx_lm.tuner.utils.load_adapters`.
+   - Take any public Qwen3 LoRA (or train a 10-step dummy), load it
+     through a throwaway `ChatMLXText` in a notebook/script.
+   - Verify generation still parses native tool calls.
+2. **Cache-key design**
+   - Prove that putting `adapter_path` on the `_LOADED_MODELS` key
+     isolates adapters. Prove that loading an adapter onto a cached
+     bare model *without* a new key poisons the next session.
+3. **Corpus census**
+   - Count transcripts that pass the Path A filter (completed, no
+     error, ≥2 tool calls). Report: N sessions, tool histogram, median
+     steps, how many have eval sidecars.
+   - If N < 20, Path A training is postponed; Phase 1 still ships the
+     collector so the corpus can grow.
+4. **Baseline eval**
+   - Fixed set of ~20 held-out tool-use prompts (mix of research,
+     blender-if-available, code).
+   - Run **configured student vs configured teacher** vs current
+     daily-driver. Defaults 8B vs 32B if the machine can load both;
+     if the teacher is `over`, skip it and record “teacher does not
+     fit” rather than failing the spike.
+   - Metrics: tool-name accuracy on first call, argument validity
+     (schema), multi-step completion (reached a final answer without
+     loop-guard abort).
+   - **These numbers replace the old 90% / 70% / 60% / 30% claims.**
+     Do not keep fictional targets.
+
+**Gate:** written `docs/distillation-feasibility.md` with API confirmation,
+corpus N, and baseline table. Go if adapter load works and either N≥20
+or we explicitly switch the first train to Path B synthetic.
+
+**Files touched (spike only, throwaway ok):**
+- `scripts/distill_probe_adapter.py` (load proof)
+- `scripts/distill_census.py` (corpus count)
+- `scripts/distill_baseline.py` (eval harness, can seed `backend/distillation/eval.py` later)
+
+---
+
+### Phase 1 — Collector + formatter (1 week)
+
+**New files**
+
+```
+backend/distillation/
+  __init__.py
+  collector.py       # transcripts + SessionInfo → trajectory dicts
+  quality.py         # completed / no error / min tool calls / eval sidecar / optional teacher-model filter
+  formatter.py       # trajectory → chat-template JSONL using the **student** tokenizer
+  paths.py           # <app_data>/distillation/{activity,adapters,runs}/
+```
+
+**Behaviour**
+
+- `collect_trajectories()` reads `<app_data>/transcripts/*.jsonl`, joins
+  `SessionInfo` from the sessions store, writes accepted traces to
+  `distillation/activity/trajectories.jsonl` (durable copy).
+- `to_sft_jsonl(path, student_model_id)` applies the **student** chat
+  template via the same message conversion as
+  `ChatMLXText._message_to_chat_dict`. Prefer importing that helper
+  over forking a second serializer. `student_model_id` comes from
+  `DistillationConfig` (or `--student`).
+- Dedup: identical `(user text, ordered tool-name sequence)` tuples.
+  No embedding similarity in v1.
+- Collector is a function + a `python -m backend.distillation.collect`
+  CLI. No session_manager hook yet (avoids surprising users).
+
+**Tests** (`tests/test_distillation_collector.py`)
+
+- Fixture transcript → one trajectory with tool names and args intact.
+- `stopped` / `error` sessions excluded.
+- Formatter output contains the student’s family tool marker
+  (Qwen: `<tool_call>`, Llama: `<|python_tag|>`, …) and round-trips
+  through `parse_native_tool_calls` for that family.
+- Dedup drops a second copy of the same tool sequence.
+
+**Gate:**  formatter round-trip test green; census script can emit a
+real JSONL from this machine’s transcripts.
+
+---
+
+### Phase 2 — Offline LoRA train + load in ChatMLXText (1–2 weeks)
+
+This is the first user-visible capability: Settings can point MLX at
+an adapter and the next session uses it, provided the live model is
+the student that adapter was trained on.
+
+Also land `DistillationConfig` on `AppConfig` here (teacher/student
+ids) so the train script can read defaults without waiting for the
+Settings UI. The pickers themselves are Phase 4.
+
+**Training (offline)**
+
+```
+scripts/distill_train.py
+  --dataset <app_data>/distillation/activity/sft.jsonl
+  --model   <student_model_id>          # default: DistillationConfig.student_model_id
+  --out     <app_data>/distillation/adapters/activity
+  --rank    32
+  --epochs  2
+```
+
+The adapter directory must include `adapter_meta.json` with
+`base_repo_id` = the `--model` that was trained. `mlx_lm.lora` is
+always invoked on the student, never the teacher.
+
+Wraps `mlx_lm.lora`. Defaults (treat as knobs, not religion):
+
+- rank 32, alpha 64 (start smaller than 64/128; raise if underfit)
+- target modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+  (q/v-only is too thin for tool calling)
+- 2 epochs, lr `1e-4`
+- batch size whatever fits after the **student** weights (document the
+  number that worked on the train machine)
+
+Refuse to start if `score_catalog` says the student is `over`, or if
+an MLX session currently holds weights.
+
+**Runtime load**
+
+| File | Change |
+|---|---|
+| `backend/config.py` | `MlxHfConfig.adapter_path: str = ""`; add `MLX_ADAPTER_PATH` to `_mlx_block()` |
+| `src/utilities/environment.py` | `get_mlx_adapter_path()` |
+| `src/chat_models/mlx/_shared.py` | cache key `(model, draft, adapter)`; `load(..., adapter_path=)` on miss |
+| `src/chat_models/mlx/chat_mlx_text.py` | `adapter_path: Optional[str] = None`; pass through to `_load_or_reuse`; skip warmup draft when adapter set |
+| `src/deep_agent/model_factory.py` | `_build_mlx_chat(..., adapter_path=)`; if adapter set, force `draft_model_id=""` |
+
+Do **not** loop-load multiple adapters. Do **not** add distilled Hub
+rows. Do **not** change `_infer_role_tags` (`"distilled" → thinking`
+in the old plan is wrong).
+
+**Tests**
+
+- `tests/test_mlx_adapter_cache.py`: two `ChatMLXText` instances, one
+  with adapter_path, one without, must not share a mutated model
+  (mock `mlx_lm.load` if a real adapter is unavailable in CI).
+- `tests/test_config_adapter_path.py`: `AppConfig.to_env_dict()` emits
+  `MLX_ADAPTER_PATH`.
+
+**Manual gate (Apple Silicon):**
+
+1. Train on ≥20 real traces (or skip to a dummy adapter if census was
+   low — then this gate is “loads”, not “improves”).
+2. Set `adapter_path` in config.
+3. Start a session, confirm log line `Loaded MLX adapter: …`.
+4. Re-run the Phase 0 baseline on student+adapter vs bare student.
+   Record delta. Improvement is *not* required to merge the loading
+   infra; it *is* required to call the adapter a product.
+
+---
+
+### Phase 3 — Blender fabrication prototype (2 weeks, 32 GB+ machine)
+
+Only after Phase 2 loading works.
+
+**New files**
+
+```
+backend/distillation/fabricator.py   # teacher generates trajectories from a task list
+backend/distillation/blender_sim.py  # blender --background harness
+scripts/distill_fabricate_blender.py
+```
+
+**Simulation** is a subprocess:
+
+```
+blender --background --python-exit-code 1 harness.py --trace trace.json
+```
+
+The harness creates a clean scene, execs each `execute_blender_code`
+body, asserts objects exist / no Python exception, optionally writes a
+viewport PNG. It does **not** go through Otto’s BlenderMCP (that MCP
+requires a GUI session).
+
+Static checks before simulation: `ast.parse` on bpy snippets, optional
+allow-list of `bpy.ops.*` / `bpy.data.*` names scraped from Blender’s
+`rna` on the same machine.
+
+Teacher = `DistillationConfig.teacher_model_id` (CLI `--teacher`) via a
+one-shot `ChatMLXText` in the fabricate script, **not** via
+`web_research` inside a live Otto session. Using Otto tools couples
+fabrication to a 20 GB chat stack and the GUI MCP. Refuse to start if
+the teacher’s catalog `fits` is `"over"` on this machine.
+
+The teacher prompt includes a curated bpy cheat-sheet (checked-in
+markdown, not a live web crawl on every run). A one-time research pass
+can produce that cheat-sheet; it is an input artifact, not a runtime
+step.
+
+After simulation, format the surviving traces with the **student**
+tokenizer (`--student`, default `DistillationConfig.student_model_id`)
+and train LoRA on that student.
+
+Keep only traces that pass simulation. Expect 30–50% discard. The old
+“500 traces → 90% tool accuracy” claim is dropped. Success for Phase 3:
+
+- ≥50 simulation-passing traces
+- LoRA trained on them loads via Phase 2 infra (student + adapter)
+- Held-out blender tasks: student+adapter beats bare student on
+  code-executes-without-error (the only metric the simulator can
+  grade honestly)
+
+Visual quality (looks like a tree) is **out of scope** for v1 metrics.
+
+---
+
+### Phase 4 — Productization (1 week, after a measured win)
+
+Do not start this because the plumbing exists. Start it because Phase 2
+or 3 showed a real metric lift.
+
+- `DistillationConfig` on `AppConfig` + Settings:
+  - Enable collection
+  - **Teacher** `ModelChooser` → `distillation.teacher_model_id`
+  - **Student** `ModelChooser` → `distillation.student_model_id`
+  - “Only use sessions from the teacher”
+  - Dataset size, last train time, privacy sentence
+  - Fit / family-mismatch warnings on the pair
+  - “Train…” remains a CLI hint, not an in-app Metal job
+- Manual adapter picker: a path field under Settings → LLM → MLX
+  (reuses `adapter_path`). Shown with the bound `base_repo_id` from
+  `adapter_meta.json`. No “Distilled” Hub badge.
+- Switching the live MLX model away from the student automatically
+  stops applying the adapter (see §3.1).
+- Optional: copy adapter into a user-visible list under
+  `distillation/adapters/` scanned by the MLX picker as *local* rows
+  (`repo_id` = absolute path, `featured=False`).
+- `session_manager` hook: when `distillation.enabled` and session
+  completes, append to `activity/trajectories.jsonl` (the collector
+  already exists; this is just the trigger). Honour
+  `filter_sessions_by_teacher` here too.
+- Refuse training if an MLX session is running, if student `fits` is
+  `over`, or if teacher `fits` is `over` for a fabricate run.
+
+**Still out of Phase 4:** oMLX adapters, auto-train, domain router,
+storage budget, multi-adapter, exo/distributed train.
+
+---
+
+### Phase 5 — Only if two adapters exist
+
+- Session-start adapter choice from agent config (`adapter_path` per
+  library agent — Blender agent points at `blender/`, default agent at
+  `activity/` or empty).
+- That *is* the domain router. No `detect_domain(task)` classifier.
+
+---
+
+## 8. File change list (accurate)
+
+Edit source, never `_internal`.
+
+### Phase 0 (scripts only)
+
+| # | File | Action |
+|---|---|---|
+| 1 | `scripts/distill_probe_adapter.py` | Create |
+| 2 | `scripts/distill_census.py` | Create |
+| 3 | `scripts/distill_baseline.py` | Create — `--teacher` / `--student`, skip teacher if `fits=over` |
+
+### Phase 1
+
+| # | File | Action |
+|---|---|---|
+| 4 | `backend/distillation/__init__.py` | Create |
+| 5 | `backend/distillation/paths.py` | Create |
+| 6 | `backend/distillation/collector.py` | Create |
+| 7 | `backend/distillation/quality.py` | Create |
+| 8 | `backend/distillation/formatter.py` | Create |
+| 9 | `tests/test_distillation_collector.py` | Create |
+
+### Phase 2
+
+| # | File | Action |
+|---|---|---|
+| 10 | `scripts/distill_train.py` | Create — `--model` is the student (default from `DistillationConfig.student_model_id`) |
+| 11 | `backend/config.py` | `MlxHfConfig.adapter_path`; `_mlx_block`; **`DistillationConfig` (`teacher_model_id`, `student_model_id`, `filter_sessions_by_teacher`) on `AppConfig`** so CLI scripts have a place to read the pair before Settings exists |
+| 12 | `src/utilities/environment.py` | `get_mlx_adapter_path` |
+| 13 | `src/chat_models/mlx/_shared.py` | cache key + `adapter_path` on `load`; refuse adapter if `adapter_meta.json` `base_repo_id` ≠ model path |
+| 14 | `src/chat_models/mlx/chat_mlx_text.py` | field + pass-through |
+| 15 | `src/deep_agent/model_factory.py` | wire + disable draft when adapter set |
+| 16 | `backend/distillation/model_pair.py` | Create — catalog lookup, fit check, family warning, local-only guard |
+| 17 | `tests/test_mlx_adapter_cache.py` | Create |
+| 18 | `tests/test_config_adapter_path.py` | Create |
+| 19 | `tests/test_distillation_model_pair.py` | Create |
+
+### Phase 3
+
+| # | File | Action |
+|---|---|---|
+| 20 | `backend/distillation/fabricator.py` | Create |
+| 21 | `backend/distillation/blender_sim.py` | Create |
+| 22 | `scripts/distill_fabricate_blender.py` | Create — `--teacher` / `--student` |
+| 23 | `tests/test_blender_sim.py` | Create (skip if no Blender in CI) |
+
+### Phase 4
+
+| # | File | Action |
+|---|---|---|
+| 24 | `app/src/types/index.ts` | Mirror `DistillationConfig` on the Settings payload |
+| 25 | Settings UI | Two `ModelChooser`s (teacher + student) + collection toggle + family/fit warnings. Reuse existing chooser; do not fork it. |
+| 26 | `backend/session_manager.py` | append-on-complete hook, flag-gated |
+
+**Not in this list (removed from the old plan):**
+`src/distill/*`, Hub catalog distilled rows, `_infer_role_tags` hack,
+`Environment.get_mlx_lora_adapters()` JSON list, PEFT `load_adapter`
+loop, `router.py`, in-app Unsloth trainer.
+
+---
+
+## 9. What not to build (still)
+
+1. Feature-based or relation-based distillation
+2. Soft-label / KL distillation (needs teacher logits + mlx_lm patch)
+3. Unsloth, CUDA trainers, or a second training stack
+4. Full 4.6 GB weight copies per domain
+5. Per-turn model switching
+6. Fake Hub models in `CURATED`
+7. Training inside the chat process
+8. Using Otto `web_research` / `doc_research` as the fabricate loop
+9. Treating BlenderMCP as a headless simulator
+10. oMLX / exo adapter loading in v1
+11. Auto-train, storage-budget pruner, multi-adapter merge
+12. Cloud / Anthropic / OpenAI teachers — local MLX catalog only
+
+---
+
+## 10. Risks that remain (with the mitigation this plan actually uses)
+
+| Risk | Mitigation |
+|---|---|
+| Not enough quality Path A data | Census in Phase 0; do not train on <20 traces; Path B is the fallback, not a parallel workstream |
+| Adapter poisons the process-wide MLX cache | Cache key includes `adapter_path`; tests in Phase 2 |
+| SFT format ≠ inference format | Formatter must round-trip `parse_native_tool_calls` |
+| Fine-tune hurts general chat | LoRA not full FT; keep rank modest; baseline includes non-tool prompts |
+| Synthetic bpy looks valid and is wrong | Simulation exec, not docstring lookup |
+| Adapter trained on student A loaded onto model B | `adapter_meta.json` `base_repo_id` must match live `hf_llm_model_id`; otherwise skip adapter + warn |
+| Teacher does not fit this Mac | Catalog `fits=over` is a hard refuse; user picks a smaller teacher |
+| Teacher/student family mismatch | Amber warning; formatter restamps into the student template; `--allow-family-mismatch` to proceed |
+| 16 GB OOM during train | Offline script; unload chat first; student `over` refuses; no in-app button |
+| Overfit to one user’s mail/search | Quality filter + later mix of Path B; LoRA can be deleted |
+| oMLX users never see the adapter | Document v1 = `provider=mlx` only; oMLX is Phase 5+ |
+
+---
+
+## 11. Timeline
+
+```
+Phase 0   3–5 days    adapter API + census + baseline          GATE: feasibility.md
+Phase 1   ~1 week     collector / formatter / tests            GATE: round-trip JSONL
+Phase 2   1–2 weeks   mlx_lm.lora + ChatMLXText adapter_path   GATE: loads in a session
+Phase 3   ~2 weeks    Blender fabricate + headless sim         GATE: 50 passing traces
+                      (32 GB+ only; skip if Phase 2 already
+                       showed a Path A lift)
+Phase 4   ~1 week     Settings pickers (teacher + student)     GATE: measured lift
+Phase 5   later       per-agent adapter_path                   only if two adapters exist
+```
+
+Calendar time is ~4–7 weeks to “an adapter you can turn on,” not 8–13
+weeks to a production distillation product. The old total assumed
+Unsloth, a domain router, a Settings distillation tab, and Hub models
+that do not exist.
+
+---
+
+## 12. Next action
+
+Phase 0, in this order:
+
+1. `scripts/distill_probe_adapter.py` — load any Qwen LoRA through
+   `mlx_lm` and through `ChatMLXText`.
+2. `scripts/distill_census.py` — print Path A yield from this machine.
+3. Write `docs/distillation-feasibility.md` with the API you actually
+   found and the census numbers.
+
+Do not open the Phase 1 files until (1) and (2) have numbers.

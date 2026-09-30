@@ -49,6 +49,13 @@ import type {
   SshConfigAppendResult,
   SshConfigHost,
   SshProbeResult,
+  DistillAdapter,
+  DistillCensus,
+  DistillDataset,
+  DistillDatasetDetail,
+  DistillJobStatus,
+  DistillUpload,
+  DistillValidateReport,
 } from "../types";
 import { API_BASE } from "../config/apiBase";
 
@@ -154,7 +161,14 @@ export const api = {
   mlxLocalModels: (queryString = "") =>
     request<{
       hub_cache: string;
-      models: { repo_id: string; name: string; size_mb: number }[];
+      models: {
+        repo_id: string;
+        name: string;
+        size_mb: number;
+        source?: string;
+        adapter_path?: string;
+        base_repo_id?: string;
+      }[];
       error: string | null;
     }>(`/api/mlx/local-models${queryString}`),
   mlxDownload: (data: Record<string, unknown>) =>
@@ -1128,7 +1142,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId }),
     }),
-  videoAnalyze: (params: {
+    videoAnalyze: (params: {
     session_id: string;
     source: string;
     question?: string;
@@ -1138,6 +1152,141 @@ export const api = {
     request<{ result?: string; error?: string }>("/api/video/analyze", {
       method: "POST",
       body: JSON.stringify(params),
+    }),
+
+  // Distillation (LoRA train job)
+  getDistillStatus: () => request<DistillJobStatus>("/api/distillation/status"),
+  getDistillCensus: (q?: {
+    teacher_model_id?: string;
+    student_model_id?: string;
+    filter_sessions_by_teacher?: boolean;
+  }) => {
+    const params = new URLSearchParams();
+    if (q?.teacher_model_id) params.set("teacher_model_id", q.teacher_model_id);
+    if (q?.student_model_id) params.set("student_model_id", q.student_model_id);
+    if (q?.filter_sessions_by_teacher !== undefined) {
+      params.set("filter_sessions_by_teacher", String(q.filter_sessions_by_teacher));
+    }
+    const qs = params.toString();
+    return request<DistillCensus>(`/api/distillation/census${qs ? `?${qs}` : ""}`);
+  },
+  startDistillTrain: async (body?: {
+    iters?: number;
+    name?: string;
+    purpose?: string;
+    teacher_model_id?: string;
+    student_model_id?: string;
+    source?: "sessions" | "upload";
+    upload_id?: string;
+  }) => {
+    const res = await fetch(`${API_BASE}/api/distillation/train`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = (data as { error?: string }).error || `API ${res.status}`;
+      const error = new Error(err) as Error & { status?: number; body?: unknown };
+      error.status = res.status;
+      error.body = data;
+      throw error;
+    }
+    return data as DistillJobStatus;
+  },
+  cancelDistillTrain: () =>
+    request<{ status: string }>("/api/distillation/cancel", { method: "POST" }),
+  startDistillFuse: async (catalogId: string) => {
+    const res = await fetch(`${API_BASE}/api/distillation/fuse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ catalog_id: catalogId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = (data as { error?: string }).error || `API ${res.status}`;
+      const error = new Error(err) as Error & { status?: number; body?: unknown };
+      error.status = res.status;
+      error.body = data;
+      throw error;
+    }
+    return data as DistillJobStatus;
+  },
+  listDistillAdapters: () =>
+    request<{ adapters: DistillAdapter[] }>("/api/distillation/adapters"),
+  setDistillPurpose: (catalogId: string, purpose: string) =>
+    request<DistillAdapter>("/api/distillation/adapters/purpose", {
+      method: "PATCH",
+      body: JSON.stringify({ catalog_id: catalogId, purpose }),
+    }),
+  getDistillDataset: (q?: {
+    teacher_model_id?: string;
+    student_model_id?: string;
+    filter_sessions_by_teacher?: boolean;
+  }) => {
+    const params = new URLSearchParams();
+    if (q?.teacher_model_id) params.set("teacher_model_id", q.teacher_model_id);
+    if (q?.student_model_id) params.set("student_model_id", q.student_model_id);
+    if (q?.filter_sessions_by_teacher !== undefined) {
+      params.set("filter_sessions_by_teacher", String(q.filter_sessions_by_teacher));
+    }
+    const qs = params.toString();
+    return request<DistillDataset>(`/api/distillation/dataset${qs ? `?${qs}` : ""}`);
+  },
+  getDistillDatasetSession: (sessionId: string, q?: {
+    teacher_model_id?: string;
+    student_model_id?: string;
+    filter_sessions_by_teacher?: boolean;
+  }) => {
+    const params = new URLSearchParams();
+    if (q?.teacher_model_id) params.set("teacher_model_id", q.teacher_model_id);
+    if (q?.student_model_id) params.set("student_model_id", q.student_model_id);
+    if (q?.filter_sessions_by_teacher !== undefined) {
+      params.set("filter_sessions_by_teacher", String(q.filter_sessions_by_teacher));
+    }
+    const qs = params.toString();
+    return request<DistillDatasetDetail>(
+      `/api/distillation/dataset/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ""}`,
+    );
+  },
+  validateDistillFile: async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch(`${API_BASE}/api/distillation/validate`, {
+      method: "POST",
+      body,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((data as { error?: string }).error || `API ${res.status}`);
+    }
+    return data as DistillValidateReport;
+  },
+  listDistillUploads: () => request<{ uploads: DistillUpload[] }>("/api/distillation/uploads"),
+  uploadDistillFile: async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch(`${API_BASE}/api/distillation/uploads`, {
+      method: "POST",
+      body,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error((data as { error?: string }).error || `API ${res.status}`) as Error & {
+        report?: DistillValidateReport;
+      };
+      err.report = (data as { report?: DistillValidateReport }).report;
+      throw err;
+    }
+    return data as { saved: boolean; upload: DistillUpload; report: DistillValidateReport };
+  },
+  getDistillUpload: (id: string) =>
+    request<{ upload: DistillUpload; report: DistillValidateReport }>(
+      `/api/distillation/uploads/${encodeURIComponent(id)}`,
+    ),
+  deleteDistillUpload: (id: string) =>
+    request<{ deleted: string }>(`/api/distillation/uploads/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     }),
 };
 

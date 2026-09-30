@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download, HardDrive, Library, Loader2, Search, Sparkles } from "lucide-react";
+import { Download, HardDrive, Layers, Library, Loader2, Search, Sparkles } from "lucide-react";
 import { api } from "../../hooks/useApi";
-import type { OmlxLocalModel, OmlxModelCatalogRow } from "../../types";
+import { DistilledModelsTab } from "../distillation/DistilledModelsTab";
+import type { DistillAdapter, OmlxLocalModel, OmlxModelCatalogRow } from "../../types";
 
-type PickerTab = "library" | "discover" | "custom";
+type PickerTab = "library" | "discover" | "distilled" | "custom";
 
 export function FitBadge({ fits }: { fits: string }) {
   const map: Record<string, { label: string; cls: string }> = {
@@ -36,9 +37,15 @@ export function FitBadge({ fits }: { fits: string }) {
  */
 export function OmlxModelPicker({
   onLoad,
+  onUseDistilled,
+  selectedDistillId,
+  selectedAdapterPath,
   serverRunning = true,
 }: {
   onLoad: (modelId: string) => Promise<void>;
+  onUseDistilled?: (adapter: DistillAdapter) => void;
+  selectedDistillId?: string;
+  selectedAdapterPath?: string;
   serverRunning?: boolean;
 }) {
   const [tab, setTab] = useState<PickerTab>("library");
@@ -180,9 +187,10 @@ export function OmlxModelPicker({
   );
 
   const tabs: { id: PickerTab; icon: React.ReactNode; label: string }[] = [
-    { id: "library",  icon: <Library size={11} />,  label: "Your library" },
-    { id: "discover", icon: <Sparkles size={11} />, label: "Discover" },
-    { id: "custom",   icon: <HardDrive size={11} />, label: "Custom" },
+    { id: "library",   icon: <Library size={11} />,  label: "Your library" },
+    { id: "discover",  icon: <Sparkles size={11} />, label: "Discover" },
+    { id: "distilled", icon: <Layers size={11} />,   label: "Distilled" },
+    { id: "custom",    icon: <HardDrive size={11} />, label: "Custom" },
   ];
 
   return (
@@ -341,6 +349,23 @@ export function OmlxModelPicker({
             })()}
             </div>
           </>
+        )}
+
+        {/* ── Distilled tab ── */}
+        {tab === "distilled" && (
+          <DistilledModelsTab
+            engine="omlx"
+            className="space-y-2"
+            selectedCatalogId={selectedDistillId}
+            selectedAdapterPath={selectedAdapterPath}
+            onUse={(adapter) => {
+              if (onUseDistilled) {
+                onUseDistilled(adapter);
+                return;
+              }
+              if (adapter.base_repo_id) void handleLoad(adapter.base_repo_id);
+            }}
+          />
         )}
 
         {/* ── Custom tab ── */}

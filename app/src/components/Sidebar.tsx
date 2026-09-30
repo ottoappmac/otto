@@ -16,6 +16,7 @@ import {
   Moon,
   Sun,
   Activity,
+  Layers,
   Monitor,
   Sparkles,
   Mic,
@@ -44,6 +45,7 @@ const NAV_ITEMS = [
   { to: "/schedules", icon: Calendar, label: "Schedules" },
   { to: "/triggers", icon: Zap, label: "Triggers" },
   { to: "/activity", icon: Monitor, label: "Activity" },
+  { to: "/distill", icon: Layers, label: "Distill" },
 ] as const;
 
 interface RecentSession {

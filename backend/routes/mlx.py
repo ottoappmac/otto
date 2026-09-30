@@ -105,31 +105,47 @@ async def mlx_local_models(
     cfg = await AppConfig.aload()
     hub = _resolve_hub_cache(cache_dir, cfg)
     path = Path(hub)
-    if not path.is_dir():
-        return {"hub_cache": hub, "models": [], "error": None}
 
     bookmark_labels = {b.repo_id: b.label for b in cfg.llm.mlx.mlx_bookmarks if b.label}
 
     def _scan() -> dict:
-        try:
-            from huggingface_hub import scan_cache_dir as _scan_cache_dir
+        rows: list[dict[str, Any]] = []
+        error = None
+        if path.is_dir():
+            try:
+                from huggingface_hub import scan_cache_dir as _scan_cache_dir
 
-            info = _scan_cache_dir(path)
-            rows: list[dict[str, Any]] = []
-            for repo in sorted(info.repos, key=lambda r: r.repo_id.lower()):
-                label = bookmark_labels.get(repo.repo_id, "")
-                name = f"{label} — {repo.repo_id}" if label else repo.repo_id
+                info = _scan_cache_dir(path)
+                for repo in sorted(info.repos, key=lambda r: r.repo_id.lower()):
+                    label = bookmark_labels.get(repo.repo_id, "")
+                    name = f"{label} — {repo.repo_id}" if label else repo.repo_id
+                    rows.append(
+                        {
+                            "repo_id": repo.repo_id,
+                            "name": name,
+                            "size_mb": round(repo.size_on_disk / (1024 * 1024), 1) if repo.size_on_disk else 0,
+                        },
+                    )
+            except Exception as exc:
+                logger.exception("mlx_local_models failed")
+                error = str(exc)
+        try:
+            from backend.distillation.catalog import iter_trained_adapters
+
+            for rec in iter_trained_adapters():
                 rows.append(
                     {
-                        "repo_id": repo.repo_id,
-                        "name": name,
-                        "size_mb": round(repo.size_on_disk / (1024 * 1024), 1) if repo.size_on_disk else 0,
+                        "repo_id": rec["catalog_id"],
+                        "name": rec["display_name"],
+                        "size_mb": rec.get("size_mb") or 0,
+                        "source": "distill",
+                        "adapter_path": rec["adapter_path"],
+                        "base_repo_id": rec["base_repo_id"],
                     },
                 )
-            return {"hub_cache": hub, "models": rows, "error": None}
-        except Exception as exc:
-            logger.exception("mlx_local_models failed")
-            return {"hub_cache": hub, "models": [], "error": str(exc)}
+        except Exception:  # noqa: BLE001
+            logger.debug("mlx_local_models: distilled adapters skipped", exc_info=True)
+        return {"hub_cache": hub, "models": rows, "error": error}
 
     return await asyncio.to_thread(_scan)
 
@@ -233,6 +249,17 @@ async def mlx_catalog(
         fetch_catalog(token=token, force=refresh),
         asyncio.to_thread(_scan_cached),
     )
+
+    try:
+        from backend.distillation.catalog import catalog_rows_from_adapters
+
+        distilled = catalog_rows_from_adapters()
+    except Exception:  # noqa: BLE001
+        distilled = []
+    if distilled:
+        rows = list(rows) + distilled
+        for d in distilled:
+            cached_map[d.repo_id] = True
 
     scored = score_catalog(
         rows,

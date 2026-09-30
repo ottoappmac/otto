@@ -141,3 +141,126 @@ class TestBlenderIntegration:
         mock_client = MagicMock()
         integration = BlenderIntegrationTool(mock_client)
         assert integration.mcp_client == mock_client
+
+
+# ── NEW TESTS: Design Spec module ──────────────────────────────────────
+
+from agents.workflow.blender_design_spec import (
+    DesignSpec,
+    DesignSpecGenerator,
+    MeshPart,
+    SceneConstraints,
+    BoundingBox,
+    compute_scene_diff,
+)
+
+
+class TestBoundingBox:
+    def test_properties(self):
+        bb = BoundingBox(min_x=-1, min_y=-0.5, min_z=0, max_x=1, max_y=0.5, max_z=2)
+        assert bb.width == 2.0
+        assert bb.depth == 1.0
+        assert bb.height == 2.0
+        assert bb.center_x == 0.0
+        assert bb.center_y == 0.0
+        assert bb.center_z == 1.0
+
+
+class TestMeshPart:
+    def test_defaults(self):
+        part = MeshPart(name="test_part")
+        assert part.name == "test_part"
+        assert part.primitive_type == "cube"
+        assert part.parent_name is None
+        assert part.modifiers == []
+        assert part.materials == []
+        assert part.is_visible is True
+
+
+class TestDesignSpec:
+    def test_to_markdown(self):
+        spec = DesignSpec(
+            prompt="test prompt",
+            model_type="product",
+            parts=[
+                MeshPart(name="top", primitive_type="cube",
+                         bounding_box=BoundingBox(min_x=-0.5, min_y=-0.25, min_z=0,
+                                                  max_x=0.5, max_y=0.25, max_z=0.05)),
+            ],
+        )
+        md = spec.to_markdown()
+        assert "test prompt" in md
+        assert "product" in md
+        assert "top" in md
+
+    def test_to_dict(self):
+        spec = DesignSpec(prompt="test", model_type="general")
+        d = spec.to_dict()
+        assert d["prompt"] == "test"
+        assert d["model_type"] == "general"
+
+
+class TestDesignSpecGenerator:
+    def test_heuristic_product(self):
+        gen = DesignSpecGenerator(fallback=True)
+        spec = gen._heuristic_parse("a modern office chair with wheels")
+        assert spec.model_type == "product"
+        names = [p.name for p in spec.parts]
+        assert "seat" in names
+        assert "back" in names
+        assert "legs" in names
+
+    def test_heuristic_character(self):
+        gen = DesignSpecGenerator(fallback=True)
+        spec = gen._heuristic_parse("a fantasy knight character with sword")
+        assert spec.model_type == "character"
+        names = [p.name for p in spec.parts]
+        assert "body" in names
+        assert "head" in names
+        assert "left_arm" in names
+
+    def test_heuristic_architecture(self):
+        gen = DesignSpecGenerator(fallback=True)
+        spec = gen._heuristic_parse("a modern house with large windows")
+        assert spec.model_type == "architecture"
+        names = [p.name for p in spec.parts]
+        assert "windows" in names
+
+    def test_complexity_simple(self):
+        gen = DesignSpecGenerator(fallback=True)
+        spec = gen._heuristic_parse("chair")
+        assert spec.complexity == "simple"
+
+    def test_complexity_complex(self):
+        gen = DesignSpecGenerator(fallback=True)
+        long_prompt = " ".join(["a", "very", "detailed", "modern", "office",
+                                "chair", "with", "adjustable", "height",
+                                "lumbar", "support", "armrests", "and",
+                                "breathable", "mesh", "backrest", "with",
+                                "five", "wheels", "and", "chrome",
+                                "base", "for", "a", "premium",
+                                "ergonomic", "design"])
+        spec = gen._heuristic_parse(long_prompt)
+        assert spec.complexity == "complex"
+
+
+class TestComputeSceneDiff:
+    def test_create_only(self):
+        spec = DesignSpec(prompt="test", parts=[MeshPart(name="new_part")])
+        diff = compute_scene_diff(spec, [{"name": "old_thing"}])
+        assert diff["to_create"] == ["new_part"]
+        assert diff["to_delete"] == ["old_thing"]
+        assert diff["to_modify"] == []
+
+    def test_modify_only(self):
+        spec = DesignSpec(prompt="test", parts=[MeshPart(name="existing")])
+        diff = compute_scene_diff(spec, [{"name": "existing"}])
+        assert diff["to_modify"] == ["existing"]
+        assert diff["to_create"] == []
+        assert diff["to_delete"] == []
+
+    def test_empty_scene(self):
+        spec = DesignSpec(prompt="test", parts=[MeshPart(name="part1")])
+        diff = compute_scene_diff(spec, [])
+        assert diff["to_create"] == ["part1"]
+        assert diff["to_delete"] == []

@@ -1070,6 +1070,29 @@ async def afetch_status(cfg: OmlxConfig) -> dict:
     return out
 
 
+def status_loaded_ids(status: dict | None) -> list[str]:
+    """GPU-resident model ids from :func:`afetch_status`.
+
+    Prefer ``loaded_models``.  ``models`` is the full registered catalog and
+    must not be treated as "already in RAM" — that skip left Turbo listing a
+    distilled fuse as loaded while Metal stayed empty.
+    """
+    if not status:
+        return []
+    rows = status.get("loaded_models")
+    if rows is None:
+        rows = status.get("models") or []
+    out: list[str] = []
+    for m in rows:
+        if isinstance(m, dict):
+            mid = (m.get("id") or "").strip()
+        else:
+            mid = str(m or "").strip()
+        if mid:
+            out.append(mid)
+    return out
+
+
 async def astart(cfg: OmlxConfig, *, model_id: str = "") -> OmlxJob:
     """Start the local oMLX server.
 
@@ -1362,8 +1385,9 @@ async def aload_model(cfg: OmlxConfig, model_id: str) -> OmlxJob:
                 if resolved is None:
                     raise RuntimeError(_diagnose_unregistered_model(model_id))
 
-            # Already loaded?
-            loaded_ids = [m["id"] for m in (status.get("models") or [])]
+            # Already in GPU RAM?  ``models`` is the registered catalog and
+            # is not a load signal — use loaded_models only.
+            loaded_ids = status_loaded_ids(status)
             if resolved in loaded_ids:
                 job.append(f"Model '{resolved}' is already loaded.")
                 job.result = {"already_loaded": True, "model_id": resolved}
@@ -1544,6 +1568,14 @@ async def aprovision_omlx_server(
             for d in (cfg.model_dirs or ["~/.cache/huggingface/hub"])
         ]
         existing_dirs = [d for d in configured_dirs if Path(d).is_dir()]
+        try:
+            from backend.distillation.paths import fused_models_dir
+
+            fused = str(fused_models_dir())
+            if fused not in existing_dirs:
+                existing_dirs.append(fused)
+        except Exception:  # noqa: BLE001
+            logger.debug("oMLX provision: fused distill dir skipped", exc_info=True)
         if existing_dirs:
             current_dirs = (settings.get("model", {}) or {}).get("model_dirs", []) or []
             if set(existing_dirs) != set(current_dirs):
@@ -1809,8 +1841,7 @@ async def _wait_until_model_loaded(
     while time.time() < deadline:
         last = await afetch_status(cfg)
         if last.get("reachable"):
-            ids = [m["id"] for m in (last.get("models") or [])]
-            if model_id in ids:
+            if model_id in status_loaded_ids(last):
                 return last
         await asyncio.sleep(0.5)
     return None

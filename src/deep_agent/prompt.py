@@ -58,6 +58,8 @@ _CAPABILITY_GAP_TRIGGER_TOOLS: frozenset[str] = frozenset({
     "create_skill",
     "create_agent_config",
     "spawn_followup_session",
+    "use_distilled_model",
+    "start_distill_train",
 })
 
 # Tools that expose the local activity timeline (screen history, app usage).
@@ -491,6 +493,16 @@ def _build_capability_ladder(subagent_names: set[str], *, activity_tools: bool =
         "  this session's chat history.\n"
         "- Chain is depth-capped; on cap error, finish here or ask the user to\n"
         "  open a new chat.\n"
+        "\n"
+        "### Distilled LoRA (new session)\n"
+        "\n"
+        "Trained adapters are Standard / in-process MLX only. Match the run to an\n"
+        "adapter's **purpose** (`list_distilled_models` / `<distilled_adapters>`),\n"
+        "then `use_distilled_model(catalog_id, prompt)` — spawns a NEW session whose\n"
+        "graph is built with that LoRA. Do not try to rebind this session. Prompt\n"
+        "must be self-contained; tell the user to follow the child. Does not change\n"
+        "Settings. To train a new one, `distill_census` then\n"
+        "`start_distill_train(purpose=...)`. Exclusive GPU; Turbo/exo cannot attach LoRA.\n"
         "</capability_ladder>"
     )
 

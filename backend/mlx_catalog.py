@@ -74,6 +74,10 @@ class CatalogRow:
     requires_token: bool = False
     tier: str = "balanced"     # "starter" | "balanced" | "power"
     featured: bool = False
+    # Local LoRA rows (not Hub).  Empty for curated / discovered models.
+    source: str = ""
+    adapter_path: str = ""
+    base_repo_id: str = ""
     # Filled by fetch_catalog() — never serialised into the curated source.
     downloads: int = 0
     last_modified: str = ""

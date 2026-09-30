@@ -160,3 +160,20 @@ def test_adopt_admin_key_noop_when_server_has_none(monkeypatch):
     cfg = OmlxConfig(admin_api_key="")
     assert op.adopt_existing_admin_key(cfg) is False
     assert cfg.admin_api_key == ""
+
+
+def test_status_loaded_ids_ignores_catalog_when_admin_reports_empty():
+    """Registered catalog ids are not a substitute for GPU-resident ids."""
+    status = {
+        "models": [{"id": "Qwen3-8B-4bit-activity-fused"}],
+        "loaded_models": [],
+    }
+    assert op.status_loaded_ids(status) == []
+
+
+def test_status_loaded_ids_reads_loaded_models():
+    status = {
+        "models": [{"id": "catalog-only"}, {"id": "resident"}],
+        "loaded_models": [{"id": "resident"}],
+    }
+    assert op.status_loaded_ids(status) == ["resident"]

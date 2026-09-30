@@ -84,6 +84,7 @@ async def api_create_session(req: SessionCreateRequest):
             config=cfg,
             agent_name=req.agent_name,
             trigger_source=req.trigger_source,
+            distill_catalog_id=req.distill_catalog_id,
         )
         return session.to_info().model_dump()
     except Exception as exc:

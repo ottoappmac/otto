@@ -241,6 +241,8 @@ export interface SessionInfo extends ThroughputStats {
   duration_ms?: number | null;
   llm_provider?: string | null;
   model?: string | null;
+  /** Per-session distilled LoRA catalog id (otto-distill/…). */
+  distill_catalog_id?: string | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
   estimated_cost_usd?: number | null;
@@ -750,6 +752,12 @@ export interface MlxCatalogRow {
   /** True only when all safetensors blobs in the cached snapshot exist on
    *  disk.  False when a previous download was interrupted mid-way. */
   cache_complete: boolean;
+  /** Local LoRA row (not a Hub repo). Empty for curated / discovered models. */
+  source?: "" | "distill";
+  adapter_path?: string;
+  base_repo_id?: string;
+  fused_path?: string;
+  omlx_model_id?: string;
 }
 
 export interface MlxCatalogResponse {
@@ -841,6 +849,11 @@ export interface MlxHfConfig {
   turbo_tq_bits: number;
   /** Paged-cache block size; unused until the paged allocator lands. */
   turbo_block_size: number;
+  /**
+   * Optional LoRA adapter directory.  Loaded only when the live MLX model
+   * matches the adapter's ``base_repo_id``.  Empty = no adapter.
+   */
+  adapter_path: string;
 }
 
 export interface LLMConfig {
@@ -849,6 +862,193 @@ export interface LLMConfig {
   openai: OpenAIConfig;
   google: GoogleConfig;
   mlx: MlxHfConfig;
+}
+
+/** On-device LoRA distillation. Teacher/student are MLX catalog repo ids. */
+export interface DistillationConfig {
+  enabled: boolean;
+  data_dir: string;
+  min_tool_calls: number;
+  teacher_model_id: string;
+  student_model_id: string;
+  filter_sessions_by_teacher: boolean;
+}
+
+export type DistillJobState = "idle" | "queued" | "running" | "success" | "error" | "cancelled";
+export type DistillJobPhase = "" | "collecting" | "preparing" | "unloading" | "training" | "fusing";
+
+export interface DistillBlockingSession {
+  id: string;
+  title: string;
+  provider: string | null;
+}
+
+export interface DistillJobStatus {
+  state: DistillJobState;
+  phase: DistillJobPhase;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  log_lines: string[];
+  n_trajectories: number;
+  n_sft: number;
+  adapter_path: string | null;
+  student_id: string;
+  teacher_id: string;
+  iters: number;
+  iter_current: number | null;
+  warnings: string[];
+  catalog_id: string;
+  display_name: string;
+  purpose?: string;
+  fused_path?: string;
+  omlx_model_id?: string;
+  blocking_sessions: DistillBlockingSession[];
+}
+
+export interface DistillCensus {
+  n_trajectories: number;
+  tool_histogram: Record<string, number>;
+  median_steps: number;
+  with_eval: number;
+  teacher_model_id: string;
+  student_model_id: string;
+  filter_sessions_by_teacher: boolean;
+  blocking_sessions: DistillBlockingSession[];
+}
+
+export interface DistillDatasetFile {
+  path: string;
+  exists: boolean;
+  bytes: number;
+  rows: number;
+  updated_at: string | null;
+}
+
+export interface DistillDatasetSession {
+  session_id: string;
+  title: string;
+  preview: string;
+  timestamp: string;
+  status: string;
+  error: string;
+  model: string;
+  llm_provider: string;
+  tools_used: string[];
+  steps: number;
+  n_unanswered: number;
+  eligible: boolean;
+  reject_reasons: string[];
+  n_messages: number;
+  n_user: number;
+  n_assistant: number;
+  n_tool: number;
+  n_tool_calls: number;
+  eval_status: string;
+  eval_overall_score: number | null;
+  eval_pass_count: number | null;
+  eval_total: number | null;
+  eval_verdict: boolean | null;
+}
+
+export interface DistillDatasetStats {
+  n_sessions: number;
+  n_eligible: number;
+  n_rejected: number;
+  n_messages: number;
+  median_messages: number;
+  median_tool_calls: number;
+  n_missing_model: number;
+  n_eval_pass: number;
+  n_eval_fail: number;
+  n_eval_none: number;
+  n_unanswered: number;
+  tool_histogram: Record<string, number>;
+  provider_histogram: Record<string, number>;
+  model_histogram: Record<string, number>;
+  reject_histogram: Record<string, number>;
+}
+
+export interface DistillDataset {
+  teacher_model_id: string;
+  student_model_id: string;
+  filter_sessions_by_teacher: boolean;
+  min_tool_calls: number;
+  stats: DistillDatasetStats;
+  persisted: {
+    trajectories: DistillDatasetFile;
+    sft: DistillDatasetFile;
+  };
+  sessions: DistillDatasetSession[];
+}
+
+export interface DistillDatasetMessage {
+  role: string;
+  content: string;
+  truncated: boolean;
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: { id: string; name: string }[];
+}
+
+export interface DistillDatasetDetail extends DistillDatasetSession {
+  messages: DistillDatasetMessage[];
+  student_model_id?: string;
+}
+
+export interface DistillValidateIssue {
+  line: number;
+  code: string;
+  message: string;
+}
+
+export interface DistillValidateReport {
+  ok: boolean;
+  filename: string;
+  container: string;
+  format: string;
+  format_histogram: Record<string, number>;
+  n_rows: number;
+  n_valid: number;
+  n_invalid: number;
+  n_messages: number;
+  n_tool_calls: number;
+  n_written?: number;
+  tool_histogram: Record<string, number>;
+  errors: DistillValidateIssue[];
+  warnings: DistillValidateIssue[];
+  sample_preview: string;
+}
+
+export interface DistillUpload {
+  id: string;
+  filename: string;
+  bytes: number;
+  uploaded_at: string;
+  n_valid: number;
+  n_invalid: number;
+  n_rows: number;
+  format: string;
+  container: string;
+  n_messages: number;
+  n_tool_calls: number;
+  path?: string;
+}
+
+/** Trained LoRA listed in the Distilled model-picker tab. */
+export interface DistillAdapter {
+  catalog_id: string;
+  display_name: string;
+  adapter_path: string;
+  base_repo_id: string;
+  teacher_model_id: string;
+  dataset_sha: string;
+  trained_at: string;
+  size_mb: number;
+  kind?: string;
+  purpose?: string;
+  fused_path?: string;
+  omlx_model_id?: string;
 }
 
 export interface LangSmithConfig {
@@ -1636,6 +1836,7 @@ export interface AppSettings {
   ambient_suggest_recurrence: boolean;
   ambient: AmbientConfig;
   voice: VoiceConfig;
+  distillation: DistillationConfig;
 }
 
 // ---------------------------------------------------------------------------

@@ -20,8 +20,9 @@ token count exceeds the configured budget it:
    typically carries the agent identity and the load-bearing rules; tail
    content is usually middleware-injected boilerplate that the agent can
    live without for one turn).
-3. Logs a structured warning so the operator can spot the situation in
-   ``backend.log`` and either tune the prompt or use a bigger model.
+3. If still over, shrinks OpenAI tool schemas (name + one-line description)
+   and then drops non-core tools.  oMLX counts the ``tools`` array in the
+   prompt; a distilled 8B student overflows at 40 k before any user text.
 
 The middleware is a no-op for models whose
 ``profile["max_input_tokens"]`` is generous; gating happens at
@@ -36,6 +37,7 @@ alternative is a hard ``exceededContextWindowSize`` from Apple.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -45,6 +47,68 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
+
+_KEEP_TOOL_NAMES = {
+    "task",
+    "write_todos",
+    "write_file",
+    "read_file",
+    "ls",
+    "edit_file",
+    "execute",
+    "ask_user",
+}
+
+
+def _tool_name(tool: Any) -> str:
+    if isinstance(tool, dict):
+        fn = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        return str((fn or {}).get("name") or tool.get("name") or "")
+    return str(getattr(tool, "name", "") or "")
+
+
+def _tool_description(tool: Any) -> str:
+    if isinstance(tool, dict):
+        fn = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        return str((fn or {}).get("description") or tool.get("description") or "")
+    return str(getattr(tool, "description", "") or "")
+
+
+def _tool_schema_text(tool: Any) -> str:
+    if isinstance(tool, dict):
+        return json.dumps(tool, default=str)
+    desc = _tool_description(tool)
+    schema = ""
+    args = getattr(tool, "args_schema", None)
+    if args is not None:
+        try:
+            if hasattr(args, "model_json_schema"):
+                schema = json.dumps(args.model_json_schema(), default=str)
+            elif hasattr(args, "schema"):
+                schema = json.dumps(args.schema(), default=str)
+            else:
+                schema = str(args)
+        except Exception:
+            schema = str(args)
+    return f"{_tool_name(tool)}\n{desc}\n{schema}"
+
+
+def _compact_tool_schema(tool: Any) -> dict[str, Any]:
+    desc = _tool_description(tool).split(".")[0].strip()
+    if len(desc) > 160:
+        desc = desc[:157] + "…"
+    return {
+        "type": "function",
+        "function": {
+            "name": _tool_name(tool),
+            "description": desc,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            },
+        },
+    }
 
 
 class SmallContextTruncationMiddleware(AgentMiddleware):
@@ -129,16 +193,43 @@ class SmallContextTruncationMiddleware(AgentMiddleware):
         """Return a request whose assembled prompt fits in the budget."""
         sys_text = self._system_text(request.system_message)
         msgs = list(request.messages)
+        tools = list(request.tools or [])
 
         sys_tokens = self._estimate_tokens(sys_text)
         msg_tokens = [self._estimate_tokens(self._message_text(m)) for m in msgs]
-        total = sys_tokens + sum(msg_tokens)
+        tool_tokens = sum(self._estimate_tokens(_tool_schema_text(t)) for t in tools)
+        total = sys_tokens + sum(msg_tokens) + tool_tokens
 
         if total <= self._budget:
             return request
 
         original_total = total
         dropped_messages = 0
+        tools_compacted = False
+
+        # Step 0: shrink the OpenAI tools array first.  oMLX counts it in
+        # the prompt; a distilled 8B student overflows here on turn one.
+        if total > self._budget and tools:
+            compacted = [_compact_tool_schema(t) for t in tools if _tool_name(t)]
+            new_tool_tokens = sum(
+                self._estimate_tokens(_tool_schema_text(t)) for t in compacted
+            )
+            if new_tool_tokens < tool_tokens:
+                tools = compacted
+                total = total - tool_tokens + new_tool_tokens
+                tool_tokens = new_tool_tokens
+                tools_compacted = True
+            keep: list[Any] = []
+            rest: list[Any] = []
+            for t in tools:
+                (keep if _tool_name(t) in _KEEP_TOOL_NAMES else rest).append(t)
+            while total > self._budget and rest:
+                dropped = rest.pop()
+                dropped_tok = self._estimate_tokens(_tool_schema_text(dropped))
+                tool_tokens -= dropped_tok
+                total -= dropped_tok
+                tools_compacted = True
+            tools = keep + rest
 
         # Step 1: drop oldest messages (preserving at least the last
         # ``_min_kept`` so the user's current turn always reaches the model).
@@ -180,7 +271,7 @@ class SmallContextTruncationMiddleware(AgentMiddleware):
         sys_truncated = False
         new_system_message = request.system_message
         if total > self._budget and sys_tokens > 0:
-            allowed_sys_tokens = max(0, self._budget - sum(msg_tokens))
+            allowed_sys_tokens = max(0, self._budget - sum(msg_tokens) - tool_tokens)
             allowed_chars = int(allowed_sys_tokens * self._cpt)
             if allowed_chars < len(sys_text):
                 clipped = sys_text[: max(0, allowed_chars - 64)].rstrip()
@@ -191,21 +282,28 @@ class SmallContextTruncationMiddleware(AgentMiddleware):
                 new_system_message = SystemMessage(content=clipped)
                 sys_truncated = True
                 total = (
-                    self._estimate_tokens(clipped) + sum(msg_tokens)
+                    self._estimate_tokens(clipped) + sum(msg_tokens) + tool_tokens
                 )
 
-        if dropped_messages or sys_truncated:
+        if dropped_messages or sys_truncated or tools_compacted:
             logger.warning(
                 "SmallContextTruncationMiddleware: trimmed request to fit budget "
                 "(budget=%d tok, before=%d tok, after=%d tok, dropped_messages=%d, "
-                "system_truncated=%s)",
+                "system_truncated=%s, tools=%d)",
                 self._budget,
                 original_total,
                 total,
                 dropped_messages,
                 sys_truncated,
+                len(tools),
             )
 
-        if new_system_message is request.system_message and not dropped_messages:
+        if (
+            new_system_message is request.system_message
+            and not dropped_messages
+            and not tools_compacted
+        ):
             return request
-        return request.override(system_message=new_system_message, messages=msgs)
+        return request.override(
+            system_message=new_system_message, messages=msgs, tools=tools,
+        )

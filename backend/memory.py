@@ -252,10 +252,9 @@ async def _run_consolidation_llm(
     cfg = await AppConfig.aload()
     cfg.apply_to_environ()
     # Consolidation emits a structured JSON document covering every memory
-    # update, which is far larger than the per-turn ranking output.  The
-    # 512-token MLX default truncates JSON mid-string and breaks parsing,
-    # so we lift the cap for this call only.  Frontier models ignore the
-    # override (Anthropic / Bedrock cap is server-side).
+    # update, which is far larger than the per-turn ranking output.  Lift
+    # the cap for this call so a tight per-turn setting cannot truncate
+    # the JSON.  Frontier models ignore the override.
     model = _create_ranking_model(
         cfg.memory, cfg.llm.provider, mlx_max_tokens=8192,
     )

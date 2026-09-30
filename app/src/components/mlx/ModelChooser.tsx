@@ -10,6 +10,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Layers,
   Sparkles,
   Square,
   XCircle,
@@ -18,9 +19,14 @@ import {
 } from "lucide-react";
 import { api } from "../../hooks/useApi";
 import { usePolling } from "../../hooks/usePolling";
-import type { MlxCapabilities, MlxCatalogRow, MlxDownloadJob } from "../../types";
+import { DistilledModelsTab } from "../distillation/DistilledModelsTab";
+import type { DistillAdapter, MlxCapabilities, MlxCatalogRow, MlxDownloadJob } from "../../types";
 
-type ChooserTab = "library" | "discover" | "custom";
+type ChooserTab = "library" | "discover" | "distilled" | "custom";
+
+function isDistillCatalogId(id: string | undefined | null): boolean {
+  return (id || "").trim().startsWith("otto-distill/");
+}
 
 // ---------------------------------------------------------------------------
 // MLX Model Chooser — rendered in the On-Device tab when there's no
@@ -45,7 +51,14 @@ export interface ModelChooserProps {
   onDownloadComplete?: (repo_id: string, displayName: string) => void;
   /** Called when the user picks a model that's already cached so the
    *  parent can set it as the active text model. */
-  onUseCached?: (repo_id: string, displayName: string) => void;
+  onUseCached?: (repo_id: string, displayName: string, row?: MlxCatalogRow) => void;
+  /** Optional catalog id of the active distilled adapter (may differ
+   *  from ``selectedRepoId`` on Turbo, which tracks the oMLX base). */
+  selectedDistillId?: string;
+  /** Optional adapter path used to highlight the Distilled tab row. */
+  selectedAdapterPath?: string;
+  /** Distilled-tab engine copy: Standard can attach LoRA; Turbo cannot. */
+  distillEngine?: "mlx" | "omlx";
   /** Called when the user clicks "Unload" to free GPU memory. */
   onUnload?: () => void;
   /** Whether an unload is in progress. */
@@ -296,6 +309,11 @@ function ModelRow({
                 featured
               </span>
             )}
+            {row.source === "distill" && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 text-[10px] font-semibold ring-1 ring-violet-500/25">
+                distilled
+              </span>
+            )}
             {isCached && (
               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-[10px] font-semibold ring-1 ring-emerald-500/25">
                 <CheckCircle2 size={9} />
@@ -348,6 +366,7 @@ function ModelRow({
                 >
                   Use this model
                 </button>
+                {row.source !== "distill" && (
                 <button
                   type="button"
                   className="p-1.5 text-th-text-muted hover:text-th-text-secondary rounded-md hover:bg-th-inset-bg transition-colors disabled:opacity-40"
@@ -357,6 +376,7 @@ function ModelRow({
                 >
                   <Download size={12} />
                 </button>
+                )}
               </>
             ) : isIncomplete ? (
               <button
@@ -421,14 +441,39 @@ export default function ModelChooser({
   cacheDir,
   onDownloadComplete,
   onUseCached,
+  selectedDistillId,
+  selectedAdapterPath,
+  distillEngine = "mlx",
   onUnload,
   unloading,
   unloadMsg,
 }: ModelChooserProps) {
-  const [tab, setTab] = useState<ChooserTab>("library");
+  const [tab, setTab] = useState<ChooserTab>(distillEngine === "omlx" ? "distilled" : "library");
+
+  const useDistilled = useCallback(
+    (adapter: DistillAdapter) => {
+      onUseCached?.(adapter.catalog_id, adapter.display_name, {
+        repo_id: adapter.catalog_id,
+        display_name: adapter.display_name,
+        source: "distill",
+        adapter_path: adapter.adapter_path,
+        base_repo_id: adapter.base_repo_id,
+        fused_path: adapter.fused_path,
+        omlx_model_id: adapter.omlx_model_id,
+      } as MlxCatalogRow);
+    },
+    [onUseCached],
+  );
 
   // ── Your Library tab state ──
-  const [localModels, setLocalModels] = useState<{ repo_id: string; name: string; size_mb: number }[] | null>(null);
+  const [localModels, setLocalModels] = useState<{
+    repo_id: string;
+    name: string;
+    size_mb: number;
+    source?: string;
+    adapter_path?: string;
+    base_repo_id?: string;
+  }[] | null>(null);
   const [loadingLocal, setLoadingLocal] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [librarySearch, setLibrarySearch] = useState("");
@@ -588,6 +633,7 @@ export default function ModelChooser({
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
     return rows.filter((r) => {
+      if (r.source === "distill") return false;
       if (filter === "comfortable" && r.fits !== "comfortable") return false;
       if (filter === "tight" && !(r.fits === "comfortable" || r.fits === "tight")) return false;
       if (s) {
@@ -695,10 +741,16 @@ export default function ModelChooser({
   }, [jobs]);
 
   const chooserTabs: { id: ChooserTab; icon: React.ReactNode; label: string }[] = [
-    { id: "library",  icon: <Library size={11} />,  label: "Your library" },
-    { id: "discover", icon: <Sparkles size={11} />, label: "Discover" },
-    { id: "custom",   icon: <HardDrive size={11} />, label: "Custom" },
+    { id: "library",   icon: <Library size={11} />,  label: "Your library" },
+    { id: "discover",  icon: <Sparkles size={11} />, label: "Discover" },
+    { id: "distilled", icon: <Layers size={11} />,   label: "Distilled" },
+    { id: "custom",    icon: <HardDrive size={11} />, label: "Custom" },
   ];
+
+  const distillActive = isDistillCatalogId(selectedDistillId) || isDistillCatalogId(selectedRepoId);
+  const activeModelId = distillActive
+    ? (isDistillCatalogId(selectedDistillId) ? selectedDistillId : selectedRepoId)
+    : selectedRepoId;
 
   return (
     <div className="space-y-4">
@@ -706,12 +758,20 @@ export default function ModelChooser({
       {caps && <CapabilitiesBar caps={caps} />}
 
       {/* Selected model chip */}
-      {selectedRepoId && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.08]">
-          <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+      {activeModelId && (
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${
+          distillActive
+            ? "border-violet-500/30 bg-violet-500/[0.08]"
+            : "border-emerald-500/30 bg-emerald-500/[0.08]"
+        }`}>
+          <CheckCircle2 size={13} className={`${distillActive ? "text-violet-400" : "text-emerald-400"} shrink-0`} />
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-medium text-emerald-400 uppercase tracking-wide leading-none mb-0.5">Active model</p>
-            <p className="text-xs font-semibold text-th-text-primary truncate font-mono">{selectedRepoId}</p>
+            <p className={`text-[10px] font-medium uppercase tracking-wide leading-none mb-0.5 ${
+              distillActive ? "text-violet-400" : "text-emerald-400"
+            }`}>
+              {distillActive ? "Active distilled model" : "Active model"}
+            </p>
+            <p className="text-xs font-semibold text-th-text-primary truncate font-mono">{activeModelId}</p>
           </div>
           {onUnload && (
             <div className="shrink-0 flex flex-col items-end gap-1">
@@ -778,17 +838,20 @@ export default function ModelChooser({
             {localError && (
               <p className="text-[10px] text-red-400">{localError}</p>
             )}
-            {!loadingLocal && localModels?.length === 0 && (
-              <div className="py-4 text-center space-y-1">
-                <p className="text-[11px] text-th-text-secondary">No models found in your HF cache.</p>
-                <p className="text-[10px] text-th-text-muted">
-                  Switch to <strong>Discover</strong> to download a model.
-                </p>
-              </div>
-            )}
             {!loadingLocal && (() => {
+              const hubModels = (localModels ?? []).filter((m) => m.source !== "distill");
+              if (hubModels.length === 0) {
+                return (
+                  <div className="py-4 text-center space-y-1">
+                    <p className="text-[11px] text-th-text-secondary">No models found in your HF cache.</p>
+                    <p className="text-[10px] text-th-text-muted">
+                      Switch to <strong>Discover</strong> to download a model, or <strong>Distilled</strong> for trained LoRAs.
+                    </p>
+                  </div>
+                );
+              }
               const s = librarySearch.trim().toLowerCase();
-              const visible = (localModels ?? []).filter((m) =>
+              const visible = hubModels.filter((m) =>
                 !s || m.repo_id.toLowerCase().includes(s) || m.name.toLowerCase().includes(s),
               );
               if (visible.length === 0 && s) {
@@ -799,7 +862,7 @@ export default function ModelChooser({
                 );
               }
               return visible.map((m) => {
-                const isActive = m.repo_id === selectedRepoId;
+                const isActive = !distillActive && m.repo_id === selectedRepoId;
                 return (
                   <div
                     key={m.repo_id}
@@ -810,12 +873,24 @@ export default function ModelChooser({
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-medium text-th-text-primary truncate">{m.repo_id}</p>
+                      <p className="text-[11px] font-medium text-th-text-primary truncate">
+                        {m.source === "distill" ? (m.name || m.repo_id) : m.repo_id}
+                      </p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[9px] text-th-text-muted">{(m.size_mb / 1024).toFixed(1)} GB</span>
-                        <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                          MLX
+                        <span className="text-[9px] text-th-text-muted">
+                          {m.source === "distill"
+                            ? `${m.size_mb.toFixed(1)} MB`
+                            : `${(m.size_mb / 1024).toFixed(1)} GB`}
                         </span>
+                        {m.source === "distill" ? (
+                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-violet-500/15 text-violet-400 border border-violet-500/30">
+                            distilled
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                            MLX
+                          </span>
+                        )}
                         {isActive && (
                           <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-0.5">
                             <CheckCircle2 size={8} />
@@ -826,7 +901,13 @@ export default function ModelChooser({
                     </div>
                     <button
                       type="button"
-                      onClick={() => onUseCached?.(m.repo_id, m.name || m.repo_id)}
+                      onClick={() => onUseCached?.(
+                        m.repo_id,
+                        m.name || m.repo_id,
+                        m.source === "distill"
+                          ? { repo_id: m.repo_id, display_name: m.name, source: "distill", adapter_path: m.adapter_path, base_repo_id: m.base_repo_id } as MlxCatalogRow
+                          : undefined,
+                      )}
                       className={`shrink-0 px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors inline-flex items-center gap-1 ${
                         isActive
                           ? "bg-emerald-700/50 text-emerald-200 cursor-default"
@@ -954,7 +1035,7 @@ export default function ModelChooser({
                   activeJob={activeJobsByRepo.get(row.repo_id)}
                   ctxLen={ctxLen}
                   onDownload={() => void startDownload(row.repo_id)}
-                  onUseCached={() => onUseCached?.(row.repo_id, row.display_name)}
+                  onUseCached={() => onUseCached?.(row.repo_id, row.display_name, row)}
                 />
               ))}
             </div>
@@ -1017,6 +1098,16 @@ export default function ModelChooser({
               </div>
             )}
           </div>
+        )}
+
+        {/* ── Distilled tab ── */}
+        {tab === "distilled" && (
+          <DistilledModelsTab
+            engine={distillEngine}
+            selectedCatalogId={distillEngine === "omlx" ? selectedRepoId : (selectedDistillId ?? selectedRepoId)}
+            selectedAdapterPath={distillEngine === "omlx" ? undefined : selectedAdapterPath}
+            onUse={useDistilled}
+          />
         )}
 
         {/* ── Custom tab ── */}

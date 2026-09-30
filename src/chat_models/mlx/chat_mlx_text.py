@@ -52,6 +52,7 @@ from chat_models.mlx._shared import (
     _LOADED_MODELS,
     _WARMED_UP,
     _load_or_reuse,
+    cache_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,9 @@ class ChatMLXText(BaseChatModel):
     # the cap and reverts to the legacy unbounded behaviour.  Default
     # 32 768 tokens ≈ 1 GB on a 7B 4-bit model.
     prompt_cache_max_tokens: int = 32768
+    # Optional LoRA adapter.  Empty/None loads the bare student.  Must match
+    # ``adapter_meta.json`` ``base_repo_id`` when that sidecar exists.
+    adapter_path: Optional[str] = None
 
     # Exposes the effective input budget to framework helpers such as
     # ``compute_summarization_defaults`` (deepagents) and
@@ -237,10 +241,10 @@ class ChatMLXText(BaseChatModel):
         # exceeds most local model context windows and never fires.
         if not self.profile:
             self.profile = {"max_input_tokens": self.prompt_cache_max_tokens}
-        cache_key = (self.model_path, self.draft_model_path)
+        cache_key_t = cache_key(self.model_path, self.draft_model_path, self.adapter_path)
         logger.info(
             "Initialising ChatMLXText: %s (max_tokens=%d, temp=%.2f, kv_bits=%s, "
-            "prompt_cache=%s, system_prompt_cache=%s, thinking=%s)",
+            "prompt_cache=%s, system_prompt_cache=%s, thinking=%s, adapter=%s)",
             self.model_path,
             self.max_tokens,
             self.temp,
@@ -248,8 +252,9 @@ class ChatMLXText(BaseChatModel):
             self.enable_prompt_cache,
             self.enable_system_prompt_cache,
             self.thinking,
+            self.adapter_path or "-",
         )
-        if cache_key in _LOADED_MODELS:
+        if cache_key_t in _LOADED_MODELS:
             logger.info(
                 "MLX model %s reused from process cache (no reload)",
                 self.model_path,
@@ -258,10 +263,12 @@ class ChatMLXText(BaseChatModel):
             logger.info("Loading MLX model: %s", self.model_path)
             if self.draft_model_path:
                 logger.info("Loading MLX draft model: %s", self.draft_model_path)
+            if self.adapter_path:
+                logger.info("Loading MLX LoRA adapter: %s", self.adapter_path)
 
         try:
             triple, freshly_loaded = _load_or_reuse(
-                self.model_path, self.draft_model_path,
+                self.model_path, self.draft_model_path, self.adapter_path,
             )
         except Exception as exc:  # noqa: BLE001
             # A memory error while pulling weights into unified Metal memory
@@ -322,9 +329,9 @@ class ChatMLXText(BaseChatModel):
                 self.model_path,
             )
 
-        if cache_key not in _WARMED_UP:
+        if cache_key_t not in _WARMED_UP:
             self._warmup()
-            _WARMED_UP.add(cache_key)
+            _WARMED_UP.add(cache_key_t)
 
     # ── Warmup ────────────────────────────────────────────────────────────────
 

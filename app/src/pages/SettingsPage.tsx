@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Eye, EyeOff, CheckCircle, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Loader2, Check, ChevronDown, Plus, Trash2, Server, Play, Square, X, Wifi, PlugZap, ShieldCheck, ShieldOff, ShieldAlert, Copy, ClipboardCheck, Lock, Unlock, Mic, Zap, Wand2, Minimize2, Maximize2 } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { WS_BASE } from "../config/apiBase";
@@ -13,7 +13,8 @@ import ModelChooser from "../components/mlx/ModelChooser";
 import { OmlxModelPicker } from "../components/omlx/OmlxModelPicker";
 import { MemoryPanel, AmbientPanel } from "./MemoryPage";
 import VoiceModelChooser from "../components/voice/VoiceModelChooser";
-import type { AppSettings, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
+import { DistilledModelsTab } from "../components/distillation/DistilledModelsTab";
+import type { AppSettings, DistillAdapter, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
 
 const TABS = ["LLM", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Video", "Advanced", "Observability", "Privacy & Security", "About"] as const;
 type Tab = (typeof TABS)[number];
@@ -28,6 +29,50 @@ const STANDARD_SUBTABS = ["Overview", "Model"] as const;
 type StandardSubTab = (typeof STANDARD_SUBTABS)[number];
 
 const AUTO_SAVE_DELAY_MS = 800;
+
+function isDistillCatalogId(id: string | undefined | null): boolean {
+  return (id || "").trim().startsWith("otto-distill/");
+}
+
+function patchDistilledOntoMlx(
+  s: AppSettings,
+  adapter: Pick<DistillAdapter, "catalog_id" | "adapter_path" | "base_repo_id">,
+): AppSettings {
+  return {
+    ...s,
+    llm: {
+      ...s.llm,
+      provider: "mlx",
+      mlx: {
+        ...s.llm.mlx,
+        hf_llm_model_id: adapter.catalog_id,
+        adapter_path: adapter.adapter_path,
+      },
+    },
+  };
+}
+
+async function fetchDistilledDropdownOptions(): Promise<{
+  options: { value: string; label: string }[];
+  byId: Record<string, DistillAdapter>;
+}> {
+  try {
+    const res = await api.listDistillAdapters();
+    const adapters = res.adapters ?? [];
+    const byId: Record<string, DistillAdapter> = {};
+    const options = adapters.map((a) => {
+      byId[a.catalog_id] = a;
+      const name = (a.display_name || a.catalog_id).trim();
+      return {
+        value: a.catalog_id,
+        label: name.toLowerCase().includes("distill") ? name : `${name} (distilled)`,
+      };
+    });
+    return { options, byId };
+  } catch {
+    return { options: [], byId: {} };
+  }
+}
 
 /**
  * Load an oMLX model and wait for the background job to finish.
@@ -125,8 +170,25 @@ async function startExoServerAndWait(
   throw new Error("Starting the Exo cluster timed out.");
 }
 
+type MlxLocalModelRow = {
+  repo_id: string;
+  name: string;
+  size_mb: number;
+  source?: string;
+  adapter_path?: string;
+  base_repo_id?: string;
+};
+
+function mlxOptionLabel(m: { repo_id: string; name: string; source?: string }): string {
+  const name = (m.name || m.repo_id).trim();
+  if (m.source === "distill" || isDistillCatalogId(m.repo_id)) {
+    return name.toLowerCase().includes("distill") ? name : `${name} (distilled)`;
+  }
+  return name;
+}
+
 function mlxSelectOptions(
-  models: { repo_id: string; name: string }[],
+  models: { repo_id: string; name: string; source?: string }[],
   current: string,
   includeEmpty: boolean,
   loading = false,
@@ -134,20 +196,35 @@ function mlxSelectOptions(
 ): { value: string; label: string; notInCache?: boolean }[] {
   if (loading) {
     const base: { value: string; label: string }[] = includeEmpty ? [{ value: "", label: "(none)" }] : [];
-    if (current) base.push({ value: current, label: `${current} (loading list…)` });
+    if (current) base.push({ value: current, label: `${mlxOptionLabel({ repo_id: current, name: current })} (loading list…)` });
     else if (!includeEmpty) base.push({ value: "", label: "(loading…)" });
     return base;
   }
   const opts: { value: string; label: string; notInCache?: boolean }[] = includeEmpty ? [{ value: "", label: "(none)" }] : [];
   const seen = new Set<string>();
+  const push = (m: { repo_id: string; name: string; source?: string }) => {
+    if (!m.repo_id || seen.has(m.repo_id)) return;
+    seen.add(m.repo_id);
+    opts.push({ value: m.repo_id, label: mlxOptionLabel(m) });
+  };
+  // Distilled LoRAs first so the Active model dropdown doesn't look stuck
+  // on whatever Hub model is first in the cache scan (e.g. MiniMax).
   for (const m of models) {
-    if (!seen.has(m.repo_id)) {
-      seen.add(m.repo_id);
-      opts.push({ value: m.repo_id, label: m.name });
-    }
+    if (m.source === "distill" || isDistillCatalogId(m.repo_id)) push(m);
+  }
+  if (current && isDistillCatalogId(current) && !seen.has(current)) {
+    push({ repo_id: current, name: current, source: "distill" });
+  }
+  for (const m of models) {
+    if (m.source === "distill" || isDistillCatalogId(m.repo_id)) continue;
+    push(m);
   }
   if (current && !seen.has(current)) {
-    opts.push({ value: current, label: current, notInCache: fetched });
+    opts.push({
+      value: current,
+      label: mlxOptionLabel({ repo_id: current, name: current }),
+      notInCache: fetched,
+    });
   }
   if (!includeEmpty && opts.length === 0) {
     opts.push({ value: "", label: fetched ? "(no models in cache — click Refresh)" : "(loading…)" });
@@ -183,6 +260,7 @@ const DEFAULT_SETTINGS: AppSettings = {
       turbo_ssd_max_gb: 50,
       turbo_tq_bits: 4,
       turbo_block_size: 256,
+      adapter_path: "",
     },
   },
   orchestrator: {
@@ -244,6 +322,14 @@ const DEFAULT_SETTINGS: AppSettings = {
     loopback_partial_interval_secs: 1.5,
     loopback_auto_send_silence_secs: 2.5,
   },
+  distillation: {
+    enabled: false,
+    data_dir: "",
+    min_tool_calls: 2,
+    teacher_model_id: "mlx-community/Qwen3-32B-4bit",
+    student_model_id: "mlx-community/Qwen3-8B-4bit",
+    filter_sessions_by_teacher: false,
+  },
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -298,7 +384,7 @@ export default function SettingsPage() {
   const [mlxHubDefaultPath, setMlxHubDefaultPath] = useState("");
   const [mlxHubCacheRoot, setMlxHubCacheRoot] = useState("");
   const [mlxHubDefaultSuffix, setMlxHubDefaultSuffix] = useState("huggingface/hub");
-  const [mlxLocalModels, setMlxLocalModels] = useState<{ repo_id: string; name: string; size_mb: number }[]>([]);
+  const [mlxLocalModels, setMlxLocalModels] = useState<MlxLocalModelRow[]>([]);
   const [mlxListError, setMlxListError] = useState<string | null>(null);
   const [mlxListLoading, setMlxListLoading] = useState(false);
   const [mlxSettingsLoaded, setMlxSettingsLoaded] = useState(false);
@@ -376,6 +462,7 @@ export default function SettingsPage() {
           ...DEFAULT_SETTINGS,
           ...s,
           orchestrator: orch,
+          distillation: { ...DEFAULT_SETTINGS.distillation, ...(s.distillation ?? {}) },
           llm: {
             ...DEFAULT_SETTINGS.llm,
             ...(s.llm ?? {}),
@@ -392,16 +479,108 @@ export default function SettingsPage() {
       .catch((e) => console.warn("Failed to load settings:", e));
   }, []);
 
+  const persistChainRef = useRef(Promise.resolve());
+  const persistLatestRef = useRef<AppSettings | null>(null);
+
   const persistSettings = useCallback(async (next: AppSettings) => {
+    persistLatestRef.current = next;
     setSaveStatus("saving");
-    try {
-      await api.updateSettings(next as unknown as Record<string, unknown>);
-      setSaveStatus("saved");
-      savedTimerRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
-    } catch {
-      setSaveStatus("error");
-    }
+    persistChainRef.current = persistChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const snap = persistLatestRef.current;
+        if (!snap) return;
+        persistLatestRef.current = null;
+        try {
+          await api.updateSettings(snap as unknown as Record<string, unknown>);
+          setSaveStatus("saved");
+          savedTimerRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
+        } catch {
+          setSaveStatus("error");
+        }
+      });
+    await persistChainRef.current;
   }, []);
+
+  /** Distilled LoRA is mlx_lm-only. Selecting one becomes the live Standard model. */
+  const activateDistilledAdapter = useCallback(
+    async (adapter: Pick<DistillAdapter, "catalog_id" | "adapter_path" | "base_repo_id">) => {
+      let prevProvider = "";
+      let omlxModel = "";
+      let nextSnap: AppSettings | null = null;
+      setSettings((s) => {
+        prevProvider = s.llm.provider;
+        omlxModel = s.omlx?.model_name?.trim() ?? "";
+        nextSnap = patchDistilledOntoMlx(s, adapter);
+        return nextSnap;
+      });
+      setLlmSubTab("Standard");
+      setStandardSubTab("Overview");
+      if (nextSnap) await persistSettings(nextSnap);
+      if (prevProvider !== "omlx") return;
+      setProviderSwitching(true);
+      setSwitchingStatus("Switching to Standard MLX for the distilled LoRA…");
+      try {
+        if (omlxModel) {
+          const { job_id } = await api.omlxUnloadModel(omlxModel);
+          const deadline = Date.now() + 30_000;
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 1_000));
+            const job = await api.getOmlxJob(job_id);
+            if (job.status === "done" || job.status === "error") break;
+          }
+        }
+        await stopOmlxServerAndWait();
+      } catch (e) {
+        console.warn("Distilled activate: oMLX unload failed (continuing):", e);
+      } finally {
+        setProviderSwitching(false);
+        setSwitchingStatus(null);
+      }
+    },
+    [persistSettings],
+  );
+
+  const loadDistilledIntoOmlx = useCallback(
+    async (adapter: Pick<DistillAdapter, "catalog_id" | "adapter_path" | "base_repo_id" | "omlx_model_id">) => {
+      const omlxId = (adapter.omlx_model_id || "").trim();
+      if (!omlxId) {
+        await activateDistilledAdapter(adapter);
+        return;
+      }
+      let nextSnap: AppSettings | null = null;
+      setSettings((s) => {
+        nextSnap = {
+          ...s,
+          llm: { ...s.llm, provider: "omlx" },
+          omlx: { ...s.omlx, enabled: true, model_name: omlxId },
+        };
+        return nextSnap;
+      });
+      setLlmSubTab("Turbo");
+      setTurboSubTab("Overview");
+      if (nextSnap) await persistSettings(nextSnap);
+      setProviderSwitching(true);
+      setSwitchError(null);
+      setSwitchingStatus(`Loading fused distilled model “${omlxId}” into Turbo…`);
+      try {
+        const status = await api.omlxStatus().catch(() => null);
+        if (!status?.reachable) {
+          setSwitchingStatus("Starting oMLX server…");
+          await startOmlxServerAndWait();
+        }
+        setSwitchingStatus(`Loading fused distilled model “${omlxId}”…`);
+        await loadOmlxModelAndWait(omlxId, { timeoutMs: 600_000 });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setSwitchError(msg);
+      } finally {
+        setProviderSwitching(false);
+        setSwitchingStatus(null);
+      }
+    },
+    [activateDistilledAdapter, persistSettings],
+  );
 
   useEffect(() => {
     if (!loadedRef.current) return;
@@ -942,6 +1121,25 @@ export default function SettingsPage() {
 
   const updateMlxPartial = (partial: Partial<MlxHfConfig>) => {
     setSettings((s) => ({ ...s, llm: { ...s.llm, mlx: { ...s.llm.mlx, ...partial } } }));
+  };
+
+  const selectMlxTextModel = (repoId: string) => {
+    const row = mlxLocalModels.find((m) => m.repo_id === repoId);
+    if (row?.source === "distill" || isDistillCatalogId(repoId)) {
+      void activateDistilledAdapter({
+        catalog_id: repoId,
+        adapter_path: row?.adapter_path || "",
+        base_repo_id: row?.base_repo_id || "",
+      });
+      return;
+    }
+    setSettings((s) => ({
+      ...s,
+      llm: {
+        ...s.llm,
+        mlx: { ...s.llm.mlx, hf_llm_model_id: repoId, adapter_path: "" },
+      },
+    }));
   };
 
   const handleExoUnload = useCallback(async () => {
@@ -1609,11 +1807,13 @@ export default function SettingsPage() {
                     <SelectField
                       label="MLX text model (HF repo id)"
                       value={settings.llm.mlx.hf_llm_model_id}
-                      onChange={(v) => updateMlxField("hf_llm_model_id", v)}
+                      onChange={(v) => selectMlxTextModel(v)}
                       options={mlxSelectOptions(
-                        mlxLocalModels.filter((m) => m.repo_id.toLowerCase().includes("mlx")),
+                        mlxLocalModels.filter((m) => m.source === "distill" || isDistillCatalogId(m.repo_id) || m.repo_id.toLowerCase().includes("mlx")),
                         settings.llm.mlx.hf_llm_model_id,
                         false,
+                        mlxListLoading,
+                        mlxListFetched,
                       )}
                     />
                     <div className="flex items-center justify-between">
@@ -1657,6 +1857,7 @@ export default function SettingsPage() {
                     settings={settings}
                     setSettings={setSettings}
                     onGoToOnDevice={() => setLlmSubTab("Turbo")}
+                    onActivateDistilled={(adapter) => void loadDistilledIntoOmlx(adapter)}
                   />
                 )}
 
@@ -2035,6 +2236,9 @@ export default function SettingsPage() {
               </p>
               <ModelChooser
                 selectedRepoId={settings.llm.mlx.hf_llm_model_id}
+                selectedDistillId={settings.llm.mlx.hf_llm_model_id}
+                selectedAdapterPath={settings.llm.mlx.adapter_path}
+                distillEngine="mlx"
                 hfToken={settings.llm.mlx.hf_token}
                 cacheDir={settings.llm.mlx.hf_hub_cache}
                 onDownloadComplete={(repo, label) => {
@@ -2052,8 +2256,18 @@ export default function SettingsPage() {
                   void refreshMlxModels();
                   void api.omlxStart().catch(() => undefined);
                 }}
-                onUseCached={(repo) => {
+                onUseCached={(repo, _label, row) => {
+                  if (row?.source === "distill") {
+                    void activateDistilledAdapter({
+                      catalog_id: repo,
+                      adapter_path: row.adapter_path || "",
+                      base_repo_id: row.base_repo_id || "",
+                    });
+                    void refreshMlxModels();
+                    return;
+                  }
                   updateMlxField("hf_llm_model_id", repo);
+                  updateMlxField("adapter_path", "");
                   setSettings((s) => ({
                     ...s,
                     omlx: { ...s.omlx, default_model: repo },
@@ -2106,16 +2320,28 @@ export default function SettingsPage() {
                 {mlxListError && <p className="text-xs text-red-500">{mlxListError}</p>}
                 {(() => {
                   const activeModelOpts = mlxSelectOptions(mlxLocalModels, settings.llm.mlx.hf_llm_model_id, false, mlxListLoading, mlxListFetched);
-                  const activeModelNotInCache = activeModelOpts.find((o) => o.value === settings.llm.mlx.hf_llm_model_id)?.notInCache;
+                  const activeId = settings.llm.mlx.hf_llm_model_id;
+                  const distilledRow = mlxLocalModels.find(
+                    (m) => m.repo_id === activeId && (m.source === "distill" || isDistillCatalogId(m.repo_id)),
+                  );
+                  const activeIsDistill = !!distilledRow || isDistillCatalogId(activeId);
+                  const activeModelNotInCache = activeModelOpts.find((o) => o.value === activeId)?.notInCache;
                   return (
                     <div className="space-y-1.5">
                       <SelectField
                         label="Active model"
-                        value={settings.llm.mlx.hf_llm_model_id}
-                        onChange={(v) => updateMlxField("hf_llm_model_id", v)}
+                        value={activeId}
+                        onChange={(v) => selectMlxTextModel(v)}
                         options={activeModelOpts}
                       />
-                      {activeModelNotInCache && (
+                      {activeIsDistill && (
+                        <p className="text-[11px] text-violet-300 leading-relaxed">
+                          Distilled LoRA on Standard MLX
+                          {distilledRow?.base_repo_id ? ` (student ${distilledRow.base_repo_id.split("/").pop()})` : ""}.
+                          New chats load this student + adapter via mlx_lm. Turbo is unloaded so MiniMax is not the live model.
+                        </p>
+                      )}
+                      {activeModelNotInCache && !activeIsDistill && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
                           not in cache listing yet
                         </span>
@@ -2127,13 +2353,13 @@ export default function SettingsPage() {
                   label="Vision model (optional)"
                   value={settings.llm.mlx.hf_vlm_model_id}
                   onChange={(v) => updateMlxField("hf_vlm_model_id", v)}
-                  options={mlxSelectOptions(mlxLocalModels, settings.llm.mlx.hf_vlm_model_id, true, mlxListLoading, mlxListFetched)}
+                  options={mlxSelectOptions(mlxLocalModels.filter((m) => m.source !== "distill" && !isDistillCatalogId(m.repo_id)), settings.llm.mlx.hf_vlm_model_id, true, mlxListLoading, mlxListFetched)}
                 />
                 <SelectField
                   label="Draft model (optional)"
                   value={settings.llm.mlx.hf_draft_llm_model_id}
                   onChange={(v) => updateMlxField("hf_draft_llm_model_id", v)}
-                  options={mlxSelectOptions(mlxLocalModels, settings.llm.mlx.hf_draft_llm_model_id, true, mlxListLoading, mlxListFetched)}
+                  options={mlxSelectOptions(mlxLocalModels.filter((m) => m.source !== "distill" && !isDistillCatalogId(m.repo_id)), settings.llm.mlx.hf_draft_llm_model_id, true, mlxListLoading, mlxListFetched)}
                 />
                 <SecretField label="HF Token (optional)" value={settings.llm.mlx.hf_token} onChange={(v) => updateMlxField("hf_token", v)} placeholder="hf_… for gated repos" />
                 <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-4">
@@ -2226,7 +2452,12 @@ export default function SettingsPage() {
                   prefix-tree cache sharing — higher throughput than standard in-process inference.
                   Models are shared from the same hub cache as the Standard tab.
                 </p>
-                <OmlxQuickPanel settings={settings} setSettings={setSettings} turboSubTab={turboSubTab} />
+                <OmlxQuickPanel
+                  settings={settings}
+                  setSettings={setSettings}
+                  turboSubTab={turboSubTab}
+                  onActivateDistilled={(adapter) => void loadDistilledIntoOmlx(adapter)}
+                />
               </Card>
             </div>
             )}
@@ -2481,8 +2712,14 @@ export default function SettingsPage() {
                     <ExoModelChooser
                       enabled={settings.exo.enabled && exoCatalogReachable}
                       selectedModelId={settings.exo.model_name}
+                      selectedDistillId={settings.llm.mlx.hf_llm_model_id}
+                      selectedAdapterPath={settings.llm.mlx.adapter_path}
                       onUseLoaded={handleExoModelSelect}
                       onPreloadComplete={() => void refreshExoCatalog()}
+                      onUseDistilled={(adapter) => {
+                        void activateDistilledAdapter(adapter);
+                        void refreshMlxModels();
+                      }}
                     />
                   </div>
                 </div>
@@ -3730,6 +3967,20 @@ export default function SettingsPage() {
                 </button>
               </div>
             </Card>
+            <Card title="Distillation" dot="bg-violet-400">
+              <div className="space-y-3">
+                <p className="text-xs text-th-text-tertiary leading-relaxed">
+                  Training, the dataset viewer, and distilled adapters now live on their
+                  own Distill page — inspect traces, then train a student LoRA.
+                </p>
+                <Link
+                  to="/distill"
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-violet-500/10 border border-violet-500/30 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all"
+                >
+                  Open Distill
+                </Link>
+              </div>
+            </Card>
             {settings.llm.provider === "anthropic" && (
               <>
                 <Card title="Extended Thinking" dot="bg-neutral-400">
@@ -4061,15 +4312,18 @@ function OmlxModelSelector({
   settings,
   setSettings,
   onGoToOnDevice,
+  onActivateDistilled,
 }: {
   settings: AppSettings;
   setSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
   onGoToOnDevice: () => void;
+  onActivateDistilled: (adapter: Pick<DistillAdapter, "catalog_id" | "adapter_path" | "base_repo_id" | "omlx_model_id" | "fused_path">) => void;
 }) {
   // Options are built from the local HF cache (proper repo IDs), NOT from the
   // oMLX server's /v1/models which returns internal short-hashes that don't
   // match what was saved as omlx.model_name during setup.
   const [localModels, setLocalModels] = useState<{ value: string; label: string }[]>([]);
+  const [distillById, setDistillById] = useState<Record<string, DistillAdapter>>({});
   const [reachable, setReachable] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -4081,10 +4335,13 @@ function OmlxModelSelector({
     try {
       const { models } = await api.omlxLocalModels();
       const mlx = models.filter((m) => m.is_mlx && m.repo_id.includes("/"));
-      setLocalModels(mlx.map((m) => ({
+      const hub = mlx.map((m) => ({
         value: m.repo_id,
         label: `${m.repo_id.split("/")[1] ?? m.repo_id} (${m.size_gb.toFixed(1)} GB)`,
-      })));
+      }));
+      const distilled = await fetchDistilledDropdownOptions();
+      setDistillById(distilled.byId);
+      setLocalModels([...distilled.options, ...hub]);
     } catch { /* ignore */ }
   }, []);
 
@@ -4104,21 +4361,22 @@ function OmlxModelSelector({
   // Build the options list: local cache + always include the saved model_name
   // so it shows as selected even if the cache scan missed it.
   const savedModel = settings.omlx?.model_name?.trim() ?? "";
+  const distilledId = isDistillCatalogId(settings.llm.mlx.hf_llm_model_id)
+    ? settings.llm.mlx.hf_llm_model_id
+    : "";
   const options = (() => {
     const base = localModels.length > 0
       ? localModels
-      : savedModel
-        ? []
-        : [{ value: "", label: reachable ? "(no local models cached)" : "(server offline)" }];
-    // Ensure the saved model is always present as an option
+      : [];
+    const extras: { value: string; label: string }[] = [];
     if (savedModel && !base.some((o) => o.value === savedModel)) {
       const shortName = savedModel.split("/")[1] ?? savedModel;
-      return [
-        { value: savedModel, label: `${shortName}${reachable ? "" : " (saved)"}` },
-        ...base,
-      ];
+      extras.push({ value: savedModel, label: `${shortName}${reachable ? "" : " (saved)"}` });
     }
-    return base;
+    if (distilledId && !base.some((o) => o.value === distilledId) && !extras.some((o) => o.value === distilledId)) {
+      extras.push({ value: distilledId, label: distilledId });
+    }
+    return [...extras, ...base];
   })();
 
   // Server is running but nothing is loaded yet — show the full picker
@@ -4129,7 +4387,14 @@ function OmlxModelSelector({
         <p className="text-[10px] text-th-text-muted leading-relaxed">
           The oMLX server is running but no model has been set. Pick one below.
         </p>
-        <OmlxModelPicker onLoad={handleLoad} />
+        <OmlxModelPicker
+          onLoad={handleLoad}
+          selectedDistillId={settings.llm.mlx.hf_llm_model_id}
+          selectedAdapterPath={settings.llm.mlx.adapter_path}
+          onUseDistilled={(adapter) => {
+            onActivateDistilled(adapter);
+          }}
+        />
         {loadErr && (
           <p className="text-[10px] text-red-400 leading-relaxed">{loadErr}</p>
         )}
@@ -4146,9 +4411,15 @@ function OmlxModelSelector({
       <label className="block text-sm font-medium text-th-text-tertiary">oMLX model</label>
       <OmlxModelDropdown
         options={options}
-        value={savedModel}
+        value={distilledId || savedModel}
         reachable={reachable}
         onChange={(id) => {
+          if (isDistillCatalogId(id)) {
+            const adapter = distillById[id];
+            if (adapter) onActivateDistilled(adapter);
+            else onActivateDistilled({ catalog_id: id, adapter_path: "", base_repo_id: "" });
+            return;
+          }
           setSettings((s) => ({ ...s, omlx: { ...s.omlx, enabled: true, model_name: id } }));
           setLoadErr(null);
           if (reachable && id) {
@@ -4192,8 +4463,8 @@ function OmlxModelDropdown({
   }, []);
 
   const selected = options.find((o) => o.value === value);
-  const displayLabel = selected
-    ? (selected.value.split("/")[1] ?? selected.value)
+  const displayLabel = selected?.label
+    ? selected.label
     : value
       ? (value.split("/")[1] ?? value)
       : "(no model set)";
@@ -4265,10 +4536,12 @@ function OmlxQuickPanel({
   settings,
   setSettings,
   turboSubTab,
+  onActivateDistilled,
 }: {
   settings: AppSettings;
   setSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
   turboSubTab: "Overview" | "Model";
+  onActivateDistilled: (adapter: Pick<DistillAdapter, "catalog_id" | "adapter_path" | "base_repo_id" | "omlx_model_id" | "fused_path">) => void;
 }) {
   const [info, setInfo] = useState<import("../types").OmlxInfo | null>(null);
   const [status, setStatus] = useState<import("../types").OmlxStatus | null>(null);
@@ -4276,6 +4549,7 @@ function OmlxQuickPanel({
   const [err, setErr] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(true);
   const [localModels, setLocalModels] = useState<{ value: string; label: string }[]>([]);
+  const [distillById, setDistillById] = useState<Record<string, DistillAdapter>>({});
   const [versionInfo, setVersionInfo] = useState<import("../types").OmlxVersionInfo | null>(null);
   // Cache / turbo-mode settings
   const [cache, setCache] = useState<import("../types").OmlxCacheSettings | null>(null);
@@ -4305,10 +4579,16 @@ function OmlxQuickPanel({
     try {
       const { models } = await api.omlxLocalModels();
       const mlx = models.filter((m) => m.is_mlx && m.repo_id.includes("/"));
-      setLocalModels(mlx.map((m) => ({
+      const hub = mlx.map((m) => ({
         value: m.repo_id,
         label: `${m.repo_id.split("/")[1] ?? m.repo_id} (${m.size_gb.toFixed(1)} GB)`,
-      })));
+      }));
+      const distilled = await fetchDistilledDropdownOptions();
+      setDistillById(distilled.byId);
+      // Turbo Active model is the oMLX server load — distilled LoRAs are
+      // Standard MLX only. Keep them out of this dropdown so MiniMax cannot
+      // look like the selected distilled model.
+      setLocalModels(hub);
     } catch { /* ignore */ }
     setDetecting(false);
   }, []);
@@ -4517,6 +4797,18 @@ function OmlxQuickPanel({
         </div>
       )}
 
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-th-text-tertiary">Distilled (Turbo)</p>
+        <p className="text-[11px] text-th-text-muted leading-relaxed">
+          oMLX cannot attach a LoRA. Fuse writes a full MLX copy, then loads it here.
+        </p>
+        <DistilledModelsTab
+          engine="omlx"
+          selectedCatalogId={settings.omlx?.model_name?.trim() ?? ""}
+          onUse={(adapter) => onActivateDistilled(adapter)}
+        />
+      </div>
+
       <div className="space-y-1">
         <label className="block text-sm font-medium text-th-text-tertiary">Active model</label>
         <OmlxModelDropdown
@@ -4524,21 +4816,33 @@ function OmlxQuickPanel({
             const savedModel = settings.omlx?.model_name?.trim() ?? "";
             if (!savedModel && localModels.length === 0)
               return [{ value: "", label: reachable ? "(no local models cached)" : "(server offline)" }];
+            const extras: { value: string; label: string }[] = [];
             if (savedModel && !localModels.some((o) => o.value === savedModel)) {
               const shortName = savedModel.split("/")[1] ?? savedModel;
-              return [{ value: savedModel, label: `${shortName}${reachable ? "" : " (saved)"}` }, ...localModels];
+              extras.push({ value: savedModel, label: `${shortName}${reachable ? "" : " (saved)"}` });
             }
-            return localModels;
+            return extras.length ? [...extras, ...localModels.filter((o) => !isDistillCatalogId(o.value))] : localModels.filter((o) => !isDistillCatalogId(o.value));
           })()}
           value={settings.omlx?.model_name?.trim() ?? ""}
           reachable={reachable}
           onChange={(id) => {
+            if (isDistillCatalogId(id)) {
+              const adapter = distillById[id];
+              if (adapter) onActivateDistilled(adapter);
+              else onActivateDistilled({ catalog_id: id, adapter_path: "", base_repo_id: "" });
+              return;
+            }
             setSettings((s) => ({ ...s, omlx: { ...s.omlx, enabled: true, model_name: id } }));
             void refreshModelConfig(id);
             if (reachable && id) void handleLoadModel(id);
             else void handleSelectModelOffline(id);
           }}
         />
+        {isDistillCatalogId(settings.llm.mlx.hf_llm_model_id) && (
+          <p className="text-[11px] text-violet-300 leading-relaxed">
+            Distilled LoRA is the Standard MLX model. This field is only the oMLX server load.
+          </p>
+        )}
       </div>
       </>)}
 
@@ -4553,6 +4857,9 @@ function OmlxQuickPanel({
           </p>
           <ModelChooser
             selectedRepoId={settings.omlx?.model_name?.trim() || settings.llm.mlx.hf_llm_model_id}
+            selectedDistillId={settings.llm.mlx.hf_llm_model_id}
+            selectedAdapterPath={settings.llm.mlx.adapter_path}
+            distillEngine="omlx"
             hfToken={settings.llm.mlx.hf_token}
             cacheDir={settings.llm.mlx.hf_hub_cache}
             onDownloadComplete={(repo) => {
@@ -4560,7 +4867,17 @@ function OmlxQuickPanel({
               if (reachable) void handleLoadModel(repo).catch(() => undefined);
               else void handleSelectModelOffline(repo);
             }}
-            onUseCached={(repo) => {
+            onUseCached={(repo, _label, row) => {
+              if (row?.source === "distill") {
+                onActivateDistilled({
+                  catalog_id: repo,
+                  adapter_path: row.adapter_path || "",
+                  base_repo_id: row.base_repo_id || "",
+                  omlx_model_id: row.omlx_model_id || "",
+                  fused_path: row.fused_path || "",
+                });
+                return;
+              }
               if (reachable) void handleLoadModel(repo).catch(() => undefined);
               else void handleSelectModelOffline(repo);
             }}

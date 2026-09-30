@@ -64,6 +64,41 @@ function folderFromFileList(files: FileList | File[]): string | null {
   return abs.split("/").slice(0, -1).join("/") || null;
 }
 
+function isDistillCatalogId(id: string | undefined | null): boolean {
+  return (id || "").trim().startsWith("otto-distill/");
+}
+
+type ChatModelOption = { id: string; name: string; adapter_path?: string };
+
+async function distilledChatOptions(engine: "mlx" | "omlx" | "exo" = "mlx"): Promise<ChatModelOption[]> {
+  try {
+    const res = await api.listDistillAdapters();
+    return (res.adapters ?? []).flatMap((a) => {
+      const name = (a.display_name || a.catalog_id).trim();
+      const label = name.toLowerCase().includes("distill") ? name : `${name} (distilled)`;
+      if (engine === "omlx") {
+        const oid = (a.omlx_model_id || "").trim();
+        if (!oid) return [];
+        return [{ id: oid, name: label, adapter_path: a.adapter_path }];
+      }
+      return [{ id: a.catalog_id, name: label, adapter_path: a.adapter_path }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function mergeModelOptions(primary: ChatModelOption[], extra: ChatModelOption[]): ChatModelOption[] {
+  const seen = new Set<string>();
+  const out: ChatModelOption[] = [];
+  for (const row of [...extra, ...primary]) {
+    if (!row.id || seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+  return out;
+}
+
 type RenderItem =
   | { kind: "message"; message: ChatMessage; index: number }
   | { kind: "subagent-group"; name: string; messages: ChatMessage[] }
@@ -222,7 +257,7 @@ export default function ChatPage() {
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [currentModel, setCurrentModel] = useState<string>(() => localStorage.getItem("chatModel") ?? "");
-  const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
+  const [availableModels, setAvailableModels] = useState<ChatModelOption[]>([]);
   const [modelsFetched, setModelsFetched] = useState(false);
   // Tracks the live EXO catalog (with downloaded/loaded flags) so that when
   // the user picks a model from the chat ModelPicker we can fire-and-forget
@@ -511,10 +546,24 @@ export default function ChatPage() {
         // Populate model picker with every model already in the Hub cache.
         // Falls back to just the configured id if the scan fails or returns nothing.
         api.mlxLocalModels()
-          .then((r) => {
+          .then(async (r) => {
             const rows = r.models ?? [];
-            if (rows.length > 0) {
-              setAvailableModels(rows.map((m) => ({ id: m.repo_id, name: m.name })));
+            const mapped: ChatModelOption[] = rows.map((m) => ({
+              id: m.repo_id,
+              name: m.source === "distill"
+                ? ((m.name || m.repo_id).toLowerCase().includes("distill") ? (m.name || m.repo_id) : `${m.name || m.repo_id} (distilled)`)
+                : (m.name || m.repo_id),
+              adapter_path: m.adapter_path,
+            }));
+            const extras = mapped.some((m) => isDistillCatalogId(m.id))
+              ? []
+              : await distilledChatOptions("mlx");
+            const merged = mergeModelOptions(
+              mapped.filter((m) => !isDistillCatalogId(m.id)),
+              mapped.filter((m) => isDistillCatalogId(m.id)).concat(extras),
+            );
+            if (merged.length > 0) {
+              setAvailableModels(merged);
             } else if (mid) {
               setAvailableModels([{ id: mid, name: mid }]);
             } else {
@@ -542,14 +591,16 @@ export default function ChatPage() {
         // without leaving the chat page.  Falls back to just the currently
         // configured id if the cluster is unreachable.
         api.exoModels()
-          .then((r) => {
+          .then(async (r) => {
             const catalog = r.reachable ? r.models : [];
             exoCatalogRef.current = catalog;
-            const rich = catalog
+            const rich: ChatModelOption[] = catalog
               .filter((m) => m.downloaded || m.loaded)
               .map((m) => ({ id: m.id, name: m.name }));
-            if (rich.length > 0) {
-              setAvailableModels(rich);
+            const distilled = await distilledChatOptions("exo");
+            const merged = mergeModelOptions(rich, distilled);
+            if (merged.length > 0) {
+              setAvailableModels(merged);
             } else if (mid) {
               setAvailableModels([{ id: mid, name: mid }]);
             } else {
@@ -594,12 +645,15 @@ export default function ChatPage() {
           region: "",
         });
         api.omlxStatus()
-          .then((r) => {
+          .then(async (r) => {
             const models = r.models ?? [];
-            if (models.length > 0) {
-              setAvailableModels(models.map((m: { id: string }) => ({ id: m.id, name: m.id })));
-            } else if (mid) {
-              setAvailableModels([{ id: mid, name: mid }]);
+            const hub: ChatModelOption[] = models.length > 0
+              ? models.map((m: { id: string }) => ({ id: m.id, name: m.id }))
+              : (mid ? [{ id: mid, name: mid }] : []);
+            const distilled = await distilledChatOptions("omlx");
+            const merged = mergeModelOptions(hub, distilled);
+            if (merged.length > 0) {
+              setAvailableModels(merged);
             } else {
               setAvailableModels([]);
             }
@@ -1270,7 +1324,20 @@ export default function ChatPage() {
   const startSession = async (agentOverride?: string) => {
     let data: Awaited<ReturnType<typeof api.createSession>>;
     try {
-      data = await api.createSession({ agent_name: (agentOverride ?? selectedAgent) || null });
+      const distillFromChat = isDistillCatalogId(currentModel) ? currentModel : "";
+      const distillFromSettings = appSettings?.llm?.provider === "mlx"
+        && isDistillCatalogId(appSettings.llm.mlx?.hf_llm_model_id)
+        ? (appSettings.llm.mlx.hf_llm_model_id || "")
+        : "";
+      // Turbo runs the fused copy via oMLX.  Passing otto-distill/… here
+      // used to force in-process MLX and pin the GPU.
+      const distillCatalogId = appSettings?.llm?.provider === "mlx"
+        ? (distillFromChat || distillFromSettings)
+        : "";
+      data = await api.createSession({
+        agent_name: (agentOverride ?? selectedAgent) || null,
+        ...(distillCatalogId ? { distill_catalog_id: distillCatalogId } : {}),
+      });
     } catch (err) {
       // Parse privacy-lock 403 so the chat renders the dedicated card
       // instead of a raw "API 403: …" string.
@@ -1661,8 +1728,59 @@ export default function ChatPage() {
     localStorage.setItem("chatModel", modelId);
     try {
       const s = await api.getSettings() as AppSettings;
+      const picked = availableModels.find((m) => m.id === modelId);
+      if (isDistillCatalogId(modelId)) {
+        if (s.llm.provider === "omlx") {
+          const adapters = await api.listDistillAdapters().catch(() => ({ adapters: [] }));
+          const row = (adapters.adapters ?? []).find((a) => a.catalog_id === modelId);
+          const omlxId = (row?.omlx_model_id || "").trim();
+          if (omlxId) {
+            modelId = omlxId;
+            setCurrentModel(omlxId);
+            localStorage.setItem("chatModel", omlxId);
+          } else {
+            console.warn("Distilled adapter is not fused for Turbo yet:", modelId);
+            return;
+          }
+        } else {
+          const prevProvider = s.llm.provider;
+          const omlxModel = s.omlx?.model_name?.trim() ?? "";
+          const nextMlx = {
+            ...(s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" }),
+            hf_llm_model_id: modelId,
+            adapter_path: picked?.adapter_path || s.llm.mlx.adapter_path || "",
+          };
+          const nextSettings = {
+            ...s,
+            llm: { ...s.llm, provider: "mlx" as const, mlx: nextMlx },
+          } as AppSettings;
+          await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
+          setAppSettings(nextSettings);
+          setDebugLlm({
+            provider: "mlx",
+            authMode: nextMlx.hf_token ? "hub + token" : "hub",
+            hasKeys: !!modelId.trim(),
+            region: "",
+          });
+          if (prevProvider === "omlx") {
+            void (async () => {
+              try {
+                if (omlxModel) await api.omlxUnloadModel(omlxModel);
+                await api.omlxStop();
+              } catch {
+                /* Turbo unload is best-effort; Standard chat still uses mlx_lm. */
+              }
+            })();
+          }
+          return;
+        }
+      }
       if (s.llm.provider === "mlx") {
-        const nextMlx = { ...(s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" }), hf_llm_model_id: modelId };
+        const nextMlx = {
+          ...(s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" }),
+          hf_llm_model_id: modelId,
+          adapter_path: "",
+        };
         const nextSettings = { ...s, llm: { ...s.llm, mlx: nextMlx } } as AppSettings;
         await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
         setAppSettings(nextSettings);
@@ -1742,8 +1860,20 @@ export default function ChatPage() {
         return;
       }
       if (s.llm.provider === "omlx") {
+        const adapters = await api.listDistillAdapters().catch(() => ({ adapters: [] }));
+        const fusedIds = new Set(
+          (adapters.adapters ?? []).map((a) => (a.omlx_model_id || "").trim()).filter(Boolean),
+        );
+        const pickingFused = fusedIds.has(modelId);
+        const nextMlx = pickingFused
+          ? s.llm.mlx
+          : {
+              ...s.llm.mlx,
+              hf_llm_model_id: isDistillCatalogId(s.llm.mlx?.hf_llm_model_id) ? "" : (s.llm.mlx?.hf_llm_model_id || ""),
+              adapter_path: "",
+            };
         const nextOmlx = { ...s.omlx, model_name: modelId };
-        const nextSettings = { ...s, omlx: nextOmlx } as AppSettings;
+        const nextSettings = { ...s, llm: { ...s.llm, mlx: nextMlx }, omlx: nextOmlx } as AppSettings;
         await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
         setAppSettings(nextSettings);
         setDebugLlm({
@@ -1752,13 +1882,21 @@ export default function ChatPage() {
           hasKeys: !!modelId.trim() && !!(nextOmlx.enabled),
           region: "",
         });
+        // The live session graph still has the previous model baked in.
+        setCurrentSessionId(null);
+        navigate("/chat", { replace: true });
         const trimmedOmlxId = modelId.trim();
         if (trimmedOmlxId && nextOmlx.enabled) {
           setOmlxModelLoading(true);
           void (async () => {
             try {
               const status = await api.omlxStatus();
-              const alreadyLoaded = status.models.some((m) => m.id === trimmedOmlxId);
+              for (const loaded of status.loaded_models ?? []) {
+                if (loaded.id && loaded.id !== trimmedOmlxId) {
+                  await api.omlxUnloadModel(loaded.id).catch(() => undefined);
+                }
+              }
+              const alreadyLoaded = (status.loaded_models ?? []).some((m) => m.id === trimmedOmlxId);
               if (!alreadyLoaded) {
                 const job = await api.omlxLoadModel(trimmedOmlxId);
                 const startedAt = Date.now();
