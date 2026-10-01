@@ -1358,6 +1358,17 @@ class MCPManager:
             if cfg.enabled
         ))
 
+        # ``connect`` registers each server when it *finishes*, so after a
+        # parallel connect the dict follows completion order.  Put it back
+        # in config order: ``get_all_tools`` feeds the system prompt, and a
+        # tool list that reshuffles between sessions makes every session's
+        # prompt different, defeating prompt-prefix caching.
+        configured = [cfg.id for cfg in configs if cfg.id in self._connections]
+        ordered = {sid: self._connections.pop(sid) for sid in configured}
+        ordered.update(self._connections)
+        self._connections.clear()
+        self._connections.update(ordered)
+
     async def disconnect(self, server_id: str) -> None:
         if server_id in self._connections:
             await self._connections[server_id].close()
