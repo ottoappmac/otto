@@ -10,6 +10,7 @@ MCP servers that have ``auto_start=True`` (e.g. Playwright MCP).
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import shutil
@@ -17,6 +18,7 @@ import signal
 import sys
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -1036,6 +1038,192 @@ def _record_success(server_id: str) -> None:
 
 
 # -----------------------------------------------------------------------
+# Task-owned MCP client lifecycle
+# -----------------------------------------------------------------------
+
+# How long ``close`` waits for a client's own shutdown before hard-killing
+# its server processes.  The SDK's stdio shutdown is itself bounded (close
+# stdin, 2s, SIGTERM the group, 2s, SIGKILL) and reaping stragglers adds at
+# most ~2s, so this only trips on a genuinely wedged teardown.
+_MCP_CLOSE_TIMEOUT_SECS = 10.0
+
+# ``stdio_client`` spawns the server itself and never exposes the process,
+# but reaping what a server leaves behind needs its PID.  Every stdio spawn
+# in the SDK goes through ``mcp.client.stdio._create_platform_compatible_process``,
+# so it is wrapped once, transparently (same arguments, same result): the
+# process is only recorded into the calling task's sink, which only the
+# runner task of an ``_OwnedMCPHelper`` sets.  tests/test_mcp_sdk_compat.py
+# pins the hook point.
+_stdio_spawn_sink: ContextVar[list[Any] | None] = ContextVar(
+    "_stdio_spawn_sink", default=None,
+)
+
+
+@functools.cache
+def _observe_stdio_spawns() -> None:
+    from mcp.client import stdio as sdk_stdio
+
+    create = getattr(sdk_stdio, "_create_platform_compatible_process", None)
+    if create is None:
+        logger.warning(
+            "mcp_manager: MCP SDK stdio spawn point not found — processes a "
+            "stdio server leaves behind will not be reaped"
+        )
+        return
+
+    async def _create_and_record(*args: Any, **kwargs: Any) -> Any:
+        process = await create(*args, **kwargs)
+        sink = _stdio_spawn_sink.get()
+        if sink is not None:
+            sink.append(process)
+        return process
+
+    sdk_stdio._create_platform_compatible_process = _create_and_record
+
+
+def _signal_group(pgid: int, sig: int) -> bool:
+    """Send *sig* to process group *pgid*; ``False`` once nothing there can get it."""
+    if sys.platform == "win32":
+        return False
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # macOS answers EPERM for a group whose members are all zombies.
+        return False
+    return True
+
+
+async def _reap_process_groups(pgids: list[int], label: str, grace: float = 2.0) -> None:
+    """SIGTERM what is left of each stdio server's process group, then SIGKILL.
+
+    The SDK signals the group only when a server ignores stdin EOF, so a
+    server that exits promptly could leave processes it started (``npx`` →
+    ``node``, ``sandbox-exec`` → python, worker pools) running, re-parented
+    to launchd.  ``stdio_client`` starts servers with ``start_new_session=True``,
+    so a server's PID is also its group id.  POSIX only: on Windows the
+    SDK's Job Object owns tree termination.
+    """
+    live = [pgid for pgid in pgids if _signal_group(pgid, signal.SIGTERM)]
+    if not live:
+        return
+    logger.info("MCP %s: terminating leftover server processes (groups %s)", label, live)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + grace
+    try:
+        while live and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+            live = [pgid for pgid in live if _signal_group(pgid, 0)]
+    finally:
+        for pgid in live:
+            logger.warning("MCP %s: process group %d ignored SIGTERM — killing it", label, pgid)
+            _signal_group(pgid, signal.SIGKILL)
+
+
+# Strong references to runner tasks; the event loop only keeps weak ones.
+_OWNED_CLIENT_TASKS: set[asyncio.Task[None]] = set()
+
+
+class _OwnedMCPHelper:
+    """Runs one ``MCPHelper``'s whole connect → close lifecycle in its own task.
+
+    ``stdio_client`` and ``ClientSession`` open anyio cancel scopes that must
+    be exited by the task that entered them.  Session graphs connect inside
+    short-lived ``asyncio.gather`` tasks (:meth:`MCPManager.connect_all`) and
+    close from whichever task later rebuilds, evicts or deletes the session,
+    so closing the helper directly always ran cross-task: anyio raised
+    "Attempted to exit cancel scope in a different task", cancelled the
+    connecting task if it was still running, and nothing bounded the
+    teardown or reaped what a server left behind (anyio#374).
+
+    Here a runner task enters the contexts, parks until :meth:`close` asks it
+    to stop, and exits them itself — so the SDK's stdio shutdown (close stdin,
+    wait, SIGTERM, SIGKILL) runs as designed whichever task closes — then
+    reaps the servers' process groups.  If all that wedges, :meth:`close`
+    hard-kills the groups after ``_MCP_CLOSE_TIMEOUT_SECS``.
+    """
+
+    def __init__(self, helper: Any, label: str) -> None:
+        self.helper = helper
+        self.label = label
+        self._spawned: list[Any] = []
+        self._ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._stop = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    @classmethod
+    async def connect(cls, helper: Any, label: str) -> _OwnedMCPHelper:
+        """Connect *helper* from a new runner task; raise what connecting raised."""
+        _observe_stdio_spawns()
+        owner = cls(helper, label)
+        owner._task = asyncio.create_task(owner._run(), name=f"mcp-client:{label}")
+        _OWNED_CLIENT_TASKS.add(owner._task)
+        owner._task.add_done_callback(_OWNED_CLIENT_TASKS.discard)
+        try:
+            await asyncio.shield(owner._ready)
+        except BaseException:
+            # Nobody will get this connection (connect failed, timed out or
+            # was cancelled): make the runner tear down whatever it spawned.
+            owner._stop.set()
+            if not owner._ready.done():
+                owner._task.cancel()
+            raise
+        return owner
+
+    def get_tools(self) -> list[BaseTool]:
+        return self.helper.get_tools()
+
+    async def close(self) -> None:
+        """Stop the runner and wait for its teardown; safe from any task."""
+        task = self._task
+        if task is None or task.done():
+            return
+        self._stop.set()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), _MCP_CLOSE_TIMEOUT_SECS)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "MCP %s: client shutdown still running after %.0fs — killing its "
+                "server processes",
+                self.label, _MCP_CLOSE_TIMEOUT_SECS,
+            )
+            task.cancel()
+            for pgid in self._pgids():
+                _signal_group(pgid, signal.SIGKILL)
+
+    def _pgids(self) -> list[int]:
+        return [p.pid for p in self._spawned if getattr(p, "pid", None)]
+
+    async def _run(self) -> None:
+        _stdio_spawn_sink.set(self._spawned)
+        try:
+            await self.helper.connect_all()
+            self._ready.set_result(None)
+            await self._stop.wait()
+        except BaseException as exc:
+            if not self._ready.done():
+                if isinstance(exc, asyncio.CancelledError):
+                    self._ready.cancel()
+                else:
+                    self._ready.set_exception(exc)
+            if isinstance(exc, _FATAL):
+                raise
+        finally:
+            await self._shutdown()
+
+    async def _shutdown(self) -> None:
+        try:
+            await self.helper.close()
+        except _FATAL:
+            raise
+        except BaseException as exc:  # a failed teardown must not skip the reaping
+            logger.warning("MCP %s: error during close (%r); continuing", self.label, exc)
+        finally:
+            await _reap_process_groups(self._pgids(), self.label)
+
+
+# -----------------------------------------------------------------------
 # Connection tracking
 # -----------------------------------------------------------------------
 
@@ -1064,30 +1252,9 @@ class MCPConnection:
     async def close(self) -> None:
         if self._helper is not None:
             try:
+                # An ``_OwnedMCPHelper``: its runner task exits the client
+                # contexts it entered, so closing from any task is safe.
                 await self._helper.close()
-            except RuntimeError as exc:
-                # Known anyio quirk: ``stdio_client`` (used for stdio MCPs
-                # via ``MultiServerMCPClient``) opens an anyio cancel
-                # scope inside the task that called ``connect``.  When
-                # that connect happened in one FastAPI request task and
-                # ``close`` is invoked from a different task (e.g. a
-                # later /stop request), anyio raises::
-                #
-                #   RuntimeError: Attempted to exit cancel scope in a
-                #   different task than it was entered in
-                #
-                # The child process gets killed regardless — the only
-                # casualty is the clean shutdown of the anyio scope —
-                # so we log and move on rather than 500-ing the route.
-                # See https://github.com/agronholm/anyio/issues/374
-                if "cancel scope" in str(exc).lower():
-                    logger.warning(
-                        "MCP %s: ignoring cross-task cancel-scope error on close; "
-                        "child process is still terminated. (%s)",
-                        getattr(self.config, "id", "?"), exc,
-                    )
-                else:
-                    raise
             except Exception as exc:
                 logger.warning(
                     "MCP %s: error during close (%s); continuing",
@@ -1384,8 +1551,7 @@ class MCPManager:
 
     async def test_connection(self, config: MCPServerConfig) -> tuple[bool, str]:
         try:
-            helper = await self._create_helper(config)
-            await helper.connect_all()
+            helper = await _OwnedMCPHelper.connect(await self._create_helper(config), config.id)
             tools = helper.get_tools()
             await helper.close()
             return True, f"Connected — {len(tools)} tools discovered"
@@ -1479,8 +1645,8 @@ class MCPManager:
             _strip_null_image_content,
         )
 
-        helper = await self._create_helper(config)
-        await helper.connect_all()
+        helper = await _OwnedMCPHelper.connect(await self._create_helper(config), config.id)
+        conn._helper = helper
 
         tools = helper.get_tools()
 
@@ -1502,7 +1668,6 @@ class MCPManager:
             # or agent-generated, defense-in-depth wins.
             _wrap_with_output_redactor(t)
 
-        conn._helper = helper
         return tools
 
     async def _load_builtin(self, config: MCPServerConfig, conn: MCPConnection) -> list[BaseTool]:
@@ -1591,8 +1756,8 @@ class MCPManager:
         from tools.anthropic.mcps import MCPHelper
 
         mcps = create_playwright_mcp_client()
-        helper = MCPHelper(mcps)
-        await helper.connect_all()
+        helper = await _OwnedMCPHelper.connect(MCPHelper(mcps), config.id)
+        conn._helper = helper
 
         tools = helper.get_tools()
         excluded = set(config.excluded_tools)
@@ -1631,15 +1796,14 @@ class MCPManager:
             _raise_on_pw_error(t)
             wrap_with_loop_guard(t, conn._loop_guard)
 
-        conn._helper = helper
         return tools
 
     async def _load_builtin_simple(
         self, config: MCPServerConfig, conn: MCPConnection, server_type: str,
     ) -> list[BaseTool]:
         """Load a built-in MCP server that needs no special post-processing."""
-        helper = await self._create_helper(config)
-        await helper.connect_all()
+        helper = await _OwnedMCPHelper.connect(await self._create_helper(config), config.id)
+        conn._helper = helper
 
         tools = helper.get_tools()
         excluded = set(config.excluded_tools)
@@ -1655,7 +1819,6 @@ class MCPManager:
             _strip_none_args(t)
             wrap_with_loop_guard(t, conn._loop_guard)
 
-        conn._helper = helper
         conn.server_type = server_type
         return tools
 

@@ -46,6 +46,15 @@ def test_fastmcp_import_path_still_exists():
     assert FastMCP is not None
 
 
+def test_stdio_spawn_hook_point_still_exists():
+    """``backend.mcp_manager`` observes stdio spawns here to reap leftovers."""
+    from mcp.client import stdio
+
+    assert callable(getattr(stdio, "_create_platform_compatible_process", None))
+    spawn_names = stdio.stdio_client.__wrapped__.__code__.co_names
+    assert "_create_platform_compatible_process" in spawn_names
+
+
 def test_generated_mcp_requirements_pin_below_v2():
     spec = MCPSpec(id="compat", name="Compat", description="pin check")
     text = render_requirements_txt(spec)
