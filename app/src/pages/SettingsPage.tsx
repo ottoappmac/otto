@@ -4032,6 +4032,26 @@ export default function SettingsPage() {
                   min={1}
                   max={10000}
                 />
+                <InputField
+                  label="Max parallel subagents (-1 = auto, 0 = unlimited)"
+                  value={String(settings.orchestrator.max_parallel_subagents ?? -1)}
+                  onChange={(v) => {
+                    const parsed = parseInt(v);
+                    setSettings((s) => ({
+                      ...s,
+                      orchestrator: {
+                        ...s.orchestrator,
+                        max_parallel_subagents: Number.isNaN(parsed) ? -1 : Math.min(Math.max(parsed, -1), 32),
+                      },
+                    }));
+                  }}
+                  type="number"
+                  min={-1}
+                  max={32}
+                />
+                <p className="text-xs text-th-text-tertiary -mt-2">
+                  How many subagents the orchestrator runs at once; extra ones queue. Auto uses 2 on local providers (oMLX / exo / MLX), where each subagent holds its own long-context KV cache, and no limit on hosted APIs.
+                </p>
                 <div className="pt-1 border-t border-th-border">
                   <Toggle
                     label="Auto-approve commands"

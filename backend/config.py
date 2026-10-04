@@ -423,6 +423,15 @@ class OrchestratorConfig(BaseModel):
     tool_call_soft_budget: int = 80
     tool_call_hard_budget: int = 150
 
+    # Max subagents (``task`` calls) the orchestrator runs at once.  Local
+    # inference servers (oMLX / exo / MLX) hold one long-context KV cache per
+    # concurrent subagent, so a wide fan-out can exhaust memory and trigger
+    # "Prefill context too large for available memory".
+    #   -1 (default) — auto: 2 on local providers, unlimited on hosted APIs.
+    #    0           — always unlimited.
+    #    N > 0       — run at most N subagents concurrently; the rest queue.
+    max_parallel_subagents: int = -1
+
 
 class MCPAuthConfig(BaseModel):
     """How the MCP manager should obtain credentials for a server.
@@ -1916,6 +1925,11 @@ class AppConfig(BaseModel):
         # Per-run tool-call budget (soft nudge + hard graceful stop).
         env["TOOL_CALL_SOFT_BUDGET"] = str(max(0, orch.tool_call_soft_budget))
         env["TOOL_CALL_HARD_BUDGET"] = str(max(0, orch.tool_call_hard_budget))
+
+        # Subagent fan-out cap (-1 = auto, 0 = unlimited, N = cap).
+        env["MAX_PARALLEL_SUBAGENTS"] = (
+            "auto" if orch.max_parallel_subagents < 0 else str(orch.max_parallel_subagents)
+        )
 
         for srv in self.mcp_servers:
             if srv.id == "playwright-mcp" and srv.url:

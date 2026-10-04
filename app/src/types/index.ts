@@ -1174,6 +1174,12 @@ export interface OrchestratorConfig {
    * Defaults to 1000 (deepagents library default).
    */
   recursion_limit?: number;
+  /**
+   * Max subagents (``task`` calls) run concurrently; extras queue.
+   * ``-1`` (default) = auto (2 on local providers, unlimited on hosted APIs),
+   * ``0`` = unlimited, ``N`` = cap at N.
+   */
+  max_parallel_subagents?: number;
 }
 
 // ---------------------------------------------------------------------------

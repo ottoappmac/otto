@@ -85,12 +85,11 @@ DEFAULT_MAX_NO_PROGRESS = 4
 # High-cost navigation / research tools.  Unlike cheap reads, *dozens* of these
 # per run — re-navigating the same URL, re-snapshotting the same page, re-running
 # the same web search — are pure waste and made up the bulk of the observed
-# 185-call thrash.  They remain exempt from the small-window success/no-progress
-# detectors (a few legitimate re-scans within a window are fine), but are subject
-# to a generous *cumulative per-run ceiling* on identical calls, so a model that
-# keeps re-issuing the same navigation/search gets curbed rather than running
-# free up to the recursion limit.  The window-based detectors (maxlen ~8) cannot
-# see "dozens", which is why this is a separate lifetime counter.
+# 185-call thrash.  They are still subject to the small-window success and
+# no-progress detectors (three identical successes inside the window is already
+# a stuck loop).  The extra *cumulative per-run ceiling* catches the case the
+# window cannot see: the same call repeated dozens of times, spread out enough
+# that fewer than ``max_identical_success`` copies sit in the recent window.
 DEFAULT_HIGH_COST_TOOLS: frozenset[str] = frozenset({
     "browser_navigate",
     "browser_snapshot",
@@ -127,10 +126,11 @@ class ToolLoopGuard:
       "model retries a broken call forever" pattern.
     * **Success loop** (``max_identical_success``): trips when the same
       call has *succeeded* ``max_identical_success`` times in the window
-      without any observable effect — e.g. a UI action tool whose click
-      lands but never changes the screen.  Observation-only tools (reads,
-      screenshots) can be exempted via ``success_exempt_tools`` so that
-      legitimate re-scans don't trigger false positives.
+      — e.g. a UI click that never changes the screen, or the same web
+      search issued again after it already returned.  Observation-only
+      tools (reads, screenshots) can be exempted via
+      ``success_exempt_tools`` so that legitimate re-scans don't trigger
+      false positives.
     * **No-progress loop** (``max_no_progress``): trips when the last
       ``max_no_progress`` non-exempt calls all returned the *same result*
       regardless of their arguments.  Covers the "different args, same
@@ -323,8 +323,9 @@ class ToolLoopGuard:
                     tool_name,
                     f"Tool {tool_name!r} was called "
                     f"{self._max_identical_success} times with identical "
-                    f"arguments but had no visible effect. Try a different "
-                    f"approach or target a different control. "
+                    f"arguments. Stop repeating this call. Change the "
+                    f"arguments, use a different tool, or continue from "
+                    f"the results you already have. "
                     f"{self._recovery_hint}",
                 )
 
@@ -480,9 +481,11 @@ def wrap_with_loop_guard(tool: BaseTool, guard: ToolLoopGuard) -> None:
     include :class:`langchain_core.tools.ToolException` (the error
     channel MCP adapters use when ``isError=True``).
 
-    When the guard trips it raises :class:`ToolLoopDetected`, which
-    LangChain's ``handle_tool_error=True`` converts to a tool message
-    visible to the model on the next turn.
+    When the guard trips it raises :class:`ToolLoopDetected`.  LangChain
+    only turns that into a tool message (instead of killing the agent
+    run) when ``handle_tool_error`` is set, so this wrap enables it
+    unless the tool already has a handler.  Per-loader paths that set
+    the flag themselves (Playwright, MCP) are unchanged.
 
     Idempotent — re-wrapping a tool that's already guarded is a no-op.
     Both the deep-agent direct loader (``_load_playwright_mcp_tools``)
@@ -497,6 +500,12 @@ def wrap_with_loop_guard(tool: BaseTool, guard: ToolLoopGuard) -> None:
 
     if getattr(tool.coroutine, "__loop_guard_wrapped__", False):
         return
+
+    # Without this, ToolLoopDetected propagates out of ToolNode (its default
+    # handler only swallows ToolInvocationError) and the scheduled run dies
+    # on the first tripped loop instead of letting the model recover.
+    if not tool.handle_tool_error:
+        tool.handle_tool_error = True
 
     original = tool.coroutine
     tool_name = tool.name

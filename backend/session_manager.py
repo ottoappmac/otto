@@ -3197,6 +3197,18 @@ class SessionManager:
         system_prompt += "\n" + build_distilled_adapters_prompt_block(distill_catalog_id)
 
         _insert_repeated_thought_guard(extra_middleware, scope="orchestrator")
+
+        # Cap concurrent ``task`` (subagent) calls so a wide fan-out can't
+        # exhaust a local inference server's memory.  No-op on hosted APIs.
+        try:
+            from middleware.subagent_concurrency import maybe_for_environment
+
+            _subagent_cap = maybe_for_environment()
+            if _subagent_cap is not None:
+                extra_middleware.append(_subagent_cap)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Subagent concurrency cap: could not apply — %s", exc)
+
         graph = await asyncio.to_thread(
             create_deep_agent,
             model=graph_llm,

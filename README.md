@@ -482,6 +482,8 @@ LOCAL_PROMPT_MODE=auto             # auto | full | lite (orchestrator prompt len
 # Per-run tool-call budgets (ToolCallBudgetMiddleware)
 TOOL_CALL_SOFT_BUDGET=80           # nudge to converge at this count; 0 disables
 TOOL_CALL_HARD_BUDGET=150          # end the run gracefully at this count; 0 disables
+# Max subagents (task calls) running at once; extras queue (SubagentConcurrencyMiddleware)
+MAX_PARALLEL_SUBAGENTS=auto        # auto = 2 on local providers (mlx/exo/omlx), unlimited on hosted; 0 = unlimited; N = cap
 
 # Tool loop guard (identical-args / no-progress detection)
 LOOP_GUARD_WINDOW=8

@@ -144,6 +144,13 @@ class Environment:
     TOOL_CALL_SOFT_BUDGET = "80"
     TOOL_CALL_HARD_BUDGET = "150"
 
+    # Max ``task`` (subagent) calls the orchestrator runs concurrently.
+    # ``auto`` → 2 on local inference providers (mlx / exo / omlx), where each
+    # subagent is another long-context request on the same machine, and
+    # unlimited on hosted APIs.  ``0`` = always unlimited; ``N`` = cap at N.
+    MAX_PARALLEL_SUBAGENTS = "auto"
+    MAX_PARALLEL_SUBAGENTS_LOCAL_DEFAULT = 2
+
     # exo distributed-inference cluster (OpenAI-compatible local API)
     EXO_BASE_URL = "http://127.0.0.1:52415"
     EXO_MODEL_NAME = ""
@@ -792,6 +799,27 @@ class Environment:
             return max(0, int(os.getenv("TOOL_CALL_HARD_BUDGET", cls.TOOL_CALL_HARD_BUDGET)))
         except (ValueError, TypeError):
             return int(cls.TOOL_CALL_HARD_BUDGET)
+
+    @classmethod
+    def get_max_parallel_subagents(cls) -> int:
+        """Max concurrent subagent (``task``) executions; ``0`` = unlimited.
+
+        Configured via ``MAX_PARALLEL_SUBAGENTS``.  ``auto`` (default) caps at
+        :attr:`MAX_PARALLEL_SUBAGENTS_LOCAL_DEFAULT` when the orchestrator
+        runs on a local provider (mlx / exo / omlx) and is unlimited
+        otherwise.  Unparseable or negative values fall back to ``auto``."""
+        raw = os.getenv("MAX_PARALLEL_SUBAGENTS", cls.MAX_PARALLEL_SUBAGENTS).strip().lower()
+        if raw not in ("", "auto"):
+            try:
+                n = int(raw)
+                if n >= 0:
+                    return n
+            except (TypeError, ValueError):
+                pass
+        provider = cls.get_deep_agent_llm_provider() or cls.get_llm_provider()
+        if provider in ("mlx", "exo", "omlx"):
+            return cls.MAX_PARALLEL_SUBAGENTS_LOCAL_DEFAULT
+        return 0
 
     @classmethod
     def get_computer_voyager_max_messages(cls) -> int:

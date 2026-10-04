@@ -149,6 +149,47 @@ async def test_escalation_fires_once_and_stops():
     assert len(reasons) == 1
 
 
+async def test_tripped_loop_is_tool_output_not_a_run_failure():
+    """The universal wrap must set ``handle_tool_error`` so a tripped loop
+    comes back as tool output.  Otherwise LangChain re-raises
+    ``ToolLoopDetected`` and the scheduled run dies on the first repeat."""
+    guard = build_default_guard(
+        max_identical_success=3,
+        max_no_progress=None,
+        window=8,
+    )
+
+    async def impl(query: str) -> str:
+        return "same search results"
+
+    tool = _make_tool("web_research", impl)
+    wrap_with_loop_guard(tool, guard)
+    assert tool.handle_tool_error is True
+
+    for _ in range(3):
+        out = await tool.ainvoke({"query": "Director AI Sydney"})
+        assert out == "same search results"
+
+    caught = await tool.ainvoke({"query": "Director AI Sydney"})
+    assert isinstance(caught, str)
+    assert "web_research" in caught
+    assert "identical arguments" in caught
+    assert "control" not in caught.lower()
+
+
+async def test_wrap_preserves_existing_tool_error_handler():
+    """A loader that already installed a custom handler must keep it."""
+    guard = build_default_guard()
+
+    async def impl(q: str) -> str:
+        return q
+
+    tool = _make_tool("custom", impl)
+    tool.handle_tool_error = "custom handler"
+    wrap_with_loop_guard(tool, guard)
+    assert tool.handle_tool_error == "custom handler"
+
+
 async def test_guard_all_tools_does_not_double_wrap():
     """A tool already guarded by a per-connection loader keeps that guard; the
     universal pass must skip it idempotently."""
