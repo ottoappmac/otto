@@ -169,11 +169,12 @@ def _loop_recovery_kwargs() -> dict:
 
     ``max_escalations`` + ``on_escalate`` arm the cooperative hard stop: a model
     that keeps looping past the escalation limit despite corrective messages
-    triggers ``request_loop_abort_current``, which flags the *current* run (the
-    subagent that owns this asyncio context) so it unwinds gracefully at the
-    next step boundary instead of burning the whole recursion budget.  These
-    per-connection guards are shared across sessions, so the abort target is
-    resolved from the run-scoped contextvar rather than bound here."""
+    triggers ``request_loop_abort_current``, which flags the *current*
+    invocation (the subagent that owns this asyncio context) so that subagent
+    unwinds gracefully at the next step boundary.  Sibling subagents on the
+    same session are not flagged.  These per-connection guards are shared
+    across sessions, so the abort target is resolved from the run-scoped
+    contextvars rather than bound here."""
     from utilities.environment import Environment
     from backend.streaming_subagent import request_loop_abort_current
 

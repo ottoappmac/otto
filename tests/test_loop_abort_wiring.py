@@ -5,13 +5,14 @@ machinery so a model that ignores corrective messages is forcibly unwound:
 
 * fix #1 — per-connection MCP guards now request escalation (``max_escalations``);
 * fix #2 — and fire ``request_loop_abort_current``, which resolves the looping
-  run from a run-scoped contextvar (per-connection guards are shared across
-  sessions and never see a session id at construction time);
-* fix #4 — subagent universal guards pass ``session_id`` so their escalation
-  callback marks the right session for abort.
+  invocation from run-scoped contextvars (per-connection guards are shared
+  across sessions and never see a session id at construction time);
+* fix #4 — subagent universal guards install that same callback so an
+  escalation flags only the bound invocation, not every subagent on the session.
 
 The abort itself is a cooperative flag in ``backend.state.loop_abort_requested``
-that the subagent run loop checks at each step boundary.
+(session id → invocation id → reason) that the matching subagent stream checks
+at each step boundary.
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ from backend.mcp_manager import _loop_recovery_kwargs
 from backend.session_manager import _apply_universal_loop_guard
 from backend.streaming_subagent import (
     request_loop_abort_current,
+    reset_current_invocation,
     reset_current_session,
+    set_current_invocation,
     set_current_session,
 )
 
@@ -64,19 +67,48 @@ def _drive_to_escalation(guard: ToolLoopGuard, name: str, args: dict) -> int:
 
 # ── contextvar + request_loop_abort_current (fix #2 mechanism) ──────────────
 
-def test_request_loop_abort_current_uses_bound_session():
-    token = set_current_session("sess-ctx")
+def test_request_loop_abort_current_uses_bound_invocation():
+    session_token = set_current_session("sess-ctx")
+    invocation_token = set_current_invocation("inv-a")
     try:
         request_loop_abort_current("looping on e127")
     finally:
-        reset_current_session(token)
-    assert state.loop_abort_requested.get("sess-ctx") == "looping on e127"
+        reset_current_invocation(invocation_token)
+        reset_current_session(session_token)
+    assert state.loop_abort_requested["sess-ctx"]["inv-a"] == "looping on e127"
+
+
+def test_request_loop_abort_current_does_not_flag_sibling_invocation():
+    """An escalation on one subagent leaves the other invocation unmarked."""
+    session_token = set_current_session("sess-ctx")
+    invocation_token = set_current_invocation("inv-a")
+    try:
+        request_loop_abort_current("looping on e127")
+    finally:
+        reset_current_invocation(invocation_token)
+        reset_current_session(session_token)
+    assert "inv-b" not in state.loop_abort_requested["sess-ctx"]
+    assert state.loop_abort_requested["sess-ctx"]["inv-a"] == "looping on e127"
 
 
 def test_request_loop_abort_current_is_noop_without_session():
     # No session bound to the context (default None) — must not raise or
     # pollute the registry with a None key.
-    request_loop_abort_current("no session here")
+    invocation_token = set_current_invocation("inv-a")
+    try:
+        request_loop_abort_current("no session here")
+    finally:
+        reset_current_invocation(invocation_token)
+    assert state.loop_abort_requested == {}
+
+
+def test_request_loop_abort_current_is_noop_without_invocation():
+    """A session binding alone must not flag every subagent on that session."""
+    session_token = set_current_session("sess-ctx")
+    try:
+        request_loop_abort_current("no invocation here")
+    finally:
+        reset_current_session(session_token)
     assert state.loop_abort_requested == {}
 
 
@@ -89,23 +121,26 @@ def test_loop_recovery_kwargs_arms_escalation():
     assert kw["on_escalate"] is request_loop_abort_current
 
 
-def test_per_connection_guard_escalation_aborts_current_session():
+def test_per_connection_guard_escalation_aborts_current_invocation():
     """A per-connection-style guard built from ``_loop_recovery_kwargs`` aborts
-    the run bound to the current context when it escalates."""
+    only the invocation bound to the current context when it escalates."""
     guard = ToolLoopGuard(max_identical=3, **_loop_recovery_kwargs())
 
-    token = set_current_session("sess-pw")
+    session_token = set_current_session("sess-pw")
+    invocation_token = set_current_invocation("inv-pw")
     try:
         _drive_to_escalation(guard, "browser_click", {"ref": "e127"})
     finally:
-        reset_current_session(token)
+        reset_current_invocation(invocation_token)
+        reset_current_session(session_token)
 
-    assert "sess-pw" in state.loop_abort_requested
+    assert state.loop_abort_requested["sess-pw"]["inv-pw"]
+    assert "inv-other" not in state.loop_abort_requested["sess-pw"]
 
 
 # ── _apply_universal_loop_guard threads session_id for subagents (fix #4) ────
 
-def test_universal_guard_with_session_id_aborts_that_session():
+def test_universal_guard_with_session_id_aborts_bound_invocation_only():
     async def impl(a: int) -> str:
         return "constant"
 
@@ -115,8 +150,15 @@ def test_universal_guard_with_session_id_aborts_that_session():
     )
     assert guard is not None
 
-    _drive_to_escalation(guard, "flaky", {"a": 1})
-    assert state.loop_abort_requested.get("sess-uni") is not None
+    session_token = set_current_session("sess-uni")
+    invocation_token = set_current_invocation("inv-uni")
+    try:
+        _drive_to_escalation(guard, "flaky", {"a": 1})
+    finally:
+        reset_current_invocation(invocation_token)
+        reset_current_session(session_token)
+    assert state.loop_abort_requested["sess-uni"]["inv-uni"]
+    assert "inv-sibling" not in state.loop_abort_requested["sess-uni"]
 
 
 def test_universal_guard_without_session_id_does_not_abort():

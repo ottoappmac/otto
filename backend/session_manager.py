@@ -793,9 +793,10 @@ def _apply_universal_loop_guard(
     file, management, etc.) get newly guarded here.  Returns the guard (or
     ``None`` on failure) so callers can hold a reference for escalation.
 
-    When *session_id* is given, an escalation callback is installed so that a
-    guard which keeps tripping past ``max_escalations`` marks the session for
-    a cooperative abort (see :func:`backend.streaming_subagent` step boundary).
+    When *session_id* is given, an escalation callback is installed.  The
+    callback flags only the subagent invocation bound in the current asyncio
+    context (see :func:`backend.streaming_subagent.request_loop_abort_current`),
+    so one runaway subagent unwinds and its siblings keep running.
     """
     try:
         from tools.loop_guard import guard_all_tools
@@ -803,10 +804,9 @@ def _apply_universal_loop_guard(
 
         on_escalate = None
         if session_id is not None:
-            from backend.streaming_subagent import request_loop_abort
+            from backend.streaming_subagent import request_loop_abort_current
 
-            def on_escalate(reason: str) -> None:
-                request_loop_abort(session_id, reason)
+            on_escalate = request_loop_abort_current
 
         return guard_all_tools(
             tools,

@@ -21,6 +21,7 @@ import asyncio  # noqa: E402 (needed for Queue type hint)
 import contextvars
 import logging
 import time
+import uuid
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -39,14 +40,18 @@ _subagent_queue: contextvars.ContextVar[Any] = contextvars.ContextVar(
 # Keys are session IDs; values are the same queue objects stored in the contextvar.
 _queue_registry: dict[str, Any] = {}
 
-# Session id of the subagent invocation running in the current asyncio context.
-# Per-connection MCP loop guards (in ``backend.mcp_manager``) are created once at
-# connect time and shared across sessions, so they cannot bind to a single
-# session id.  Instead they resolve the *current* session at escalation time via
-# this contextvar (set at the subagent ``ainvoke`` boundary) so a runaway loop
-# aborts the right run.  See :func:`request_loop_abort_current`.
+# Session id and invocation id of the subagent running in the current asyncio
+# context.  Per-connection MCP loop guards (in ``backend.mcp_manager``) are
+# created once at connect time and shared across sessions, so they cannot bind
+# to a single run.  They resolve the *current* invocation at escalation time
+# via these contextvars (set at the subagent ``ainvoke`` boundary) so a runaway
+# loop aborts that subagent only.  See :func:`request_loop_abort_current`.
 _current_session_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_session_id",
+    default=None,
+)
+_current_invocation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_current_invocation_id",
     default=None,
 )
 
@@ -62,6 +67,16 @@ def set_current_session(session_id: str | None) -> contextvars.Token:
 def reset_current_session(token: contextvars.Token) -> None:
     """Restore the previously-bound current session id."""
     _current_session_id.reset(token)
+
+
+def set_current_invocation(invocation_id: str | None) -> contextvars.Token:
+    """Bind *invocation_id* as the subagent invocation for this asyncio context."""
+    return _current_invocation_id.set(invocation_id)
+
+
+def reset_current_invocation(token: contextvars.Token) -> None:
+    """Restore the previously-bound current invocation id."""
+    _current_invocation_id.reset(token)
 
 
 def set_subagent_queue(queue: Any, *, session_id: str | None = None) -> contextvars.Token:
@@ -91,40 +106,49 @@ def _stop_requested(session_id: str | None) -> bool:
     return session_id in stop_requested
 
 
-def request_loop_abort(session_id: str | None, reason: str) -> None:
-    """Mark *session_id* for a cooperative abort after a loop-guard escalation.
+def request_loop_abort(
+    session_id: str | None, invocation_id: str | None, reason: str
+) -> None:
+    """Mark one subagent invocation for a cooperative abort.
 
-    Called from ``ToolLoopGuard``'s ``on_escalate`` callback (wired in
-    ``session_manager._apply_universal_loop_guard``) when a model keeps
-    looping past the escalation limit.  The run loop checks this at the next
-    step boundary and unwinds gracefully with whatever it has so far."""
-    if not session_id:
+    Called from ``ToolLoopGuard``'s ``on_escalate`` callback when a model keeps
+    looping past the escalation limit.  The matching subagent stream checks
+    this at the next step boundary and unwinds with whatever it has so far.
+    Sibling invocations on the same session are left running.
+    """
+    if not session_id or not invocation_id:
         return
     from backend.state import loop_abort_requested
-    loop_abort_requested[session_id] = reason
+    loop_abort_requested.setdefault(session_id, {})[invocation_id] = reason
     logger.warning(
-        "loop-abort requested for session %s: %s", session_id, reason
+        "loop-abort requested for session %s invocation %s: %s",
+        session_id, invocation_id, reason,
     )
 
 
 def request_loop_abort_current(reason: str) -> None:
-    """Mark the *current* asyncio context's session for a cooperative abort.
+    """Mark the *current* subagent invocation for a cooperative abort.
 
-    Resolves the session id from the :data:`_current_session_id` contextvar
-    (bound at the subagent ``ainvoke`` boundary) so per-connection MCP loop
-    guards — which are shared across sessions and never see a session id at
-    construction time — can still trigger the cooperative abort for the run
-    that is actually looping.  No-op when no session is bound to the context.
+    Resolves the session and invocation ids from the contextvars bound at the
+    subagent ``ainvoke`` boundary, so per-connection MCP loop guards — which
+    are shared across sessions and never see a session id at construction
+    time — abort only the invocation that is actually looping.  No-op when
+    either id is unbound, so an escalation outside a subagent does not flag
+    every subagent on the session.
     """
-    request_loop_abort(_current_session_id.get(), reason)
+    request_loop_abort(
+        _current_session_id.get(), _current_invocation_id.get(), reason,
+    )
 
 
-def _loop_abort_requested(session_id: str | None) -> str | None:
-    """Return the abort reason if a loop-guard escalation flagged the run."""
-    if not session_id:
+def _loop_abort_requested(
+    session_id: str | None, invocation_id: str | None
+) -> str | None:
+    """Return the abort reason if this invocation was flagged."""
+    if not session_id or not invocation_id:
         return None
     from backend.state import loop_abort_requested
-    return loop_abort_requested.get(session_id)
+    return loop_abort_requested.get(session_id, {}).get(invocation_id)
 
 
 def _register_subagent_task(session_id: str | None) -> Any:
@@ -296,10 +320,12 @@ class StreamingSubagentRunnable(Runnable):
             f"desktop:{thread_id or 'nosession'}:{display_name}"
         )
 
-        # Bind the running session so per-connection MCP loop guards can
-        # resolve which run to abort when they escalate (see
+        # Bind the running session and a unique invocation id so per-connection
+        # MCP loop guards can abort this subagent only (see
         # ``request_loop_abort_current``).
+        invocation_id = uuid.uuid4().hex
         session_token = set_current_session(thread_id)
+        invocation_token = set_current_invocation(invocation_id)
 
         pw_instance = None
         pw_token = None
@@ -313,8 +339,11 @@ class StreamingSubagentRunnable(Runnable):
                     display_name, pw_instance.port,
                 )
 
-            return await self._ainvoke_inner(input, config, queue, display_name, thread_id, **kw)
+            return await self._ainvoke_inner(
+                input, config, queue, display_name, thread_id, invocation_id, **kw,
+            )
         finally:
+            reset_current_invocation(invocation_token)
             reset_current_session(session_token)
             active_desktop_owner.reset(owner_token)
             if pw_token is not None:
@@ -343,6 +372,7 @@ class StreamingSubagentRunnable(Runnable):
         queue: Optional[asyncio.Queue],
         display_name: str,
         session_id: Optional[str] = None,
+        invocation_id: Optional[str] = None,
         **kw: Any,
     ) -> dict:
         from utilities.environment import Environment
@@ -378,16 +408,16 @@ class StreamingSubagentRunnable(Runnable):
                     )
                     raise asyncio.CancelledError()
 
-                # Loop-guard escalation: a model that keeps looping past the
-                # escalation limit is unwound gracefully here (unlike /stop,
-                # we keep the partial result rather than cancelling) so the
-                # parent gets a best-effort answer instead of a runaway run.
-                _abort_reason = _loop_abort_requested(session_id)
+                # Loop-guard escalation: only this invocation unwinds.  Sibling
+                # subagents on the same session keep running, and the partial
+                # state returned below lets ``task()`` resolve so the parent
+                # can wait for them.
+                _abort_reason = _loop_abort_requested(session_id, invocation_id)
                 if _abort_reason is not None:
                     logger.warning(
-                        "[%s] loop-abort for session %s (%s); ending subagent "
-                        "with partial result",
-                        display_name, session_id, _abort_reason,
+                        "[%s] loop-abort for session %s invocation %s (%s); "
+                        "ending this subagent with partial result",
+                        display_name, session_id, invocation_id, _abort_reason,
                     )
                     break
 

@@ -27,13 +27,14 @@ hitl_resume_inflight: set[str] = set()
 # unwinds promptly instead of running to completion after a /stop.
 stop_requested: set[str] = set()
 
-# Session ids whose loop guard has escalated past its limit, mapped to a short
-# human-readable reason.  Set by ``ToolLoopGuard``'s escalation callback (via
-# ``streaming_subagent.request_loop_abort``) when a model keeps looping despite
-# repeated corrective messages.  Checked cooperatively at step boundaries — the
-# same mechanism as ``stop_requested`` — so a runaway run unwinds gracefully
-# with a partial answer instead of burning the whole recursion budget.
-loop_abort_requested: dict[str, str] = {}
+# Loop-guard escalations, keyed by session id then subagent invocation id.
+# A value is the short human-readable reason.  Set by ``ToolLoopGuard``'s
+# escalation callback (via ``streaming_subagent.request_loop_abort_current``)
+# when a model keeps looping despite repeated corrective messages.  Each
+# subagent stream checks only its own invocation id, so one runaway subagent
+# unwinds with a partial answer and its siblings keep running.  User Stop
+# still cancels the whole session via ``stop_requested``.
+loop_abort_requested: dict[str, dict[str, str]] = {}
 
 # Subagent invocation tasks keyed by session id.  Parallel subagents are
 # scheduled as their own asyncio tasks; cancelling the top-level run task
