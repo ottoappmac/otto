@@ -1,10 +1,10 @@
 # OTTO
 
-[![OTTO intro video](https://img.youtube.com/vi/E2DnXvZ0cfk/maxresdefault.jpg)](https://youtu.be/_uVWnEHIuWA)
+[![OTTO](docs/screenshots/pages/dashboard.png)](https://youtu.be/_uVWnEHIuWA)
 
 A macOS AI agent desktop app. FastAPI backend, Tauri + React frontend, LangGraph orchestration. Runs entirely on your machine — no cloud relay, no telemetry.
 
-Supports cloud LLMs (Anthropic, OpenAI) and fully local inference via MLX on [Apple Silicon](https://mlx-framework.org/#features), [oMLX](https://github.com/jundot/omlx), or an [exo](https://github.com/exo-explore/exo) cluster of Apple Silicon nodes. The agent can browse the web, automate your Mac desktop, read documents, query SEC filings, and build new MCP-backed tools for itself at runtime.
+Supports cloud LLMs (Anthropic, OpenAI, Gemini) and fully local inference via MLX on [Apple Silicon](https://mlx-framework.org/#features), [oMLX](https://github.com/jundot/omlx), or an [exo](https://github.com/exo-explore/exo) cluster of Apple Silicon nodes. The agent can browse the web, watch video, automate your Mac desktop, drive a live Blender session, read documents, query SEC filings and Atlassian (Jira and Confluence), and build new MCP-backed tools for itself at runtime. On Apple Silicon it can also distill those runs into a LoRA so a smaller local model keeps the teacher's tool-use habits.
 
 OTTO is self-managing: through conversation alone it creates and maintains its own **Agents**, **Skills**, **Tools**, **Schedules**, **Triggers**, and **Settings** — no config files or UI required.
 
@@ -28,12 +28,14 @@ Per-page guides for the desktop UI (each with screenshots). The pages below map 
 | Runs | [`runs.md`](./docs/runs.md) | Run history, filters, and the per-run detail tabs (Timeline, Graph, Results, Files, Metrics, Evaluation) |
 | Chat | [`chat.md`](./docs/chat.md) | Talking to the agent — composer, model picker, live runs, steering |
 | Capture | [`capture.md`](./docs/capture.md) | Live Capture — on-device system-audio + mic transcription and screenshot capture |
+| Watch | [`watch.md`](./docs/watch.md) | Watch video — files, screen recordings, YouTube, and live screen watching |
 | Suggestions | [`suggestions.md`](./docs/suggestions.md) | The ambient suggestions inbox |
 | Agents | [`agents.md`](./docs/agents.md) | Managing agents, skills, and tools |
 | Schedules | [`schedules.md`](./docs/schedules.md) | Cron-based automated runs |
-| Triggers | [`triggers.md`](./docs/triggers.md) | Event-driven runs (file changes, AppleScript, macOS events) |
+| Triggers | [`triggers.md`](./docs/triggers.md) | Event-driven runs, plus Claude Code hooks and OpenClaw session watching |
 | Activity | [`activity.md`](./docs/activity.md) | The on-device macOS activity timeline |
-| Settings | [`settings.md`](./docs/settings.md) | LLM, Agent Memory, Voice, Privacy, and all other settings |
+| Distill | [`distill.md`](./docs/distill.md) | On-device LoRA distillation from session traces or an uploaded JSONL |
+| Settings | [`settings.md`](./docs/settings.md) | LLM, Agent Memory, Voice, Video, Privacy, and all other settings |
 
 Also in [`docs/`](./docs/): [`QUICKSTART.md`](./docs/QUICKSTART.md) (install the `.dmg`, run from source in the browser without Rust, run the native app, download MLX models via the CLI) and [`features.md`](./docs/features.md) (a longer, screenshot-heavy feature tour).
 
@@ -176,6 +178,8 @@ Any MCP server — stdio or SSE — can be added through the Settings UI or REST
 | `discord` | `list_guilds`, `list_channels`, `get_channel_messages`, `send_message`, `add_reaction`, `list_guild_members`, and more — read/write access to a Discord server via a bot token |
 | `microsoft-teams` | `list_teams`, `list_channels`, `list_channel_members`, `get_channel_messages`, `list_users`, and more — **read-only** access to Microsoft Teams via Graph app-only auth (sending messages requires delegated auth, which this MCP doesn't implement) |
 | `microsoft-onedrive` | `list_drive_items`, `get_drive_item`, `search_files`, `download_file`, `upload_file`, `list_sites`, `list_site_items`, and more — browses/searches OneDrive/SharePoint via the third-party `microsoft365-mcp-server` npm package (run via `npx`), scoped to just the Files/SharePoint tools. Signs in via a real browser sign-in redirect (personal Microsoft account or guest identity), not a work tenant like `microsoft-teams`. Ships **disabled** — sign-in happens the moment you click Start, not on app launch |
+| `blender` | `ping`, `get_addon_info`, `get_scene_info`, `get_object_info`, `execute_blender_code`, `get_viewport_screenshot` — live control of a running Blender session through the [BlenderMCP](https://github.com/ahujasid/blender-mcp) addon (scene inspection, viewport screenshots, and arbitrary `bpy` Python). Requires the addon inside Blender with its server started |
+| `atlassian` | `confluence_search`, `confluence_get_page`, `confluence_create_page`, `confluence_update_page`, `jira_search_issues`, `jira_get_issue`, `jira_create_issue`, `jira_transition_issue`, and more — read/write access to Jira and Confluence on Atlassian Cloud via a site URL, account email, and API token |
 
 ### Agent & Skill library
 
@@ -214,6 +218,21 @@ An opt-in, screenshot-free local activity timeline. A background loop polls the 
 ### Live Capture (macOS)
 
 An on-device panel — opened from **Capture** in the nav — that transcribes system audio (what's playing through your speakers/headphones), your microphone, or both at once, via a Swift Core Audio process-tap helper (`otto-audiotap`) piped through `mlx-whisper`. Optionally interleaves screenshots of the desktop or a chosen window into the transcript, deduped by perceptual hash. Auto-send hands new transcript (and any screenshots) to the agent a couple of seconds after you stop talking; a standing instruction tells the agent this is passively-captured context so it asks what to do rather than guessing. The Whisper model (~1.5 GB) downloads on first use with a progress bar, gating **Record** until it's ready rather than hanging silently. Everything — audio and screenshots — stays on-device; nothing is sent anywhere until you explicitly hand it to the agent. See [`docs/capture.md`](./docs/capture.md).
+
+### Watch video
+
+A panel opened from **Watch** in the nav — docked beside Chat, same pattern as Live Capture — that lets the agent watch a video file, a screen recording, a public YouTube URL, or the screen live. With a Gemini API key, Gemini watches natively (frames, audio, and timestamps). Without one, the backend samples frames with ffmpeg, attaches an on-device transcript, and live watching falls back to short batches on the local vision model. **Analyse** writes the answer in the panel; sending hands the clip to the open chat. Live commentary is context for the next turn, not a message that starts one. Frame rate, clip limits, YouTube, transcript caching, and the live hand-off are under Settings → Video. See [`docs/watch.md`](./docs/watch.md).
+
+### On-device distillation
+
+The **Distill** page trains a LoRA (`mlx_lm.lora` on Apple Silicon) from completed Otto sessions, or from a JSONL you upload, onto a student model you pick from the MLX catalog. Eligible sessions are finished chats with real tool use. Training unloads the chat weights first. Standard attaches the LoRA sidecar; Turbo needs a fused copy because oMLX cannot load an adapter. See [`docs/distill.md`](./docs/distill.md).
+
+### Claude Code hooks and OpenClaw
+
+The Triggers page also hosts two session watchers that are not cron or filesystem triggers:
+
+- **Claude Hook** receives Claude Code hook events over HTTP (install writes the snippet into `~/.claude`). A quality gate can tell Claude to keep working when the tool-error rate is high, and auto-monitor can start an eval agent on each new Claude session.
+- **OpenClaw** watches an OpenClaw state directory locally or over SSH, polls for new session files, and can auto-start an eval agent when one appears.
 
 ### Privacy & Security
 
@@ -525,23 +544,25 @@ agents/
 ├── .env.template              # All supported environment variables
 ├── app/                       # Tauri desktop app
 │   ├── src/
-│   │   ├── pages/             # Chat, History, Agents, Memory, Schedules,
-│   │   │                      #   Triggers, Activity, Tools, Settings,
+│   │   ├── pages/             # Chat, Runs, Dashboard, Agents, Schedules,
+│   │   │                      #   Triggers, Activity, Distill, Settings,
 │   │   │                      #   MLX (on-device), Exo (cluster)
 │   │   ├── components/        # Layout, Sidebar, chat/, exo/, mlx/,
-│   │   │                      #   transcribe/ (TranscribeDrawer — Live Capture)
+│   │   │                      #   transcribe/ (Live Capture), watch/ (Watch video),
+│   │   │                      #   distillation/ (Distill)
 │   │   └── utils/              # screenShareVisibility.ts, transcribePanel.ts, askOttoBus.ts
 │   └── src-tauri/             # Rust shell + Tauri config
 │       └── audiotap/          # Swift Core Audio process-tap helper (otto-audiotap)
 ├── backend/                   # FastAPI + WebSocket backend (port 18081)
 │   ├── routes/                # REST endpoints: sessions, agents, mcp, memory,
 │   │   │                      #   schedules, triggers, hooks, vault, activity,
-│   │   │                      #   mlx, exo, settings, capture, voice
+│   │   │                      #   mlx, exo, settings, capture, voice, video,
+│   │   │                      #   distillation
 │   ├── auth/                  # static, OAuth device, OAuth auth-code,
 │   │                          #   browser-capture auth flows
-│   ├── builtin_mcps/          # edgar_sec, macos_osascript, macos_mail,
+│   ├── builtin_mcps/          # edgar_sec, blender, macos_osascript, macos_mail,
 │   │                          #   macos_calendar, macos_notes, macos_reminders,
-│   │                          #   macos_messages, slack, discord,
+│   │                          #   macos_messages, slack, discord, atlassian,
 │   │                          #   microsoft_teams, microsoft_onedrive
 │   ├── capture/                # screen_capture.py — desktop/window screenshots
 │   ├── voice/                  # loopback_manager.py (system-audio + mic transcription), stt.py

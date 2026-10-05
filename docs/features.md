@@ -15,7 +15,9 @@ OTTO is a macOS AI agent desktop app that manages itself. Through conversation a
 5. [Triggers](#triggers)
 6. [macOS Activity](#macos-activity)
 7. [Capture](#capture)
-8. [History](#history)
+8. [Watch](#watch)
+9. [Distill](#distill)
+10. [History](#history)
 
 ---
 
@@ -150,6 +152,8 @@ Beyond the built-ins, any **MCP server** (stdio or SSE) adds its tools to the se
 | `discord` | Read/write access to a Discord server via a bot token |
 | `microsoft-teams` | Read-only access to Microsoft Teams via Graph app-only auth |
 | `microsoft-onedrive` | Browse/search OneDrive/SharePoint (ships disabled) |
+| `blender` | Live control of a running Blender session via the BlenderMCP addon — scene info, viewport screenshots, and `bpy` Python |
+| `atlassian` | Jira and Confluence on Atlassian Cloud — search, page and issue CRUD, comments, and workflow transitions |
 
 Every tool call is wrapped with a loop guard that detects repeated identical-argument failures and injects a recovery hint. MCP results are scrubbed for known credential patterns before they reach the model context.
 
@@ -294,6 +298,8 @@ curl -X POST http://localhost:18081/api/triggers/<id>/toggle
 curl -X DELETE http://localhost:18081/api/triggers/<id>
 ```
 
+The same page also hosts **Claude Hook** (receive Claude Code events, quality-gate a stop, auto-start an eval agent) and **OpenClaw** (watch an OpenClaw state directory locally or over SSH). See [`docs/triggers.md`](triggers.md).
+
 ---
 
 ## macOS Activity
@@ -383,6 +389,30 @@ The on-device Whisper model (~1.5 GB) downloads on first use with a visible prog
 **Permissions**: Screen Recording (screenshots), Microphone (mic source), and the system Audio Capture permission (system-audio source, macOS 14.4+ only) — each with a clear usage-description string, requested the first time you use that source.
 
 See [`docs/capture.md`](capture.md) for the full walkthrough.
+
+---
+
+## Watch
+
+![Watch video](screenshots/pages/watch-file.png)
+
+**Watch** (opened from the **Watch** nav item) docks a panel beside Chat and lets Otto watch video: a file you upload, a screen recording, a public YouTube URL, or the screen live. With a Gemini API key, Gemini watches the clip natively (frames, audio, timestamps). Without one, Otto samples frames and attaches an on-device transcript, and live watching falls back to short batches on the local vision model.
+
+**Analyse** writes the answer in the panel. The send button hands the video to the open chat. Live commentary can stay in the panel, be handed over when you stop, or stream to the agent in chunks — it is context for the next turn, not a message that starts one on its own.
+
+Frame rate, clip limits, YouTube, transcripts, and the live hand-off live under **Settings → Video**. See [`docs/watch.md`](watch.md).
+
+---
+
+## Distill
+
+![Distill](screenshots/pages/distill-dataset.png)
+
+**Distill** (`/distill`) trains a LoRA on Apple Silicon from Otto's own sessions, or from a JSONL file you upload, so a smaller student model can follow tool-use traces a larger teacher already got right. Training uses `mlx_lm.lora` and unloads the chat weights first.
+
+The **Dataset** tab shows which completed chats are eligible (finished, and at least two tool calls) and why others were excluded. **Train** picks the teacher and student repo ids, an iteration count, and a purpose note, then runs the job. **Models** lists the adapters: Standard attaches the LoRA; Turbo needs a fused copy first because oMLX cannot load a sidecar adapter.
+
+See [`docs/distill.md`](distill.md).
 
 ---
 

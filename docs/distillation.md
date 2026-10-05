@@ -1,8 +1,8 @@
 # Otto Model Distillation — Amended Plan
 
-Engineering plan. Replaces the prior master plan and file-change plan.
-Not a shipped feature — do not add this to `docs/features.md` until an
-adapter actually loads in a session.
+Engineering plan for the on-device LoRA pipeline. The shipped UI is
+documented in [`distill.md`](distill.md) (Distill in the nav). This file
+is the design record: data format, quality gates, and training layout.
 
 **Method:** hard-label SFT on tool-call trajectories, applied as a LoRA
 adapter on a user-chosen student model (default Qwen3-8B-4bit).

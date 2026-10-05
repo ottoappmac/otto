@@ -26,10 +26,11 @@ Settings can also be changed through conversation:
 3. [Suggestions](#suggestions)
 4. [macOS Activity](#macos-activity)
 5. [Voice](#voice)
-6. [Advanced](#advanced)
-7. [Observability](#observability)
-8. [Privacy & Security](#privacy--security)
-9. [About](#about)
+6. [Video](#video)
+7. [Advanced](#advanced)
+8. [Observability](#observability)
+9. [Privacy & Security](#privacy--security)
+10. [About](#about)
 
 ---
 
@@ -344,6 +345,50 @@ On-device voice input. **Voice Mode** adds a mic button to chat and a hands-free
 | Test wake word | Listen for ~15 seconds and confirm detection |
 
 > **Not the same as Capture.** This tab configures hands-free voice input for chat (mic → text in the composer). System-audio + screen transcription (calls, meetings, media) lives in **[Capture](capture.md)**, in the right-hand nav — a separate feature that shares the same on-device Whisper model.
+
+---
+
+## Video
+
+![Video](screenshots/settings/video.png)
+
+Controls for **[Watch](watch.md)** — uploaded files, screen recordings, YouTube, and live screen watching. Gemini watches video natively (frames, audio, and timestamps) when a Google API key is set under LLM → Frontier. Other providers sample frames with ffmpeg and attach an on-device transcript.
+
+**Watch video**
+
+| Option | Description |
+|---|---|
+| Video model | `Follow main provider`, or `Prefer Gemini (native video)`. Prefer Gemini warns when no Gemini key is set and falls back to frame extraction. |
+| Frame rate | Frames sampled per second (default 1). Lower for long or static video; higher costs more tokens. |
+| Gemini resolution | `Default` (~300 tokens/sec) or `Low` (~100 tokens/sec, suited to multi-hour clips). |
+| Include audio | Transcript plus audio reasoning. Shows the on-device speech-model notice when on. |
+| Allow YouTube URLs | Public videos only. |
+| Save transcripts and reuse them | Keeps each clip's transcript in the session so re-analysis skips transcription. Off leaves nothing on disk. |
+
+**Limits & realtime**
+
+| Option | Description |
+|---|---|
+| Max clip length | Seconds; `0` means no limit (default 1800). |
+| Max frames | Cap for frame-based providers (default 60). |
+| Frames per model request | Above this, the clip is walked in order and each batch carries a running summary (default 24). Lower it if a local server rejects a long video. |
+| Frame longest side | Pixel cap on the longest edge (default 1024). |
+| Realtime frame rate | Live watching, max 1 fps. Gemini Live accepts at most 1 frame per second; without a key the local vision model describes a batch of recent frames instead. |
+
+**Live watching**
+
+| Option | Description |
+|---|---|
+| Show a preview | Mirrors each captured frame into the Watch panel. |
+| Pass commentary to the agent | `Off` (stays in the panel), `When I stop` (whole session at once), or `Live` (chunks while watching). Commentary is context, not a new turn. |
+| Seconds of commentary per hand-off | Shown when Live is selected (default 20, range 5–300). |
+| Local batch length / frames per batch | Used only when watching without Gemini (defaults 12 seconds and 4 frames). Shorter batches react faster and interrupt the model more often. |
+
+**Debugging**
+
+| Option | Description |
+|---|---|
+| Save sampled frames to the session | Writes the exact frames the model was shown into the session's `video-frames/` folder, with a timestamp manifest. Screen-recording frames are desktop screenshots and are otherwise discarded when analysis finishes. Roughly 0.15 MB per frame, and the folder is not cleaned up automatically. |
 
 ---
 
