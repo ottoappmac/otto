@@ -12,7 +12,6 @@ Usage::
     llm = MLXVLChatModel(model_path="mlx-community/Qwen2.5-VL-7B-Instruct-4bit")
 """
 
-import asyncio
 import base64
 import io
 import logging
@@ -510,6 +509,8 @@ class MLXVLChatModel(BaseChatModel):
 
         text = ""
         last_response = None
+        # Set by ``_agenerate`` when its awaiting task is cancelled (Stop).
+        cancel_event = kwargs.pop("cancel_event", None)
         # Hold the shared MLX generation lock for the entire stream — see
         # ``MLX_GEN_LOCK`` in :mod:`chat_models.mlx.chat_mlx_text` for why a
         # process-wide lock is required to avoid Metal command-buffer aborts.
@@ -523,6 +524,14 @@ class MLXVLChatModel(BaseChatModel):
             ):
                 text += response.text
                 last_response = response
+                # Nobody will read the rest: stop now rather than decode on to
+                # max_tokens while every other MLX request waits for the lock.
+                if cancel_event is not None and cancel_event.is_set():
+                    logger.info(
+                        "MLX VLM generation cancelled after %d tokens — stopping decode.",
+                        response.generation_tokens,
+                    )
+                    break
 
         response_metadata = self._build_response_metadata(last_response, cache_offset_before, vision=bool(images))
 
@@ -558,8 +567,14 @@ class MLXVLChatModel(BaseChatModel):
         run_manager=None,
         **kwargs,
     ) -> ChatResult:
-        """Run generation in a thread pool to avoid blocking the event loop."""
-        return await asyncio.to_thread(
+        """Run generation in a thread pool to avoid blocking the event loop.
+
+        Cancelling this coroutine also stops the worker thread's decode — see
+        :func:`chat_models.mlx._shared.to_thread_cancellable`.
+        """
+        from chat_models.mlx._shared import to_thread_cancellable
+
+        return await to_thread_cancellable(
             self._generate, messages, stop=stop, **kwargs
         )
 
