@@ -425,6 +425,15 @@ class OrchestratorConfig(BaseModel):
     tool_call_soft_budget: int = 80
     tool_call_hard_budget: int = 150
 
+    # Chat composer default when the client does not send a depth.
+    # ``auto`` asks the session model to pick Quick or Deep per turn.
+    # An explicit composer choice always wins over this.
+    default_run_depth: str = "auto"  # auto | quick | deep
+
+    # Tool-call budget used only when a turn is running Quick.
+    quick_tool_call_soft_budget: int = 8
+    quick_tool_call_hard_budget: int = 16
+
     # Max subagents (``task`` calls) the orchestrator runs at once.  Local
     # inference servers (oMLX / exo / MLX) hold one long-context KV cache per
     # concurrent subagent, so a wide fan-out can exhaust memory and trigger
@@ -1927,6 +1936,10 @@ class AppConfig(BaseModel):
         # Per-run tool-call budget (soft nudge + hard graceful stop).
         env["TOOL_CALL_SOFT_BUDGET"] = str(max(0, orch.tool_call_soft_budget))
         env["TOOL_CALL_HARD_BUDGET"] = str(max(0, orch.tool_call_hard_budget))
+        env["QUICK_TOOL_CALL_SOFT_BUDGET"] = str(max(0, orch.quick_tool_call_soft_budget))
+        env["QUICK_TOOL_CALL_HARD_BUDGET"] = str(max(0, orch.quick_tool_call_hard_budget))
+        depth = (orch.default_run_depth or "auto").strip().lower()
+        env["DEFAULT_RUN_DEPTH"] = depth if depth in ("auto", "quick", "deep") else "auto"
 
         # Subagent fan-out cap (-1 = auto, 0 = unlimited, N = cap).
         env["MAX_PARALLEL_SUBAGENTS"] = (

@@ -833,10 +833,20 @@ export default function RunDetailPage() {
     setLiveEvents([]);
   }, [id]);
 
-  // Combine persisted + live events
+  // Combine persisted + live events. A depth line is written to the
+  // transcript and also arrives on the socket; drop the live copy once
+  // the transcript already has that same id.
+  const persistedDepthIds = new Set(
+    (timeline?.events ?? [])
+      .map((ev) => ev.meta?.run_depth_id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+  );
   const allEvents: TimelineEvent[] = [
     ...(timeline?.events ?? []),
-    ...liveEvents,
+    ...liveEvents.filter((ev) => {
+      const id = ev.meta?.run_depth_id;
+      return typeof id !== "string" || !persistedDepthIds.has(id);
+    }),
   ];
 
   // Append a synthetic error event when the run failed but the session

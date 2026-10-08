@@ -15,6 +15,7 @@ import { MemoryPanel, AmbientPanel } from "./MemoryPage";
 import VoiceModelChooser from "../components/voice/VoiceModelChooser";
 import { DistilledModelsTab } from "../components/distillation/DistilledModelsTab";
 import type { AppSettings, DistillAdapter, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
+import { getFollowFileEdits, setFollowFileEdits } from "../utils/followFileEdits";
 
 const TABS = ["LLM", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Video", "Advanced", "Observability", "Privacy & Security", "About"] as const;
 type Tab = (typeof TABS)[number];
@@ -270,6 +271,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     provider_override: null,
     prompt_mode: "auto",
     recursion_limit: 10000,
+    default_run_depth: "auto",
+    quick_tool_call_soft_budget: 8,
+    quick_tool_call_hard_budget: 16,
   },
   mcp_servers: [],
   observability: { langsmith: { enabled: false, api_key: "", endpoint: "https://api.smith.langchain.com", project: "Research" }, log_level: "INFO" },
@@ -376,6 +380,7 @@ export default function SettingsPage() {
   useEffect(() => { sessionStorage.setItem("otto:settings:tab", tab); }, [tab]);
   useEffect(() => { sessionStorage.setItem("otto:settings:llmSubTab", llmSubTab); }, [llmSubTab]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [followFileEdits, setFollowFileEditsState] = useState(getFollowFileEdits);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
@@ -4052,6 +4057,38 @@ export default function SettingsPage() {
                 <p className="text-xs text-th-text-tertiary -mt-2">
                   How many subagents the orchestrator runs at once; extra ones queue. Auto uses 2 on local providers (oMLX / exo / MLX), where each subagent holds its own long-context KV cache, and no limit on hosted APIs.
                 </p>
+                <SelectField
+                  label="Default run depth"
+                  value={settings.orchestrator.default_run_depth || "auto"}
+                  onChange={(v) => {
+                    const mode = (v === "quick" || v === "deep" || v === "auto" ? v : "auto") as "auto" | "quick" | "deep";
+                    setSettings((s) => ({
+                      ...s,
+                      orchestrator: { ...s.orchestrator, default_run_depth: mode },
+                    }));
+                  }}
+                  options={[
+                    { value: "auto", label: "Auto — Otto picks Quick or Deep" },
+                    { value: "quick", label: "Quick — short answers" },
+                    { value: "deep", label: "Deep — full research" },
+                  ]}
+                />
+                <p className="text-xs text-th-text-tertiary -mt-2">
+                  Used when a turn does not name a depth. The chat composer can still pick Auto, Quick, or Deep for that window, and a choice there is used as-is.
+                </p>
+                <div className="pt-1 border-t border-th-border">
+                  <Toggle
+                    label="Follow agent file edits"
+                    checked={followFileEdits}
+                    onChange={(v) => {
+                      setFollowFileEdits(v);
+                      setFollowFileEditsState(v);
+                    }}
+                  />
+                  <p className="text-xs text-th-text-tertiary mt-2 leading-relaxed">
+                    Open the side panel whenever the agent reads or writes a file. Off by default — open a file from the message or the files list when you want it.
+                  </p>
+                </div>
                 <div className="pt-1 border-t border-th-border">
                   <Toggle
                     label="Auto-approve commands"

@@ -55,7 +55,7 @@ The body is split into six tabs, each deep-linkable with `?tab=`:
 
 | Tab | Contents |
 | --- | --- |
-| **Timeline** | The full event stream — agent turns, tool calls, and tool results with per-step durations and `done` badges. While the run is live it streams in and stays pinned to the latest step. |
+| **Timeline** | The full event stream — agent turns, tool calls, and tool results with per-step durations and `done` badges. Each turn also has a line naming the mode: **Running Quick**, **Running Deep**, or **Auto chose Quick/Deep** plus the reason. While the run is live it streams in and stays pinned to the latest step. |
 | **Graph** | An interactive agent graph: the orchestrator node branching into every tool call and subagent delegation (with counts, durations, and arguments). Pan/zoom; empty when a run has no tool calls. |
 | **Results** | The agent's **Final response** rendered as Markdown, plus a collapsible history of earlier turns when there was more than one. |
 | **Files** | Files written during the run, with size and time. Click to preview inline (text, code, Markdown, images, HTML), download individual files, or **Open folder** on disk. The tab shows a count badge. |

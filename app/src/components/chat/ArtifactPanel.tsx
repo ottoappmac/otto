@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { X, ExternalLink, FileText, Globe, RefreshCw, Image as ImageIcon, FileJson, FileCode2, Video } from "lucide-react";
+import { X, ExternalLink, FileText, Globe, RefreshCw, Image as ImageIcon, FileJson, FileCode2, Video, Pin } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import { highlightCode } from "../../utils/highlightCode";
+import { getFollowFileEdits, setFollowFileEdits } from "../../utils/followFileEdits";
 import { UnifiedDiff } from "./UnifiedDiff";
 
 export type ArtifactType =
@@ -220,6 +221,7 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
   const [viewMode, setViewMode] = useState<"file" | "diff">(artifact.diff ? "diff" : "file");
+  const [followEdits, setFollowEdits] = useState(getFollowFileEdits);
 
   useEffect(() => {
     setViewMode(artifact.diff ? "diff" : "file");
@@ -344,6 +346,22 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
           </div>
         )}
         <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !followEdits;
+              setFollowFileEdits(next);
+              setFollowEdits(next);
+            }}
+            title={followEdits ? "Stop opening files automatically" : "Open files as the agent edits them"}
+            className={`p-1.5 rounded-md transition-colors ${
+              followEdits
+                ? "text-th-text-primary bg-th-surface-hover"
+                : "text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
+            }`}
+          >
+            <Pin size={13} />
+          </button>
           {(artifact.type === "html" || artifact.type === "pdf") && (
             <button
               onClick={() => setIframeKey((k) => k + 1)}

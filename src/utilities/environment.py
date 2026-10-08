@@ -143,6 +143,11 @@ class Environment:
     # either threshold.
     TOOL_CALL_SOFT_BUDGET = "80"
     TOOL_CALL_HARD_BUDGET = "150"
+    # Smaller ceilings for a Quick turn. 0 disables that threshold.
+    QUICK_TOOL_CALL_SOFT_BUDGET = "8"
+    QUICK_TOOL_CALL_HARD_BUDGET = "16"
+    # Used when a chat turn does not name a depth. auto | quick | deep.
+    DEFAULT_RUN_DEPTH = "auto"
 
     # Max ``task`` (subagent) calls the orchestrator runs concurrently.
     # ``auto`` → 2 on local inference providers (mlx / exo / omlx), where each
@@ -800,6 +805,34 @@ class Environment:
             return max(0, int(os.getenv("TOOL_CALL_HARD_BUDGET", cls.TOOL_CALL_HARD_BUDGET)))
         except (ValueError, TypeError):
             return int(cls.TOOL_CALL_HARD_BUDGET)
+
+    @classmethod
+    def get_quick_tool_call_soft_budget(cls) -> int:
+        """Quick-run soft tool-call budget. ``0`` disables the nudge."""
+        try:
+            return max(0, int(os.getenv(
+                "QUICK_TOOL_CALL_SOFT_BUDGET", cls.QUICK_TOOL_CALL_SOFT_BUDGET,
+            )))
+        except (ValueError, TypeError):
+            return int(cls.QUICK_TOOL_CALL_SOFT_BUDGET)
+
+    @classmethod
+    def get_quick_tool_call_hard_budget(cls) -> int:
+        """Quick-run hard tool-call budget. ``0`` disables the stop."""
+        try:
+            return max(0, int(os.getenv(
+                "QUICK_TOOL_CALL_HARD_BUDGET", cls.QUICK_TOOL_CALL_HARD_BUDGET,
+            )))
+        except (ValueError, TypeError):
+            return int(cls.QUICK_TOOL_CALL_HARD_BUDGET)
+
+    @classmethod
+    def get_default_run_depth(cls) -> str:
+        """Depth used when a turn does not name one. ``auto`` | ``quick`` | ``deep``."""
+        value = os.getenv("DEFAULT_RUN_DEPTH", cls.DEFAULT_RUN_DEPTH).strip().lower()
+        if value in ("auto", "quick", "deep"):
+            return value
+        return "auto"
 
     @classmethod
     def get_max_parallel_subagents(cls) -> int:

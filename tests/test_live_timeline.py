@@ -68,6 +68,19 @@ def _apply(prev: list[dict], raw: dict) -> list[dict]:
             return updated
         return [*prev, _to_event(raw, {"content": piece, "meta": {"streaming": True}})]
 
+    if raw.get("type") == "run_depth":
+        meta = raw.get("metadata") or {}
+        return [*_finalize_streaming(prev), {
+            "type": "system",
+            "content": raw.get("content") if isinstance(raw.get("content"), str) else "",
+            "meta": {
+                "run_depth": meta.get("run_depth"),
+                "run_depth_source": meta.get("run_depth_source"),
+                "run_depth_reason": meta.get("run_depth_reason"),
+                "run_depth_id": meta.get("run_depth_id"),
+            },
+        }]
+
     if raw.get("type") in SKIP_TYPES:
         return prev
 
@@ -116,6 +129,19 @@ def test_empty_placeholder_is_dropped_on_tool_call():
     events = _apply([], {"type": "agent_delta", "content": "  "})
     events = _apply(events, {"type": "tool_call", "content": "execute"})
     assert [e["type"] for e in events] == ["tool_call"]
+
+
+def test_run_depth_becomes_a_timeline_row():
+    events = _apply([], {
+        "type": "run_depth",
+        "content": "Auto chose Deep. Needs several steps.",
+        "metadata": {"run_depth": "deep", "run_depth_source": "agent", "run_depth_id": "abc"},
+    })
+    assert len(events) == 1
+    assert events[0]["type"] == "system"
+    assert events[0]["content"] == "Auto chose Deep. Needs several steps."
+    assert events[0]["meta"]["run_depth"] == "deep"
+    assert events[0]["meta"]["run_depth_id"] == "abc"
 
 
 def test_noise_types_are_skipped():

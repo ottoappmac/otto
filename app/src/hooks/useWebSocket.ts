@@ -110,18 +110,25 @@ export function useWebSocket({ sessionId, onMessage }: UseWebSocketOptions) {
     [],
   );
 
-  const send = useCallback((content: string): boolean => {
+  const send = useCallback((content: string, depth?: string): boolean => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ content }));
+      const payload: Record<string, unknown> = { content };
+      if (depth) payload.depth = depth;
+      wsRef.current.send(JSON.stringify(payload));
       return true;
     }
     return false;
   }, []);
 
-  const sendEdit = useCallback((messageIndex: number, content: string): boolean => {
+  const sendEdit = useCallback((messageIndex: number, content: string, depth?: string): boolean => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
-        JSON.stringify({ type: "edit", message_index: messageIndex, content }),
+        JSON.stringify({
+          type: "edit",
+          message_index: messageIndex,
+          content,
+          ...(depth ? { depth } : {}),
+        }),
       );
       return true;
     }
