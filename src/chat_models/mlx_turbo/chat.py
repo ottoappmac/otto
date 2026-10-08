@@ -240,7 +240,7 @@ class TurboMLXChat(ChatMLXText):
         # back at all, so ``_rollback_cache_to`` swaps in a fresh one.
         self._prompt_cache = cache
         self._last_prompt_tokens = list(tokens[:prefix_len])
-        self._cache_snapshot = None
+        self._reuse_points = {}
         if not self._rollback_cache_to(prefix_len):
             logger.info(
                 "SSD prime: saved cache for %s can't be rolled back to its "
