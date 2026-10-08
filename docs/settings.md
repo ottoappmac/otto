@@ -416,6 +416,8 @@ Controls for **[Watch](watch.md)** — uploaded files, screen recordings, YouTub
 | Option | Description |
 |---|---|
 | Recursion limit | Maximum steps the orchestrator and every subagent can take per run (default 1,000; range 1–10,000) |
+| Default run depth | Depth used when a turn does not name one. **Auto** asks the session model to pick Quick or Deep. **Quick** is a short run. **Deep** is a full run. The chat composer can override this per window |
+| Follow agent file edits | Open the chat side panel when the agent reads or writes a file. Off by default |
 | Auto-approve commands | Run shell commands without prompting. High-risk commands (e.g. `rm -rf`, force-push, raw disk writes) are always held for manual review |
 
 **Legacy orchestrator override** — when set, overrides the LLM-tab orchestrator choice and maps directly to `DEEP_AGENT_LLM_PROVIDER`. Leave empty to use the LLM-tab setting.

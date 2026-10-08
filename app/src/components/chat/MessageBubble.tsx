@@ -199,6 +199,16 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
   const [hitlEditing, setHitlEditing] = useState(false);
   const [hitlEditCommand, setHitlEditCommand] = useState("");
 
+  if (message.type === "run_depth") {
+    return (
+      <div className="flex justify-center px-6">
+        <p className="max-w-[40rem] text-center text-[12px] leading-relaxed text-th-text-secondary">
+          {message.content}
+        </p>
+      </div>
+    );
+  }
+
   if (message.type === "user") {
     const isContext = Boolean(message.metadata?.isContext);
     const isPending = Boolean(message.metadata?.pending);
@@ -223,9 +233,22 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
       );
     }
 
+    const depthSource = message.metadata?.run_depth_source as string | undefined;
+    const depthMode = message.metadata?.run_depth as string | undefined;
+    const depthReason = (message.metadata?.run_depth_reason as string | undefined) || "";
     return (
       <div className="flex justify-end group/msg">
         <div className="relative max-w-[75%] min-w-0">
+          {depthSource === "agent" && (depthMode === "quick" || depthMode === "deep") && (
+            <div className="flex justify-end mb-1">
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-full border border-th-border text-th-text-muted"
+                title={depthReason || undefined}
+              >
+                {depthMode === "quick" ? "Quick" : "Deep"}
+              </span>
+            </div>
+          )}
           {canEdit && !editing && (
             <button
               onClick={() => { setEditText(message.content); setEditing(true); setTimeout(() => editRef.current?.focus(), 50); }}

@@ -85,6 +85,20 @@ export function applyLiveTimelineMessage(
     return [...prev, toTimelineEvent(raw, { content: piece, meta: { streaming: true } })];
   }
 
+  if (raw.type === "run_depth") {
+    const meta = raw.metadata ?? {};
+    return [...finalizeStreaming(prev), {
+      type: "system",
+      content: typeof raw.content === "string" ? raw.content : "",
+      meta: {
+        run_depth: meta.run_depth,
+        run_depth_source: meta.run_depth_source,
+        run_depth_reason: meta.run_depth_reason,
+        run_depth_id: meta.run_depth_id,
+      },
+    }];
+  }
+
   if (SKIP_TYPES.has(raw.type)) return prev;
 
   if (raw.type === "agent") {

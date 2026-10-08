@@ -152,6 +152,12 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
   }
 
   if (type === "system" || type === "status") {
+    const depth = event.meta?.run_depth;
+    if (depth === "quick" || depth === "deep") {
+      return (
+        <p className="text-xs text-th-text-secondary leading-relaxed">{content}</p>
+      );
+    }
     return (
       <span className="text-[10px] text-th-text-muted/60 font-medium leading-relaxed">{content.slice(0, 120)}</span>
     );

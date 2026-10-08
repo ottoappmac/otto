@@ -417,6 +417,28 @@ def _append_message(session_id: str, msg: dict[str, Any]) -> None:
         f.write(json.dumps(msg, default=str) + "\n")
 
 
+def _depth_event(mode: str, source: str, reason: str) -> tuple[str, dict[str, Any]]:
+    """The chat line and the metadata both surfaces store for one turn."""
+    from backend.run_depth import depth_notice
+
+    notice = depth_notice(mode, source, reason)
+    meta = {
+        "run_depth": mode,
+        "run_depth_source": source,
+        "run_depth_reason": reason,
+        "run_depth_id": uuid.uuid4().hex[:12],
+    }
+    return notice, meta
+
+
+async def _persist_run_depth(session_id: str, notice: str, meta: dict[str, Any]) -> None:
+    """Keep the mode line in chat history and on the run timeline."""
+    await _append_message_async(
+        session_id, {"type": "run_depth", "content": notice, "metadata": meta},
+    )
+    await _transcript(session_id, "system", notice, metadata=meta)
+
+
 async def _append_message_async(session_id: str, msg: dict[str, Any]) -> None:
     """Non-blocking wrapper — moves the sync file write to a thread."""
     await asyncio.to_thread(_append_message, session_id, msg)
@@ -778,6 +800,11 @@ def _build_standard_tools(
             ))
         except Exception as exc:
             logger.warning("Standard tool doc_reader: could not load — %s", exc)
+    try:
+        from tools.date_tool import CheckDatesTool
+        tools.append(CheckDatesTool())
+    except Exception as exc:
+        logger.warning("Standard tool check_dates: could not load — %s", exc)
     return tools
 
 
@@ -901,6 +928,37 @@ def _insert_repeated_thought_guard(middleware: list[Any], *, scope: str) -> None
         logger.warning(
             "Tool-call budget guard (%s): could not apply — %s", scope, exc
         )
+
+    # Outermost of this group so a bad final answer is retried through the
+    # inner stack (calendar injection included) exactly once.
+    try:
+        from middleware.date_context import DateValidationMiddleware
+        from middleware.react_middleware import MLXReActMiddleware
+
+        insert_at = 0
+        for i, mw in enumerate(middleware):
+            if isinstance(mw, MLXReActMiddleware):
+                insert_at = i + 1
+                break
+        middleware.insert(insert_at, DateValidationMiddleware())
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "Date validation (%s): could not apply — %s", scope, exc
+        )
+
+
+def _append_date_context(middleware: list[Any]) -> None:
+    """Append the calendar injector so it runs closest to the model.
+
+    Placed after context truncation: a truncated prompt must still carry
+    today's date, and a long-lived session must not keep a stale one.
+    """
+    try:
+        from middleware.date_context import DateContextMiddleware
+
+        middleware.append(DateContextMiddleware())
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Date context: could not apply — %s", exc)
 
 
 def _build_gp_subagent(
@@ -1058,6 +1116,7 @@ def _build_gp_subagent(
         tools, scope="general-purpose", session_id=session_id
     )
     _insert_repeated_thought_guard(middleware, scope="general-purpose")
+    _append_date_context(middleware)
     graph = create_agent(
         model,
         system_prompt=gp_prompt,
@@ -1179,6 +1238,7 @@ def _build_named_agent_subagent(
 
     _apply_universal_loop_guard(tools, scope=agent_name, session_id=session_id)
     _insert_repeated_thought_guard(middleware, scope=agent_name)
+    _append_date_context(middleware)
     graph = create_agent(
         model,
         system_prompt=system_prompt,
@@ -1970,6 +2030,7 @@ def _compile_library_subagent(
     _insert_repeated_thought_guard(
         middleware, scope=f"subagent:{agent_spec.name}"
     )
+    _append_date_context(middleware)
     graph = create_agent(
         subagent_model,
         system_prompt=system_prompt,
@@ -2121,6 +2182,12 @@ class Session:
         # re-reading the config (the user may change the config mid-session).
         self.llm_provider = llm_provider
         self.distill_catalog_id: Optional[str] = distill_catalog_id
+        # Chat model for this session. Used by the Auto run-depth judge,
+        # which must run before the graph so Quick limits are already on.
+        self.llm: Any = None
+        # Last depth the client asked for (auto | quick | deep). A context
+        # injection that restarts the stream without its own depth reuses this.
+        self.requested_depth: Optional[str] = None
         self.memory_inject = False
         self.recursion_limit: int = 10000
         self.live_output_queue: asyncio.Queue = asyncio.Queue()
@@ -2392,7 +2459,7 @@ class SessionManager:
         schedule_id: Optional[str] = None,
         live_output_queue: Optional[asyncio.Queue] = None,
         distill_catalog_id: Optional[str] = None,
-    ) -> tuple[Any, Any, asyncio.Queue]:
+    ) -> tuple[Any, Any, asyncio.Queue, Any]:
         """Build the agent graph and MCP tool set.
 
         When *agent_name* is set the user explicitly chose an agent via the
@@ -2406,7 +2473,7 @@ class SessionManager:
         All agents (main and subagents) receive the standard research tools
         (web researcher, doc researcher, doc reader, wikipedia).
 
-        Returns ``(graph, mcp_mgr, live_output_queue)``.
+        Returns ``(graph, mcp_mgr, live_output_queue, llm)``.
         """
         if live_output_queue is None:
             live_output_queue = asyncio.Queue()
@@ -3122,9 +3189,6 @@ class SessionManager:
                 "using sensible defaults. Do not ask about this more than once per conversation."
             )
 
-        _now_utc = datetime.now(timezone.utc)
-        _now_local = datetime.now()
-        _tz_name = time.tzname[0]
         _agent_location = os.environ.get("AGENT_LOCATION", "")
         _location_line = f"\n- Location: {_agent_location}" if _agent_location else ""
         system_prompt += (
@@ -3151,9 +3215,7 @@ class SessionManager:
             f"`/uploads/...` path — the browser tools run in a separate process "
             f"and only understand real filesystem paths. Reading binary files "
             f"(PDF, DOCX, images) into the conversation is unnecessary for "
-            f"uploading and may fail.\n"
-            f"- Current date/time: {_now_local.strftime('%A, %B %d, %Y %H:%M')} {_tz_name}"
-            f" ({_now_utc.strftime('%H:%M UTC')})"
+            f"uploading and may fail."
             f"{_location_line}\n"
         )
 
@@ -3197,6 +3259,13 @@ class SessionManager:
         system_prompt += "\n" + build_distilled_adapters_prompt_block(distill_catalog_id)
 
         _insert_repeated_thought_guard(extra_middleware, scope="orchestrator")
+        try:
+            from middleware.run_depth import RunDepthMiddleware
+
+            extra_middleware.append(RunDepthMiddleware())
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Run depth: could not apply — %s", exc)
+        _append_date_context(extra_middleware)
 
         # Cap concurrent ``task`` (subagent) calls so a wide fan-out can't
         # exhaust a local inference server's memory.  No-op on hosted APIs.
@@ -3226,7 +3295,7 @@ class SessionManager:
             session_id, time.monotonic() - t_graph_start,
             len(all_tools), len(subagents) if subagents else 0,
         )
-        return graph, mcp_mgr, live_output_queue
+        return graph, mcp_mgr, live_output_queue, llm
 
     async def create_session(
         self,
@@ -3252,7 +3321,7 @@ class SessionManager:
             _resolved_distill_catalog_id(distill_catalog_id, config),
             config,
         )
-        graph, mcp_mgr, live_output_queue = await self._build_graph(
+        graph, mcp_mgr, live_output_queue, llm = await self._build_graph(
             config, agent_name, session_id, checkpointer,
             is_scheduled_run=is_scheduled_run,
             schedule_id=schedule_id,
@@ -3274,6 +3343,7 @@ class SessionManager:
             llm_provider=_distill_session_provider(cid, config),
             distill_catalog_id=cid,
         )
+        session.llm = llm
         if cid:
             session.model = cid
             logger.info(
@@ -3392,7 +3462,7 @@ class SessionManager:
         checkpointer = AsyncSqliteSaver(sqlite_conn)
         await checkpointer.setup()
 
-        graph, mcp_mgr, live_output_queue = await self._build_graph(
+        graph, mcp_mgr, live_output_queue, llm = await self._build_graph(
             config, info.agent_name, session_id, checkpointer,
             is_scheduled_run=info.trigger_source == "schedule",
             schedule_id=info.schedule_id,
@@ -3414,6 +3484,7 @@ class SessionManager:
             llm_provider=_distill_session_provider(info.distill_catalog_id, config),
             distill_catalog_id=info.distill_catalog_id,
         )
+        session.llm = llm
         session.live_output_queue = live_output_queue
         session.memory_inject = config.memory.effective_inject_realtime
         session.title = info.title
@@ -3465,7 +3536,7 @@ class SessionManager:
         for session in list(self._active.values()):
             old_tool_set = session.tool_set
             try:
-                graph, mcp_mgr, _ = await self._build_graph(
+                graph, mcp_mgr, _, llm = await self._build_graph(
                     config, session.agent_name, session.id, session._checkpointer,
                     is_scheduled_run=session.trigger_source == "schedule",
                     schedule_id=session.schedule_id,
@@ -3480,6 +3551,7 @@ class SessionManager:
                 continue
             session.graph = graph
             session.tool_set = mcp_mgr
+            session.llm = llm
             if old_tool_set is not None:
                 try:
                     await old_tool_set.close()
@@ -3500,7 +3572,7 @@ class SessionManager:
     async def _rebuild_one_session(self, session: Session, config: AppConfig) -> None:
         """Swap *session*'s graph for a freshly built one (workspace, tools)."""
         old_tool_set = session.tool_set
-        graph, mcp_mgr, _ = await self._build_graph(
+        graph, mcp_mgr, _, llm = await self._build_graph(
             config, session.agent_name, session.id, session._checkpointer,
             is_scheduled_run=session.trigger_source == "schedule",
             schedule_id=session.schedule_id,
@@ -3509,6 +3581,7 @@ class SessionManager:
         )
         session.graph = graph
         session.tool_set = mcp_mgr
+        session.llm = llm
         if old_tool_set is not None:
             try:
                 await old_tool_set.close()
@@ -4282,6 +4355,7 @@ class SessionManager:
         session_id: str,
         query: str,
         context_queue: Optional[Any] = None,
+        depth: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream agent responses for a user message."""
         from langchain_core.messages import HumanMessage
@@ -4304,21 +4378,36 @@ class SessionManager:
         if is_first_message:
             session.title = query[:60] + ("..." if len(query) > 60 else "")
 
-        await _append_message_async(session_id, {"type": "user", "content": query})
-        await _transcript(session_id, "user", query, role="user")
-
-        if session.memory_inject:
-            yield {"type": "memory_search", "content": "Searching memory…"}
+        if depth is not None:
+            session.requested_depth = depth
+        elif session.requested_depth:
+            depth = session.requested_depth
 
         run_config = {"configurable": {"thread_id": session_id}, "recursion_limit": session.recursion_limit}
 
         existing_state = await session.graph.aget_state({"configurable": {"thread_id": session_id}})
-        existing_count = len(existing_state.values.get("messages", []))
+        prior_messages = list(existing_state.values.get("messages", []))
+        existing_count = len(prior_messages)
+
+        mode, source, reason = await self._choose_run_depth(session, query, depth, prior_messages)
+        notice, depth_meta = _depth_event(mode, source, reason)
+        yield {"type": "run_depth", "content": notice, "metadata": depth_meta}
+
+        await _append_message_async(
+            session_id, {"type": "user", "content": query, "metadata": depth_meta},
+        )
+        await _transcript(session_id, "user", query, role="user")
+        await _persist_run_depth(session_id, notice, depth_meta)
+
+        if session.memory_inject:
+            yield {"type": "memory_search", "content": "Searching memory…"}
 
         # First stream uses the actual user query as input.
         # After a context injection we restart with `None` so LangGraph continues
         # from the updated checkpoint (the injected HumanMessage is already in state).
-        current_input: Any = {"messages": [HumanMessage(content=query)]}
+        current_input: Any = {
+            "messages": [HumanMessage(content=query, additional_kwargs=depth_meta)],
+        }
         # printed_offset for the first leg: skip all historical messages + the user msg we just added.
         current_printed_offset = existing_count + 1
 
@@ -4400,11 +4489,46 @@ class SessionManager:
         await self._maybe_index_transcript(session)
         await self._maybe_ambient_sweep(session)
 
+    async def _choose_run_depth(
+        self,
+        session: "Session",
+        query: str,
+        requested: Optional[str],
+        prior_messages: list[Any],
+    ) -> tuple[str, str, str]:
+        """Pick Quick or Deep for this turn. Returns ``(mode, source, reason)``."""
+        from backend.run_depth import (
+            accumulate_usage,
+            message_has_attachments,
+            prior_turn,
+            resolve_run_depth,
+        )
+        from utilities.environment import Environment
+
+        prior_user, prior_depth = prior_turn(prior_messages)
+        mode, source, reason, response = await resolve_run_depth(
+            requested=requested,
+            query=query,
+            llm=session.llm,
+            unattended=session.trigger_source in ("schedule", "trigger"),
+            default_mode=Environment.get_default_run_depth(),
+            has_attachments=message_has_attachments(query),
+            prior_user=prior_user,
+            prior_depth=prior_depth,
+        )
+        accumulate_usage(session, response)
+        logger.info(
+            "Run depth session=%s mode=%s source=%s reason=%s",
+            session.id, mode, source, reason,
+        )
+        return mode, source, reason
+
     async def stream_edit(
         self,
         session_id: str,
         message_index: int,
         new_content: str,
+        depth: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Edit a user message and replay the graph from that point."""
         from langchain_core.messages import HumanMessage
@@ -4422,21 +4546,33 @@ class SessionManager:
         run_config = {"configurable": {"thread_id": session_id}}
 
         target_config = None
+        prior_msgs: list[Any] = []
         human_count_at_target = message_index
         async for state in session.graph.aget_state_history(run_config):
             msgs = state.values.get("messages", [])
             human_msgs = [m for m in msgs if isinstance(m, HumanMessage)]
             if len(human_msgs) == human_count_at_target:
                 target_config = state.config
+                prior_msgs = list(msgs)
                 break
 
         if not target_config:
             yield {"type": "error", "content": "Could not find checkpoint for that message"}
             return
 
+        if depth is not None:
+            session.requested_depth = depth
+        elif session.requested_depth:
+            depth = session.requested_depth
+        mode, source, reason = await self._choose_run_depth(
+            session, new_content, depth, prior_msgs,
+        )
+        notice, depth_meta = _depth_event(mode, source, reason)
+        yield {"type": "run_depth", "content": notice, "metadata": depth_meta}
+
         new_config = await session.graph.aupdate_state(
             target_config,
-            {"messages": [HumanMessage(content=new_content)]},
+            {"messages": [HumanMessage(content=new_content, additional_kwargs=depth_meta)]},
             as_node="__start__",
         )
 
@@ -4450,8 +4586,11 @@ class SessionManager:
                     break
                 user_seen += 1
         await _save_messages_async(session_id, all_msgs[:truncate_at])
-        await _append_message_async(session_id, {"type": "user", "content": new_content})
+        await _append_message_async(
+            session_id, {"type": "user", "content": new_content, "metadata": depth_meta},
+        )
         await _transcript(session_id, "user", new_content, role="user")
+        await _persist_run_depth(session_id, notice, depth_meta)
 
         if session.memory_inject:
             yield {"type": "memory_search", "content": "Searching memory…"}

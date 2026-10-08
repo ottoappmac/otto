@@ -17,7 +17,8 @@ export type WSMessageType =
   | "error"
   | "done"
   | "stopped"
-  | "context_received";
+  | "context_received"
+  | "run_depth";
 
 export interface WSMessage {
   type: WSMessageType;
@@ -1181,6 +1182,13 @@ export interface OrchestratorConfig {
    * ``0`` = unlimited, ``N`` = cap at N.
    */
   max_parallel_subagents?: number;
+  /**
+   * Depth used when a chat turn does not name one.
+   * ``auto`` asks the model to pick Quick or Deep. The composer can override.
+   */
+  default_run_depth?: "auto" | "quick" | "deep";
+  quick_tool_call_soft_budget?: number;
+  quick_tool_call_hard_budget?: number;
 }
 
 // ---------------------------------------------------------------------------

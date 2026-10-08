@@ -1024,7 +1024,12 @@ async def _run_agent_stream_loop(
                 running_tasks[session_id] = new_task
 
 
-async def _run_agent_stream(session_id: str, query: str, queue: asyncio.Queue) -> None:
+async def _run_agent_stream(
+    session_id: str,
+    query: str,
+    queue: asyncio.Queue,
+    depth: str | None = None,
+) -> None:
     """Run the agent in a background task, pushing responses to the queue."""
     # Create the context queue eagerly (setdefault) so it exists for the whole
     # run and is the SAME object the WS handler appends to when the user injects
@@ -1034,7 +1039,7 @@ async def _run_agent_stream(session_id: str, query: str, queue: asyncio.Queue) -
     ctx_q = context_queues.setdefault(session_id, asyncio.Queue())
     await _run_agent_stream_loop(
         session_id,
-        session_mgr.stream_message(session_id, query, context_queue=ctx_q),
+        session_mgr.stream_message(session_id, query, context_queue=ctx_q, depth=depth),
         queue,
         "Agent stream",
     )
@@ -1045,10 +1050,14 @@ async def _run_agent_edit(
     message_index: int,
     new_content: str,
     queue: asyncio.Queue,
+    depth: str | None = None,
 ) -> None:
     """Edit a user message and replay the agent from that checkpoint."""
     await _run_agent_stream_loop(
-        session_id, session_mgr.stream_edit(session_id, message_index, new_content), queue, "Agent edit",
+        session_id,
+        session_mgr.stream_edit(session_id, message_index, new_content, depth=depth),
+        queue,
+        "Agent edit",
     )
 
 
@@ -1202,12 +1211,15 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                                 msg["message_index"],
                                 msg["content"],
                                 queue,
+                                depth=msg.get("depth"),
                             )
                         )
                     else:
                         content = msg.get("content", "")
                         agent_task = asyncio.create_task(
-                            _run_agent_stream(session_id, content, queue)
+                            _run_agent_stream(
+                                session_id, content, queue, depth=msg.get("depth"),
+                            )
                         )
                     running_tasks[session_id] = agent_task
                 elif task is queue_task:

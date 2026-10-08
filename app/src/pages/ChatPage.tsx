@@ -11,6 +11,7 @@ import { ArtifactPanel, artifactTypeFromPath } from "../components/chat/Artifact
 import { ThinkingIndicator } from "../components/chat/ThinkingIndicator";
 import type { Artifact, ArtifactType } from "../components/chat/ArtifactPanel";
 import { ModelPicker } from "../components/chat/ModelPicker";
+import { DepthPicker, type RunDepth } from "../components/chat/DepthPicker";
 import SessionStatsPanel from "../components/chat/SessionStatsPanel";
 import SessionFileTree from "../components/chat/SessionFileTree";
 import OutputFileGrid from "../components/chat/OutputFileGrid";
@@ -30,6 +31,7 @@ import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJ
 import { useVoice } from "../hooks/useVoice";
 import { onAskOtto } from "../utils/askOttoBus";
 import { subscribeSessionFiles } from "../utils/sessionFilesBus";
+import { getFollowFileEdits } from "../utils/followFileEdits";
 import { onAgentContext } from "../utils/agentContextBus";
 import { buildFileTree } from "../utils/fileTree";
 import type { AskPayload } from "../utils/askOttoBus";
@@ -257,6 +259,11 @@ export default function ChatPage() {
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [currentModel, setCurrentModel] = useState<string>(() => localStorage.getItem("chatModel") ?? "");
+  const [runDepth, setRunDepth] = useState<RunDepth>(() => {
+    const stored = localStorage.getItem("otto.runDepth");
+    return stored === "quick" || stored === "deep" || stored === "auto" ? stored : "auto";
+  });
+  const runDepthChosen = useRef(localStorage.getItem("otto.runDepth") != null);
   const [availableModels, setAvailableModels] = useState<ChatModelOption[]>([]);
   const [modelsFetched, setModelsFetched] = useState(false);
   // Tracks the live EXO catalog (with downloaded/loaded flags) so that when
@@ -482,7 +489,15 @@ export default function ChatPage() {
   useEffect(() => {
     let cancelled = false;
     let unlistenFn: (() => void) | null = null;
-    getCurrentWindow().onDragDropEvent((event) => {
+    // No-op in a plain browser: getCurrentWindow throws when Tauri internals
+    // are absent, and a throw here takes down the whole chat page.
+    let win: ReturnType<typeof getCurrentWindow>;
+    try {
+      win = getCurrentWindow();
+    } catch {
+      return;
+    }
+    win.onDragDropEvent((event) => {
       const payload = event.payload as { type: string; paths?: string[] };
       if (payload.type === "hover") {
         setIsDragging(true);
@@ -495,7 +510,7 @@ export default function ChatPage() {
     }).then((fn) => {
       if (cancelled) fn(); // cleanup already ran — unregister immediately
       else unlistenFn = fn;
-    });
+    }).catch(() => {});
     return () => {
       cancelled = true;
       unlistenFn?.();
@@ -532,6 +547,10 @@ export default function ChatPage() {
   useEffect(() => {
     api.getSettings().then((s) => {
       setAppSettings(s);
+      if (!runDepthChosen.current) {
+        const d = s.orchestrator?.default_run_depth;
+        if (d === "auto" || d === "quick" || d === "deep") setRunDepth(d);
+      }
       const mlx = s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" };
       if (s.llm.provider === "mlx") {
         const mid = mlx.hf_llm_model_id?.trim() || localStorage.getItem("chatModel") || "";
@@ -878,6 +897,44 @@ export default function ChatPage() {
         code: msg.metadata.error_code as string,
         message: msg.content,
       });
+    }
+    if (msg.type === "run_depth") {
+      const mode = (msg.metadata?.run_depth as string) || "";
+      const source = (msg.metadata?.run_depth_source as string) || "";
+      const reason = (msg.metadata?.run_depth_reason as string) || "";
+      const depthId = (msg.metadata?.run_depth_id as string) || "";
+      setMessages((prev) => {
+        if (depthId && prev.some((m) => m.metadata?.run_depth_id === depthId)) return prev;
+        let next = prev;
+        // Auto still marks the user bubble. A pinned mode is named by the line below.
+        if (source === "agent" && (mode === "quick" || mode === "deep")) {
+          for (let i = prev.length - 1; i >= 0; i--) {
+            const m = prev[i];
+            if (m.type !== "user" || m.metadata?.isContext) continue;
+            if (m.sessionId && sid && m.sessionId !== sid) continue;
+            next = [...prev];
+            next[i] = {
+              ...m,
+              metadata: {
+                ...m.metadata,
+                run_depth: mode,
+                run_depth_source: "agent",
+                run_depth_reason: reason,
+              },
+            };
+            break;
+          }
+        }
+        return [...next, {
+          id: `msg-${++msgIdRef.current}`,
+          type: "run_depth" as const,
+          content: msg.content,
+          metadata: msg.metadata,
+          timestamp: new Date(),
+          sessionId: sid || undefined,
+        }];
+      });
+      return;
     }
     if (msg.type === "memory_search") {
       setStreamPhase("memory_search");
@@ -1629,7 +1686,7 @@ export default function ChatPage() {
       isPinnedToBottomRef.current = true;
       setMessages((prev) => [...prev, userMsg]);
 
-      if (!send(fullText)) {
+      if (!send(fullText, runDepth)) {
         throw new Error("Not connected to server — please wait and try again");
       }
       watchSession(sid!);
@@ -1688,6 +1745,12 @@ export default function ChatPage() {
     sendContext(text);
   }, [input, currentSessionId, sendContext]);
 
+  const handleRunDepthChange = useCallback((depth: RunDepth) => {
+    runDepthChosen.current = true;
+    setRunDepth(depth);
+    try { localStorage.setItem("otto.runDepth", depth); } catch { /* ignore */ }
+  }, []);
+
   const handleEditMessage = useCallback((messageIndex: number, newContent: string) => {
     if (sendingRef.current || isStreaming) return;
     sendingRef.current = true;
@@ -1709,7 +1772,7 @@ export default function ChatPage() {
     // edit aren't silently dropped.
     setMessages((prev) => prev.slice(0, messageIndex).concat(edited));
 
-    if (!sendEdit(userMsgIndex, newContent)) {
+    if (!sendEdit(userMsgIndex, newContent, runDepth)) {
       setMessages((prev) => [
         ...prev,
         { id: `msg-${++msgIdRef.current}`, type: "error" as const, content: "Not connected to server — please wait and try again", timestamp: new Date(), sessionId: currentSessionId ?? sessionId ?? undefined },
@@ -1721,7 +1784,7 @@ export default function ChatPage() {
     setIsStreaming(true);
     if (currentSessionId) watchSession(currentSessionId);
     sendingRef.current = false;
-  }, [messages, isStreaming, sendEdit, watchSession, currentSessionId, sessionId]);
+  }, [messages, isStreaming, sendEdit, watchSession, currentSessionId, sessionId, runDepth]);
 
   const handleModelChange = async (modelId: string) => {
     setCurrentModel(modelId);
@@ -2033,6 +2096,7 @@ export default function ChatPage() {
     });
     if (!last || last.id === lastFollowedToolRef.current) return;
     lastFollowedToolRef.current = last.id;
+    if (!getFollowFileEdits()) return;
     const args = last.metadata?.args as Record<string, unknown> | undefined;
     const path = filePathFromToolArgs(args);
     if (!path) return;
@@ -2932,6 +2996,7 @@ export default function ChatPage() {
         <div className="max-w-4xl mx-auto mt-1.5 flex items-center gap-2">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <ModelPicker value={currentModel} models={availableModels} onChange={handleModelChange} />
+            <DepthPicker value={runDepth} onChange={handleRunDepthChange} />
             {exoModelLoading && (
               <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 shrink-0">
                 <Loader2 size={11} className="animate-spin" />

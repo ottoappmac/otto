@@ -50,6 +50,9 @@ _TERMINAL_TEXT = (
     "tools."
 )
 
+# Shown when a Quick run hits its own, much smaller hard budget.
+_QUICK_TERMINAL_TEXT = "Stopped early. Switch to Deep to go further."
+
 
 def _content_to_text(content: object) -> str:
     if isinstance(content, str):
@@ -71,7 +74,21 @@ def _injected_nudge_texts() -> set[str]:
         texts.add(_NUDGE_TEXT)
     except Exception:  # pragma: no cover — defensive
         pass
+    try:
+        from middleware.run_depth import QUICK_SOFT_NUDGE
+
+        texts.add(QUICK_SOFT_NUDGE)
+    except Exception:  # pragma: no cover — defensive
+        pass
     return texts
+
+
+def _is_injected_human(text: str, injected: set[str]) -> bool:
+    if text in injected:
+        return True
+    # Date-validation retry note. Matched by prefix because the body lists
+    # the specific wrong dates.
+    return text.startswith("Date check failed.")
 
 
 def count_run_tool_calls(messages: list[BaseMessage]) -> int:
@@ -85,7 +102,7 @@ def count_run_tool_calls(messages: list[BaseMessage]) -> int:
     count = 0
     for msg in messages:
         if isinstance(msg, HumanMessage):
-            if _content_to_text(msg.content) not in injected:
+            if not _is_injected_human(_content_to_text(msg.content), injected):
                 count = 0
         elif isinstance(msg, AIMessage):
             count += len(getattr(msg, "tool_calls", None) or [])
@@ -119,11 +136,11 @@ class ToolCallBudgetMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        decision = self._decide(request)
+        decision, terminal, nudge = self._decide(request)
         if decision == "abort":
-            return self._terminal_response()
+            return self._terminal_response(terminal)
         if decision == "nudge":
-            request = self._with_nudge(request)
+            request = self._with_nudge(request, nudge)
         return handler(request)
 
     async def awrap_model_call(
@@ -131,45 +148,68 @@ class ToolCallBudgetMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        decision = self._decide(request)
+        decision, terminal, nudge = self._decide(request)
         if decision == "abort":
-            return self._terminal_response()
+            return self._terminal_response(terminal)
         if decision == "nudge":
-            request = self._with_nudge(request)
+            request = self._with_nudge(request, nudge)
         return await handler(request)
 
     # ── Private helpers ─────────────────────────────────────────────────────
 
-    def _decide(self, request: ModelRequest) -> Optional[str]:
+    def _budgets(self, messages: list) -> tuple[int, int, str, str]:
+        """Soft, hard, terminal text, and nudge text for this request.
+
+        A Quick turn uses the smaller Quick budgets. Anything else keeps
+        the budgets this middleware was constructed with.
+        """
+        try:
+            from middleware.run_depth import QUICK_SOFT_NUDGE, latest_run_depth
+
+            if latest_run_depth(messages) == "quick":
+                from utilities.environment import Environment
+
+                return (
+                    Environment.get_quick_tool_call_soft_budget(),
+                    Environment.get_quick_tool_call_hard_budget(),
+                    _QUICK_TERMINAL_TEXT,
+                    QUICK_SOFT_NUDGE,
+                )
+        except Exception:  # pragma: no cover — defensive
+            logger.debug("ToolCallBudget: quick override unavailable", exc_info=True)
+        return self._soft, self._hard, _TERMINAL_TEXT, _SOFT_NUDGE_TEXT
+
+    def _decide(self, request: ModelRequest) -> tuple[Optional[str], str, str]:
         messages = list(getattr(request, "messages", None) or [])
         count = count_run_tool_calls(messages)
+        soft, hard, terminal, nudge = self._budgets(messages)
 
-        if self._hard and count >= self._hard:
+        if hard and count >= hard:
             logger.warning(
                 "ToolCallBudget: %d tool calls >= hard budget %d — ending run "
                 "with partial result.",
-                count, self._hard,
+                count, hard,
             )
-            return "abort"
-        if self._soft and count >= self._soft:
+            return "abort", terminal, nudge
+        if soft and count >= soft:
             logger.warning(
                 "ToolCallBudget: %d tool calls >= soft budget %d — nudging to "
                 "converge.",
-                count, self._soft,
+                count, soft,
             )
-            return "nudge"
-        return None
+            return "nudge", terminal, nudge
+        return None, terminal, nudge
 
-    def _with_nudge(self, request: ModelRequest) -> ModelRequest:
+    def _with_nudge(self, request: ModelRequest, nudge: str) -> ModelRequest:
         messages = list(getattr(request, "messages", None) or [])
-        messages.append(HumanMessage(content=_SOFT_NUDGE_TEXT))
+        messages.append(HumanMessage(content=nudge))
         try:
             return request.override(messages=messages)
         except Exception:  # pragma: no cover — defensive
             return request
 
-    def _terminal_response(self) -> ModelResponse:
+    def _terminal_response(self, text: str = _TERMINAL_TEXT) -> ModelResponse:
         return ModelResponse(
-            result=[AIMessage(content=_TERMINAL_TEXT)],
+            result=[AIMessage(content=text)],
             structured_response=None,
         )
