@@ -108,6 +108,63 @@ function findUrls(text: string): UrlToken[] {
  * item whose `getAsFile()` yields a 0-byte blob for directories, since the
  * File API has no way to represent directory contents.
  */
+function normalizeWebUrl(raw: string): string | null {
+  let url = raw.trim();
+  if (url.startsWith("<") && url.endsWith(">")) url = url.slice(1, -1).trim();
+  url = url.replace(/[).,;:!?'"]+$/, "");
+  if (!/^https?:\/\//i.test(url)) return null;
+  return url;
+}
+
+/** `https://` entries on a `text/uri-list` pasteboard (copied links, not files). */
+function webUrisFromUriList(uriList: string): string[] {
+  const out: string[] = [];
+  for (const line of uriList.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const url = normalizeWebUrl(trimmed);
+    if (url) out.push(url);
+  }
+  return out;
+}
+
+/** hrefs from a rich-text paste, where the visible label is not the URL. */
+function webUrisFromHtml(html: string): string[] {
+  if (!html) return [];
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const out: string[] = [];
+    doc.querySelectorAll("a[href]").forEach((a) => {
+      const url = normalizeWebUrl(a.getAttribute("href") ?? "");
+      if (url) out.push(url);
+    });
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Copied hyperlinks often put the visible label in `text/plain` ("prefaced
+ * text") and the real address only in `text/uri-list` or an `<a href>`.
+ * Append any web URL that the plain text doesn't already contain so it can
+ * chip like a bare pasted URL.
+ */
+function mergePrefacedUrls(plain: string, urls: string[]): string {
+  const seen = new Set<string>();
+  const missing: string[] = [];
+  for (const url of urls) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    if (plain.includes(url)) continue;
+    missing.push(url);
+  }
+  if (missing.length === 0) return plain;
+  const base = plain.replace(/\s+$/, "");
+  const suffix = missing.join(" ");
+  return base ? `${base} ${suffix}` : suffix;
+}
+
 function fileUrisToPaths(uriList: string): string[] {
   return uriList
     .split(/\r?\n/)
@@ -534,8 +591,12 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
     if (!dt) return;
 
     const types = Array.from(dt.types ?? []);
-    const hasFilesType = types.includes("Files") || types.includes("text/uri-list");
-    const uriPaths = fileUrisToPaths(dt.getData("text/uri-list") || "");
+    // `text/uri-list` is also how a copied http(s) link arrives (the visible
+    // label stays in text/plain). Only the Files type means a file promise;
+    // file:// entries are picked out of the uri-list below.
+    const hasFilesType = types.includes("Files");
+    const uriList = dt.getData("text/uri-list") || "";
+    const uriPaths = fileUrisToPaths(uriList);
 
     const fromItems: { file: File; item: DataTransferItem }[] = [];
     for (const item of Array.from(dt.items)) {
@@ -589,7 +650,11 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
       return;
     }
 
-    const text = dt.getData("text/plain");
+    const plain = dt.getData("text/plain") || "";
+    const text = mergePrefacedUrls(plain, [
+      ...webUrisFromUriList(uriList),
+      ...webUrisFromHtml(dt.getData("text/html") || ""),
+    ]);
     if (!text) return;
     e.preventDefault();
     insertText(text);
