@@ -26,7 +26,7 @@ Per-page guides for the desktop UI (each with screenshots). The pages below map 
 |------|-------|----------------|
 | Dashboard | [`dashboard.md`](./docs/dashboard.md) | Live overview — KPIs, running activity, charts, and breakdowns |
 | Runs | [`runs.md`](./docs/runs.md) | Run history, filters, and the per-run detail tabs (Timeline, Graph, Results, Files, Metrics, Evaluation) |
-| Chat | [`chat.md`](./docs/chat.md) | Talking to the agent — composer, model picker, live runs, steering |
+| Chat | [`chat.md`](./docs/chat.md) | Talking to the agent — composer, model picker, Auto / Quick / Deep, live runs, steering |
 | Capture | [`capture.md`](./docs/capture.md) | Live Capture — on-device system-audio + mic transcription and screenshot capture |
 | Watch | [`watch.md`](./docs/watch.md) | Watch video — files, screen recordings, YouTube, and live screen watching |
 | Suggestions | [`suggestions.md`](./docs/suggestions.md) | The ambient suggestions inbox |
@@ -48,6 +48,20 @@ Also in [`docs/`](./docs/): [`QUICKSTART.md`](./docs/QUICKSTART.md) (install the
 | Playwright MCP | 8931 | Browser automation subprocess (started separately) |
 
 ## Features
+
+### Run depth
+
+Each chat turn runs **Quick** or **Deep**. The control next to the model in the composer offers **Auto**, **Quick**, and **Deep**. Settings → Agent execution sets the default for turns that do not name one (`DEFAULT_RUN_DEPTH`, default `auto`). A choice on the composer overrides that default for the window.
+
+| Mode | What it does |
+|------|----------------|
+| **Auto** | Before the run starts, the session model — with tools off — answers `QUICK` or `DEEP` and one sentence why. A short answer, lookup, conversion, or single small action is Quick. Research, comparison, planning, a multi-part request, or creating and editing files is Deep. A follow-up that continues an earlier Deep task stays Deep. If that call fails or does not name a mode, the turn runs Quick. |
+| **Quick** | The agent is told to answer directly: prefer one or two tool calls, do not call `write_todos`, and make at most one subagent call. It is nudged to stop at 8 tool calls and the turn ends at 16 (`QUICK_TOOL_CALL_SOFT_BUDGET` / `QUICK_TOOL_CALL_HARD_BUDGET`). |
+| **Deep** | A full research run, using the normal tool-call budgets (nudge at 80, stop at 150). |
+
+A mode you pin is used as-is and is not judged again. Schedules and triggers always run Deep. Each turn adds a line in the chat and on the run timeline: **Running Quick**, **Running Deep**, or **Auto chose Quick/Deep** plus the reason. When Auto picks, a chip on your message shows the choice.
+
+This is how long one turn runs. It is separate from the DeepAgent orchestrator below, which is the graph behind every session.
 
 ### DeepAgent orchestrator
 
@@ -499,8 +513,12 @@ DEEP_AGENT_LLM_PROVIDER=anthropic  # leave blank to inherit LLM_PROVIDER
 LOCAL_PROMPT_MODE=auto             # auto | full | lite (orchestrator prompt length)
 
 # Per-run tool-call budgets (ToolCallBudgetMiddleware)
+# Deep uses these. Quick uses the smaller pair below.
 TOOL_CALL_SOFT_BUDGET=80           # nudge to converge at this count; 0 disables
 TOOL_CALL_HARD_BUDGET=150          # end the run gracefully at this count; 0 disables
+QUICK_TOOL_CALL_SOFT_BUDGET=8      # Quick-run nudge; 0 disables
+QUICK_TOOL_CALL_HARD_BUDGET=16     # Quick-run stop; 0 disables
+DEFAULT_RUN_DEPTH=auto             # auto | quick | deep — used when a turn does not name one
 # Max subagents (task calls) running at once; extras queue (SubagentConcurrencyMiddleware)
 MAX_PARALLEL_SUBAGENTS=auto        # auto = 2 on local providers (mlx/exo/omlx), unlimited on hosted; 0 = unlimited; N = cap
 
