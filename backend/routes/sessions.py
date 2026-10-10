@@ -606,6 +606,7 @@ async def api_download_session_file(session_id: str, file_path: str):
         path=resolved,
         filename=Path(file_path).name,
         media_type=media_type,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -767,7 +768,11 @@ async def api_workspace_file(session_id: str, path: str):
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except OSError as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
-    return PlainTextResponse(result["content"], media_type="text/plain; charset=utf-8")
+    return PlainTextResponse(
+        result["content"],
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.delete("/{session_id}/files/{file_path:path}")

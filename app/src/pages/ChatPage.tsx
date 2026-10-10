@@ -70,6 +70,35 @@ function isDistillCatalogId(id: string | undefined | null): boolean {
   return (id || "").trim().startsWith("otto-distill/");
 }
 
+const FILE_WRITE_TOOLS = new Set(["edit_file", "write_file", "edit"]);
+
+function normalizeVirtualPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+/** Tool paths (`/output/a.txt`) and listing paths (`output/a.txt`) name one file. */
+function virtualPathsMatch(a: string, b: string): boolean {
+  return normalizeVirtualPath(a) === normalizeVirtualPath(b);
+}
+
+function fileListStamp(
+  path: string,
+  files: { path: string; size: number; modified_at: number }[],
+): string | null {
+  const file = files.find((f) => virtualPathsMatch(f.path, path));
+  return file ? `${file.modified_at}:${file.size}` : null;
+}
+
+function latestWriteResultId(path: string, messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.type !== "tool_result" || !FILE_WRITE_TOOLS.has(m.content)) continue;
+    const written = filePathFromToolArgs(m.metadata?.args as Record<string, unknown> | undefined);
+    if (written && virtualPathsMatch(written, path)) return m.id;
+  }
+  return null;
+}
+
 type ChatModelOption = { id: string; name: string; adapter_path?: string };
 
 async function distilledChatOptions(engine: "mlx" | "omlx" | "exo" = "mlx"): Promise<ChatModelOption[]> {
@@ -247,11 +276,20 @@ export default function ChatPage() {
     return () => { cancelled = true; };
   }, [currentSessionId, isStreaming]);
   const [sessionFiles, setSessionFiles] = useState<{ path: string; size: number; modified_at: number }[]>([]);
+  const sidePreviewOpen = openArtifact != null;
   const [showFiles, setShowFiles] = useState(false);
   const [showWorkspaceTree, setShowWorkspaceTree] = useState(true);
   const [mappingFolder, setMappingFolder] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const lastFollowedToolRef = useRef<string | null>(null);
+  // What the open side preview has already shown, so a later write or mtime
+  // change reloads it and the first observation of a file does not.
+  const previewSyncRef = useRef<{
+    path: string;
+    writeId: string | null;
+    stamp: string | null;
+    awaitingStamp: boolean;
+  } | null>(null);
   const [downloadedFile, setDownloadedFile] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingFolders, setPendingFolders] = useState<string[]>([]);
@@ -349,6 +387,7 @@ export default function ChatPage() {
     setShowFiles(false);
     setShowWorkspaceTree(true);
     lastFollowedToolRef.current = null;
+    previewSyncRef.current = null;
     setParentSessionId(null);
     setSessionBoundAgent(undefined);
     setSessionInfo(null);
@@ -732,10 +771,12 @@ export default function ChatPage() {
       api.listSessionFiles(currentSessionId).then(setSessionFiles).catch((e) => console.warn("Failed to list session files:", e));
     };
     poll();
-    if (!isStreaming) return;
-    const interval = setInterval(poll, 5000);
+    // While a file is open in the side panel, poll faster so edits land in
+    // the preview. Streaming alone still refreshes the file tree.
+    if (!isStreaming && !sidePreviewOpen) return;
+    const interval = setInterval(poll, sidePreviewOpen ? 2000 : 5000);
     return () => clearInterval(interval);
-  }, [currentSessionId, isStreaming]);
+  }, [currentSessionId, isStreaming, sidePreviewOpen]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -2105,13 +2146,58 @@ export default function ChatPage() {
     const diff = isEdit && typeof args?.old_string === "string"
       ? { oldText: args.old_string, newText: String(args.new_string ?? "") }
       : undefined;
-    setOpenArtifact({
-      path,
-      fileUrl: resolveFileUrl(path),
-      type,
-      diff,
+    setOpenArtifact((current) => {
+      const same = current != null && virtualPathsMatch(current.path, path);
+      return {
+        path,
+        fileUrl: resolveFileUrl(path),
+        type,
+        diff,
+        // A tool_call arrives before the write. Keep the current revision so
+        // the preview doesn't reload the pre-edit bytes; the sync effect
+        // below bumps it once the result (or a new mtime) lands.
+        revision: same ? current.revision : undefined,
+      };
     });
   }, [sessionMessages, resolveFileUrl]);
+
+  // Reload the side preview when the file it is showing is written again.
+  useEffect(() => {
+    if (!openArtifact) {
+      previewSyncRef.current = null;
+      return;
+    }
+    const key = normalizeVirtualPath(openArtifact.path);
+    const writeId = latestWriteResultId(openArtifact.path, sessionMessages);
+    const stamp = fileListStamp(openArtifact.path, sessionFiles);
+    const prev = previewSyncRef.current;
+    if (!prev || prev.path !== key) {
+      previewSyncRef.current = { path: key, writeId, stamp, awaitingStamp: false };
+      return;
+    }
+    const writeChanged = writeId != null && writeId !== prev.writeId;
+    if (writeChanged) {
+      // Keep the previous mtime so the listing catch-up doesn't fetch twice.
+      // The tool result means the write has already landed on disk.
+      previewSyncRef.current = { path: key, writeId, stamp: prev.stamp, awaitingStamp: true };
+      setOpenArtifact((current) => {
+        if (!current || normalizeVirtualPath(current.path) !== key) return current;
+        return { ...current, revision: (current.revision ?? 0) + 1 };
+      });
+      return;
+    }
+    const stampChanged = stamp != null && stamp !== prev.stamp;
+    if (!stampChanged) return;
+    if (prev.awaitingStamp) {
+      previewSyncRef.current = { path: key, writeId, stamp, awaitingStamp: false };
+      return;
+    }
+    previewSyncRef.current = { path: key, writeId, stamp, awaitingStamp: false };
+    setOpenArtifact((current) => {
+      if (!current || normalizeVirtualPath(current.path) !== key) return current;
+      return { ...current, revision: (current.revision ?? 0) + 1 };
+    });
+  }, [openArtifact, sessionMessages, sessionFiles]);
 
   const memoryHits = useMemo(() => {
     const agent = sessionMessages.filter((m) => m.type === "agent" && !m.metadata?.subagent);
