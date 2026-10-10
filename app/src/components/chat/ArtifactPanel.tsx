@@ -18,6 +18,18 @@ export interface Artifact {
   type: ArtifactType;
   /** When set, the panel can toggle a search-replace diff from an edit tool call. */
   diff?: { oldText: string; newText: string };
+  /**
+   * Bumped when the file on disk changes while this preview is open, so the
+   * panel reloads instead of keeping the first response.
+   */
+  revision?: number;
+}
+
+/** Cache-bust media and text fetches when `revision` advances. */
+function previewUrl(url: string, revision?: number): string {
+  if (!revision || url.startsWith("data:")) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}v=${revision}`;
 }
 
 // Source/script files opened as read-only code (Python and other common
@@ -114,12 +126,12 @@ export function MdViewerModal({ artifact, onClose }: MdViewerModalProps) {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(artifact.fileUrl)
+    fetch(previewUrl(artifact.fileUrl, artifact.revision), { cache: "no-store" })
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
       .then(setContent)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
-  }, [artifact.fileUrl]);
+  }, [artifact.fileUrl, artifact.revision]);
 
   // Close on Escape
   useEffect(() => {
@@ -222,29 +234,39 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
   const [iframeKey, setIframeKey] = useState(0);
   const [viewMode, setViewMode] = useState<"file" | "diff">(artifact.diff ? "diff" : "file");
   const [followEdits, setFollowEdits] = useState(getFollowFileEdits);
+  // Path+type of the document currently held in state. A revision bump reloads
+  // in place; switching files clears first so a slow response can't land on
+  // the wrong document.
+  const loadedIdentity = useRef<string | null>(null);
 
   useEffect(() => {
     setViewMode(artifact.diff ? "diff" : "file");
   }, [artifact.path, artifact.diff]);
 
   useEffect(() => {
-    setMdContent(null);
-    setDocxHtml(null);
-    setPlainText(null);
-    setJsonText(null);
-    setSheetRows(null);
-    setError(null);
+    const identity = `${artifact.path}\0${artifact.type}`;
+    const switched = loadedIdentity.current !== identity;
+    loadedIdentity.current = identity;
+    if (switched) {
+      setMdContent(null);
+      setDocxHtml(null);
+      setPlainText(null);
+      setJsonText(null);
+      setSheetRows(null);
+      setError(null);
+    }
 
     // Guard against a slow fetch for a previous artifact resolving after the
     // user switched artifacts (or closed the panel) and clobbering state.
     let cancelled = false;
     const apply = <T,>(setter: (v: T) => void) => (v: T) => { if (!cancelled) setter(v); };
-    const applyError = (e: unknown) => { if (!cancelled) setError(String(e)); };
+    const applyError = (e: unknown) => { if (!cancelled && switched) setError(String(e)); };
     const applyDone = () => { if (!cancelled) setLoading(false); };
+    const url = previewUrl(artifact.fileUrl, artifact.revision);
 
     if (artifact.type === "json") {
-      setLoading(true);
-      fetch(artifact.fileUrl)
+      if (switched) setLoading(true);
+      fetch(url, { cache: "no-store" })
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
         .then(apply((text: string) => {
           try { setJsonText(JSON.stringify(JSON.parse(text), null, 2)); }
@@ -253,22 +275,22 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
         .catch(applyError)
         .finally(applyDone);
     } else if (artifact.type === "md") {
-      setLoading(true);
-      fetch(artifact.fileUrl)
+      if (switched) setLoading(true);
+      fetch(url, { cache: "no-store" })
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
         .then(apply(setMdContent))
         .catch(applyError)
         .finally(applyDone);
     } else if (artifact.type === "txt" || artifact.type === "code") {
-      setLoading(true);
-      fetch(artifact.fileUrl)
+      if (switched) setLoading(true);
+      fetch(url, { cache: "no-store" })
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
         .then(apply(setPlainText))
         .catch(applyError)
         .finally(applyDone);
     } else if (artifact.type === "csv") {
-      setLoading(true);
-      fetch(artifact.fileUrl)
+      if (switched) setLoading(true);
+      fetch(url, { cache: "no-store" })
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
         .then(apply((text: string) => {
           const wb = XLSX.read(text, { type: "string" });
@@ -278,8 +300,8 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
         .catch(applyError)
         .finally(applyDone);
     } else if (artifact.type === "xlsx") {
-      setLoading(true);
-      fetch(artifact.fileUrl)
+      if (switched) setLoading(true);
+      fetch(url, { cache: "no-store" })
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
         .then(apply((buf: ArrayBuffer) => {
           const wb = XLSX.read(buf, { type: "array" });
@@ -289,8 +311,8 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
         .catch(applyError)
         .finally(applyDone);
     } else if (artifact.type === "docx") {
-      setLoading(true);
-      fetch(artifact.fileUrl)
+      if (switched) setLoading(true);
+      fetch(url, { cache: "no-store" })
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
         .then((buf) => mammoth.convertToHtml({ arrayBuffer: buf }))
         .then(apply((result: { value: string }) => setDocxHtml(result.value)))
@@ -299,7 +321,7 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
     }
 
     return () => { cancelled = true; };
-  }, [artifact.fileUrl, artifact.type]);
+  }, [artifact.fileUrl, artifact.type, artifact.path, artifact.revision]);
 
   const filename = artifact.path.split("/").pop() ?? artifact.path;
   const iconColor =
@@ -405,8 +427,8 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
           </div>
         ) : artifact.type === "html" ? (
           <iframe
-            key={iframeKey}
-            src={artifact.fileUrl}
+            key={`${iframeKey}:${artifact.revision ?? 0}`}
+            src={previewUrl(artifact.fileUrl, artifact.revision)}
             className="w-full h-full bg-white"
             title={filename}
             // No allow-same-origin: combined with allow-scripts it would let
@@ -416,15 +438,16 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
           />
         ) : artifact.type === "pdf" ? (
           <iframe
-            key={iframeKey}
-            src={artifact.fileUrl}
+            key={`${iframeKey}:${artifact.revision ?? 0}`}
+            src={previewUrl(artifact.fileUrl, artifact.revision)}
             className="w-full h-full bg-white"
             title={filename}
           />
         ) : artifact.type === "image" ? (
           <div className="h-full overflow-auto flex items-center justify-center p-6 bg-th-inset-bg/40">
             <img
-              src={artifact.fileUrl}
+              key={artifact.revision ?? 0}
+              src={previewUrl(artifact.fileUrl, artifact.revision)}
               alt={filename}
               className="max-w-full max-h-full object-contain rounded-lg border border-th-border bg-white"
             />
@@ -432,8 +455,8 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
         ) : artifact.type === "video" ? (
           <div className="h-full overflow-auto flex items-center justify-center p-6 bg-th-inset-bg/40">
             <video
-              key={artifact.fileUrl}
-              src={artifact.fileUrl}
+              key={`${artifact.fileUrl}:${artifact.revision ?? 0}`}
+              src={previewUrl(artifact.fileUrl, artifact.revision)}
               controls
               className="max-w-full max-h-full rounded-lg border border-th-border bg-black"
             />

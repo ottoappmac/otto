@@ -152,6 +152,7 @@ function FilesTab({
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const previewStampRef = useRef<{ path: string; stamp: string } | null>(null);
 
   const isPreviewable = (path: string) => {
     const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -164,20 +165,63 @@ function FilesTab({
   const isMarkdown = (path: string) => path.split(".").pop()?.toLowerCase() === "md";
   const isHtml = (path: string) => path.split(".").pop()?.toLowerCase() === "html";
 
-  const openPreview = async (path: string) => {
-    if (previewPath === path) { setPreviewPath(null); setPreviewContent(null); return; }
+  const openFile = previewPath ? files.find((f) => f.path === previewPath) : undefined;
+  const openStamp = openFile ? `${openFile.modified_at}:${openFile.size}` : "";
+  // Parent listings update while a run is live. This poll covers an open
+  // preview after that, and between those polls, so the pane tracks the file.
+  const [watchedStamp, setWatchedStamp] = useState("");
+  useEffect(() => {
+    if (!previewPath) { setWatchedStamp(""); return; }
+    let cancelled = false;
+    const tick = () => {
+      api.listSessionFiles(sessionId).then((list) => {
+        if (cancelled) return;
+        const f = list.find((x) => x.path === previewPath);
+        if (f) setWatchedStamp(`${f.modified_at}:${f.size}`);
+      }).catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [previewPath, sessionId]);
+  const effectiveStamp = (() => {
+    if (!watchedStamp) return openStamp;
+    if (!openStamp) return watchedStamp;
+    const watchedMtime = Number(watchedStamp.split(":")[0]);
+    const listedMtime = Number(openStamp.split(":")[0]);
+    if (watchedMtime !== listedMtime) return watchedMtime > listedMtime ? watchedStamp : openStamp;
+    return watchedStamp !== openStamp ? watchedStamp : openStamp;
+  })();
+
+  // Reload an open text preview when that file's size or mtime changes.
+  // Images pick up the new bytes through the cache-busted URL below.
+  useEffect(() => {
+    if (!previewPath || !effectiveStamp || isImage(previewPath) || !isPreviewable(previewPath)) return;
+    const prev = previewStampRef.current;
+    if (prev?.path === previewPath && prev.stamp === effectiveStamp) return;
+    const background = prev?.path === previewPath;
+    previewStampRef.current = { path: previewPath, stamp: effectiveStamp };
+    let cancelled = false;
+    if (!background) setPreviewLoading(true);
+    fetch(api.getSessionFileUrl(sessionId, previewPath), { cache: "no-store" })
+      .then((res) => res.text())
+      .then((text) => { if (!cancelled) setPreviewContent(text); })
+      .catch(() => { if (!cancelled && !background) setPreviewContent("(Failed to load file content)"); })
+      .finally(() => { if (!cancelled) setPreviewLoading(false); });
+    return () => { cancelled = true; };
+  }, [previewPath, effectiveStamp, sessionId]);
+
+  const openPreview = (path: string) => {
+    if (previewPath === path) {
+      setPreviewPath(null);
+      setPreviewContent(null);
+      previewStampRef.current = null;
+      return;
+    }
     setPreviewPath(path);
+    if (isImage(path) || !isPreviewable(path)) return;
     setPreviewContent(null);
-    if (isImage(path)) return; // images render via URL directly
-    if (!isPreviewable(path)) return;
     setPreviewLoading(true);
-    try {
-      const url = api.getSessionFileUrl(sessionId, path);
-      const res = await fetch(url);
-      const text = await res.text();
-      setPreviewContent(text);
-    } catch { setPreviewContent("(Failed to load file content)"); }
-    finally { setPreviewLoading(false); }
   };
 
   const openFolder = async () => {
@@ -214,7 +258,10 @@ function FilesTab({
           const name = f.path.split("/").pop() ?? f.path;
           const IconComp = fileIcon(f.path);
           const isOpen = previewPath === f.path;
-          const imgUrl = isImage(f.path) ? api.getSessionFileUrl(sessionId, f.path) : null;
+          const imgStamp = isOpen && watchedStamp ? watchedStamp : `${f.modified_at}:${f.size}`;
+          const imgUrl = isImage(f.path)
+            ? `${api.getSessionFileUrl(sessionId, f.path)}?v=${encodeURIComponent(imgStamp)}`
+            : null;
           const downloadUrl = api.getSessionFileUrl(sessionId, f.path);
 
           return (
@@ -786,19 +833,29 @@ export default function RunDetailPage() {
     if (!id || !run) return;
     if (run.status !== "running" && run.status !== "awaiting_input") return;
     try {
-      const [tlData, runsData, msgsData] = await Promise.all([
+      const [tlData, runsData, msgsData, filesData] = await Promise.all([
         api.getSessionTimeline(id),
         api.listRuns({ limit: 1 }),
         api.getSessionMessages(id).catch(() => null),
+        api.listSessionFiles(id).catch(() => null),
       ]);
       setTimeline(tlData);
       const found = runsData.runs.find((r) => r.session_id === id || r.id === id);
       if (found) setRun(found);
       if (msgsData) setSessionMessages(msgsData);
+      if (filesData) setSessionFiles(filesData);
     } catch {/* ignore */}
   }, [id, run]);
 
   usePolling(pollStatus, POLL_MS);
+
+  // One more file listing when a run leaves the running state, so a preview
+  // open on the last file the agent wrote picks up the final bytes.
+  useEffect(() => {
+    if (!id || !run) return;
+    if (run.status === "running" || run.status === "awaiting_input") return;
+    api.listSessionFiles(id).then(setSessionFiles).catch(() => {});
+  }, [id, run?.status]);
 
   // WebSocket for live streaming events
   useEffect(() => {
@@ -817,6 +874,10 @@ export default function RunDetailPage() {
         // graph updates immediately instead of waiting for the next poll.
         if (raw.type === "tool_call" || raw.type === "tool_result" || raw.type === "agent") {
           setSessionMessages((prev) => [...prev, raw as unknown as Record<string, unknown>]);
+        }
+        // A finished tool may have rewritten a file the Files tab is showing.
+        if (raw.type === "tool_result" || raw.type === "done") {
+          api.listSessionFiles(id).then(setSessionFiles).catch(() => {});
         }
         // Fold token deltas into one assistant row (same contract as chat).
         setLiveEvents((prev) => applyLiveTimelineMessage(prev, raw));
