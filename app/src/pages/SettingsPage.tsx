@@ -13,11 +13,12 @@ import ModelChooser from "../components/mlx/ModelChooser";
 import { OmlxModelPicker } from "../components/omlx/OmlxModelPicker";
 import { MemoryPanel, AmbientPanel } from "./MemoryPage";
 import VoiceModelChooser from "../components/voice/VoiceModelChooser";
+import DecisionPanel from "../components/decision/DecisionPanel";
 import { DistilledModelsTab } from "../components/distillation/DistilledModelsTab";
 import type { AppSettings, DistillAdapter, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
 import { getFollowFileEdits, setFollowFileEdits } from "../utils/followFileEdits";
 
-const TABS = ["LLM", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Video", "Advanced", "Observability", "Privacy & Security", "About"] as const;
+const TABS = ["LLM", "Jev", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Video", "Advanced", "Observability", "Privacy & Security", "About"] as const;
 type Tab = (typeof TABS)[number];
 
 const LLM_SUBTABS = ["Model Provider", "Standard", "Turbo", "Cluster", "Frontier"] as const;
@@ -334,6 +335,18 @@ const DEFAULT_SETTINGS: AppSettings = {
     student_model_id: "mlx-community/Qwen3-8B-4bit",
     filter_sessions_by_teacher: false,
   },
+  decision: {
+    enabled: false,
+    model_repo: "mlx-community/diffusiongemma-26B-A4B-it-4bit",
+    port: 52416,
+    idle_stop_minutes: 10,
+    mlx_cache_limit_gb: 4,
+    runtime_ref: "75f22b6dad8c360fdba0e0ebd3dc0a1187628f60",
+    confident_threshold: 0.85,
+    unsure_threshold: 0.6,
+    max_calls_per_turn: 8,
+    endpoint_override: "",
+  },
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -342,7 +355,8 @@ export default function SettingsPage() {
   const location = useLocation();
   const { initialTab, initialSub } = useMemo(() => {
     const params = new URLSearchParams(location.search);
-    const t = params.get("tab");
+    const rawTab = params.get("tab");
+    const t = rawTab === "Decisions" ? "Jev" : rawTab;
     const s = params.get("sub")?.trim() ?? "";
     const normalizedSub =
       s.toLowerCase() === "exo"
@@ -350,7 +364,8 @@ export default function SettingsPage() {
         : s.toLowerCase() === "on-device"
           ? "Standard"
           : s;
-    const savedTab = sessionStorage.getItem("otto:settings:tab");
+    const savedRaw = sessionStorage.getItem("otto:settings:tab");
+    const savedTab = savedRaw === "Decisions" ? "Jev" : savedRaw;
     const savedSub = sessionStorage.getItem("otto:settings:llmSubTab");
     const tab: Tab = (TABS as readonly string[]).includes(t ?? "")
       ? (t as Tab)
@@ -468,6 +483,7 @@ export default function SettingsPage() {
           ...s,
           orchestrator: orch,
           distillation: { ...DEFAULT_SETTINGS.distillation, ...(s.distillation ?? {}) },
+          decision: { ...DEFAULT_SETTINGS.decision, ...(s.decision ?? {}) },
           llm: {
             ...DEFAULT_SETTINGS.llm,
             ...(s.llm ?? {}),
@@ -3661,6 +3677,10 @@ export default function SettingsPage() {
 
         {tab === "Voice" && settings && (
           <VoiceSettingsPanel settings={settings} setSettings={setSettings} onSave={persistSettings} />
+        )}
+
+        {tab === "Jev" && settings && (
+          <DecisionPanel settings={settings} setSettings={setSettings} onSave={persistSettings} />
         )}
 
         {tab === "Video" && (() => {

@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import signal
+import sys
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -55,6 +56,7 @@ from backend.routes.mlx import router as mlx_router
 from backend.routes.exo import router as exo_router
 from backend.routes.node import router as node_router
 from backend.routes.omlx import router as omlx_router
+from backend.routes.decision import router as decision_router
 from backend.routes.privacy import router as privacy_router
 from backend.routes.vault import router as vault_router
 from backend.routes.activity import router as activity_router
@@ -190,6 +192,29 @@ async def _ensure_uv_present() -> None:
         logger.warning(
             "Auto-provision: uv install ended with status=%s error=%s",
             job.status, job.error,
+        )
+
+
+async def _ensure_decision_runtime(cfg: AppConfig) -> None:
+    """Install the pinned OpenJev package for a packaged app.
+
+    Dev installs get the same venv from ``install.sh``, ``start_app.sh``, and ``start_web.sh``.
+    The GitHub-built app carries a signed copy of that venv
+    (``scripts/build_openjev.py``). This fallback covers a packaged build
+    that shipped without it. Model weights are not downloaded.
+    """
+    try:
+        from backend.decision_runtime import install_sync, runtime_current
+
+        decision = cfg.decision
+        if runtime_current(decision):
+            return
+        logger.info("Installing decision runtime %s", (decision.runtime_ref or "")[:12])
+        await asyncio.to_thread(install_sync, decision)
+        logger.info("Decision runtime installed")
+    except Exception:
+        logger.exception(
+            "Jev runtime install failed. Retry from Settings → Jev."
         )
 
 
@@ -672,12 +697,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     from backend.exo_provisioner import auto_start_if_enabled as _exo_auto_start
     asyncio.create_task(_exo_auto_start(cfg))
+    if getattr(sys, "frozen", False):
+        asyncio.create_task(_ensure_decision_runtime(cfg))
 
     from backend.openclaw_watcher import oc_watcher
     if cfg.openclaw.enabled and cfg.openclaw.watcher_enabled:
         await oc_watcher.start(poll_interval=cfg.openclaw.watcher_poll_interval)
 
     yield
+    try:
+        from backend.decision_runtime import stop_sync as _stop_decision
+        _stop_decision()
+    except Exception:
+        logger.debug("Decision sidecar stop on shutdown failed", exc_info=True)
     await oc_watcher.stop()
     shutdown_scheduler()
     health_task.cancel()
@@ -733,6 +765,7 @@ app.include_router(embeddings_router)
 app.include_router(mlx_router)
 app.include_router(exo_router)
 app.include_router(omlx_router)
+app.include_router(decision_router)
 app.include_router(node_router)
 app.include_router(privacy_router)
 app.include_router(vault_router)

@@ -39,6 +39,7 @@
     ],
     "resources": {
       "resources/backend/": "backend/",
+      "resources/openjev/": "openjev/",
       "audiotap/.build/release/otto-audiotap": "audiotap/otto-audiotap"
     },
     "macOS": {

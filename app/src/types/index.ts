@@ -1608,6 +1608,20 @@ export interface VideoConfig {
   live_batch_frames: number;
 }
 
+export interface DecisionConfig {
+  enabled: boolean;
+  model_repo: string;
+  port: number;
+  idle_stop_minutes: number;
+  mlx_cache_limit_gb: number;
+  runtime_ref: string;
+  confident_threshold: number;
+  unsure_threshold: number;
+  max_calls_per_turn: number;
+  /** Empty means the local sidecar. A non-loopback URL sends state off the machine. */
+  endpoint_override: string;
+}
+
 export interface OmlxConfig {
   enabled: boolean;
   api_port: number;
@@ -1852,6 +1866,7 @@ export interface AppSettings {
   ambient: AmbientConfig;
   voice: VoiceConfig;
   distillation: DistillationConfig;
+  decision: DecisionConfig;
 }
 
 // ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ success "Node.js $(node -v) found."
 
 ensure_venv
 sync_python_deps
+ensure_openjev
 ensure_env_file
 
 # ── Optional: pygraphviz for LangGraph draw_mermaid_png ───────────────

@@ -57,6 +57,8 @@ if [[ "$SKIP_INSTALL" == false ]]; then
     info "Installing frontend dependencies (npm install)..."
     npm install --prefix "$APP_DIR" --silent
     success "Frontend dependencies installed."
+
+    ensure_openjev
 else
     info "--no-install: skipping dependency installation."
 fi

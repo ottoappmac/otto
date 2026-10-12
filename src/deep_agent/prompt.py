@@ -244,6 +244,22 @@ details that matter for the task at hand.
 </tool_results>"""
 
 
+_DECIDE_GUIDANCE = """\
+<jev>
+`jev` asks a local classifier when you are torn between concrete options
+or unsure whether to proceed. Put the evidence you already have in
+`situation`. Omit `options` for a yes/no. Pass `scale` for an ordered rating.
+
+Use it for "which of these?", not "what is true?". Do not use it for facts,
+for a trivial choice, or to avoid reading a file.
+
+The result is advisory. A confident answer is not permission for a
+destructive, external, or irreversible action. Approvals still apply. If
+the verdict is UNSURE, call `ask_user` (on an unattended run, take the
+safest reversible option or stop and report).
+</jev>"""
+
+
 _ASK_USER_GUIDANCE = """\
 <ask_user>
 Use `ask_user` when intent is genuinely ambiguous and a wrong guess costs
@@ -858,7 +874,12 @@ def _build_lite_subagents_section(subagents: List[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _build_lite_guidance(subagent_names: set[str], *, activity_tools: bool = False) -> str:
+def _build_lite_guidance(
+    subagent_names: set[str],
+    *,
+    activity_tools: bool = False,
+    decide_tool: bool = False,
+) -> str:
     """Lite guidance block.  Substitutes whichever browser /
     AppleScript / desktop subagent is registered and drops UI fallback
     bullets entirely if none is available.  AppleScript precedes
@@ -907,10 +928,17 @@ def _build_lite_guidance(subagent_names: set[str], *, activity_tools: bool = Fal
         if activity_tools else ""
     )
 
+    decide_line = (
+        "- Unsure between concrete options: call `jev` "
+        "(advisory; never a substitute for approval or for reading a file).\n"
+        if decide_tool else ""
+    )
+
     return (
         "<guidance>\n"
         + _LITE_GUIDANCE_STATIC
         + "\n"
+        + decide_line
         + activity_line
         + missing_tool_line
         + "\n"
@@ -948,17 +976,26 @@ def _has_activity_tools(tools: List[BaseTool]) -> bool:
     return bool(names & _ACTIVITY_TOOL_NAMES)
 
 
+def _has_decide_tool(tools: List[BaseTool]) -> bool:
+    return any(getattr(tool, "name", "") == "jev" for tool in tools)
+
+
 def build_orchestrator_prompt(
     tools: List[BaseTool],
     subagents: List[dict[str, Any]] | None = None,
     *,
     lite: bool = False,
+    decide: bool | None = None,
 ) -> str:
     """Assemble the orchestrator system prompt from active components.
 
     Args:
         tools: The direct tools bound to the orchestrator.  Used for the
             (optional) capability-ladder gating in full mode.
+        decide: Whether to include the ``jev`` guidance.  ``None`` (the
+            default) infers it from *tools*.  Callers that build the prompt
+            before the final tool list exists pass the setting directly, so
+            the guidance appears only while the tool is attached.
         subagents: Library subagents the orchestrator can delegate to via
             ``task(...)``.  Their names drive the per-agent delegation
             hints AND which browser/desktop fallback rungs the
@@ -980,6 +1017,7 @@ def build_orchestrator_prompt(
     """
     subagent_names = {sa["name"] for sa in (subagents or [])}
     has_activity = _has_activity_tools(tools)
+    has_decide = _has_decide_tool(tools) if decide is None else bool(decide)
 
     if lite:
         sections = [
@@ -987,7 +1025,11 @@ def build_orchestrator_prompt(
             _LITE_WORKFLOW,
             _build_lite_rules_section(subagent_names),
             _build_lite_subagents_section(subagents or []),
-            _build_lite_guidance(subagent_names, activity_tools=has_activity),
+            _build_lite_guidance(
+                subagent_names,
+                activity_tools=has_activity,
+                decide_tool=has_decide,
+            ),
         ]
         return "\n\n".join(s for s in sections if s).strip()
 
@@ -1004,6 +1046,7 @@ def build_orchestrator_prompt(
         # create_agent_config etc.
         _build_capability_ladder(subagent_names, activity_tools=has_activity) if _has_capability_gap_tools(tools) else "",
         _ACTION_SAFETY,
+        _DECIDE_GUIDANCE if has_decide else "",
         _ASK_USER_GUIDANCE,
     ]
     return "\n\n".join(s for s in sections if s).strip()

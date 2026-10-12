@@ -113,7 +113,7 @@ def test_seeded_coding_prompt_and_skill_are_light(isolated_app_data: Path):
     spec = agent_library.get_agent("coding-agent")
     assert spec is not None
     assert spec.tools == []
-    assert spec.skills == ["coding"]
+    assert spec.skills == ["coding", "decision-making"]
     assert "Do not use `write_todos`" in spec.system_prompt
     assert "edit_file" in spec.system_prompt
     assert "/links/" in spec.system_prompt

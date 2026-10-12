@@ -1297,6 +1297,33 @@ class SetupState(BaseModel):
     completed_steps: list[str] = Field(default_factory=list)
 
 
+class DecisionConfig(BaseModel):
+    """Local OpenJev sidecar behind the ``jev`` tool.
+
+    Off by default, so a session pays nothing until the user turns it on.
+    The server runs in its own venv: OpenJev's MLX stack conflicts with
+    Otto's mlx-lm pins. Weights are downloaded through the existing MLX
+    Hub job (``POST /api/mlx/download``), not a second downloader.
+
+    ``endpoint_override`` empty means the loopback sidecar. A non-loopback
+    URL sends the decision ``situation`` off the machine and is refused
+    while the privacy lock is engaged.
+    """
+
+    enabled: bool = False
+    model_repo: str = "mlx-community/diffusiongemma-26B-A4B-it-4bit"
+    port: int = 52416
+    idle_stop_minutes: int = 10
+    mlx_cache_limit_gb: float = 4
+    # razorback16/openjev 0.6.0. Bump deliberately; the MLX extra is pinned
+    # by that commit's pyproject (mlx-vlm==0.6.15).
+    runtime_ref: str = "75f22b6dad8c360fdba0e0ebd3dc0a1187628f60"
+    confident_threshold: float = 0.85
+    unsure_threshold: float = 0.6
+    max_calls_per_turn: int = 8
+    endpoint_override: str = ""
+
+
 class DistillationConfig(BaseModel):
     """On-device model distillation (LoRA on a user-chosen student).
 
@@ -1348,6 +1375,7 @@ class AppConfig(BaseModel):
     ambient: AmbientConfig = Field(default_factory=AmbientConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     distillation: DistillationConfig = Field(default_factory=DistillationConfig)
+    decision: DecisionConfig = Field(default_factory=DecisionConfig)
 
     @model_validator(mode="after")
     def _fix_memory_llm_family(self) -> "AppConfig":

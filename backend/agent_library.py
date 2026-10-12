@@ -268,7 +268,24 @@ def _grounding_block(name: str) -> str:
         block += _GROUNDING_UI
     elif (tools & _EVAL_TOOL_HINTS) or slug.endswith("session-eval-agent"):
         block += _GROUNDING_EVAL
-    return block
+    return block + _decide_prompt_hint()
+
+
+def _decide_prompt_hint() -> str:
+    """Short harness hint for every library agent, only when Jev is on."""
+    try:
+        from backend.config import AppConfig
+        if not AppConfig.load().decision.enabled:
+            return ""
+    except Exception:
+        return ""
+    return (
+        "\n\n## jev\n"
+        "When you are torn between concrete options, call `jev` with the "
+        "evidence in `situation`. It is advisory: do not use it for facts, to "
+        "skip reading a file, or as permission for a destructive, external, or "
+        "irreversible action. If the verdict is UNSURE, call `ask_user`.\n"
+    )
 
 
 def get_agent_system_prompt(name: str) -> str:
@@ -397,6 +414,93 @@ def get_skills_root() -> str:
     return str(_skills_dir())
 
 
+_DECISION_SKILL_CONTENT = """---
+name: decision-making
+description: Use the jev tool when you are torn between concrete options or unsure whether to proceed.
+---
+
+# decision-making
+
+`jev` is a local classifier. It does not know facts and it cannot look
+things up. You put the evidence in `situation`; it returns a choice (or a
+yes/no, or a score) plus a confidence and a margin.
+
+The answer is advisory. A confident result is not permission for a
+destructive, external, or irreversible action. Approvals still apply.
+
+## When to call it
+
+- You have two or more real options and a wrong guess costs work.
+- You are unsure whether to proceed, ask the user, or stop.
+- A user message could be a question or an instruction, and the next step depends on which.
+
+## When not to call it
+
+- You need a fact. Read the file, run the search, or ask the user.
+- The choice is trivial (naming a temp file, formatting).
+- You would be using it to avoid reading something you already have a path to.
+
+## How to write the call
+
+- `situation` is the evidence, in your words: what the user said, what you already read, the constraint.
+- `question` is one decision.
+- `options` is a short list, or an object of label to description. At most 12. Omit it for yes/no.
+- `scale` is an ordered list, lowest to highest, only when you want a rating.
+
+## How to read the result
+
+- CONFIDENT: proceed with that option. Still get approval for anything destructive.
+- MODERATE: do one cheap check (re-read a line, list the directory) before committing.
+- UNSURE: call `ask_user`. On a schedule or trigger, where nobody can answer, take the safest reversible option or stop and report.
+
+## Examples
+
+Which subagent, after you know the task touches a Mac app and the web:
+
+```
+jev(
+  situation="User asked to pull the latest invoice from Mail and upload it to the billing page.",
+  question="Which part should be delegated first?",
+  options={"mail": "Read the invoice from Mail", "browser": "Upload a file to a website"}
+)
+```
+
+Which file they meant:
+
+```
+jev(
+  situation="User said 'update the config'. The repo has otto/config.json and app/src/config.ts. The last edit they mentioned was the desktop settings screen.",
+  question="Which file should be edited?",
+  options=["backend config.json", "frontend config.ts", "ask which one"]
+)
+```
+
+Question or instruction:
+
+```
+jev(
+  situation="User sent: 'the build is red again'. No explicit request.",
+  question="Is the user asking you to investigate the build?",
+)
+```
+
+Whether to ask:
+
+```
+jev(
+  situation="Two MCP servers both expose a tool named search. The user said 'search my notes' and one server is macos-notes.",
+  question="Should you ask which search they mean?",
+)
+```
+
+## Anti-patterns
+
+- Calling `jev` in a loop on the same question. One call, then act or ask.
+- Passing the whole file as `situation`. Summarize the part that matters.
+- Treating confidence as a reason to skip an approval dialog.
+"""
+
+
 _BUILTIN_SKILL_VERSIONS: dict[str, int] = {
     "playwright-browser": 13,
     "claude-session-eval": 7,
@@ -407,18 +511,19 @@ _BUILTIN_SKILL_VERSIONS: dict[str, int] = {
     "trigger-builder": 3,
     "blender-3d-modeling": 2,
     "coding": 2,
+    "decision-making": 2,
 }
 
 _BUILTIN_AGENT_VERSIONS: dict[str, int] = {
-    "browser-agent": 15,
-    "claude-session-eval-agent": 11,
-    "openclaw-session-eval-agent": 2,
-    "macos-desktop-agent": 1,
-    "macos-applescript-agent": 3,
-    "mcp-builder-agent": 3,
-    "trigger-builder-agent": 4,
-    "schedule-builder-agent": 1,
-    "coding-agent": 2,
+    "browser-agent": 16,
+    "claude-session-eval-agent": 12,
+    "openclaw-session-eval-agent": 3,
+    "macos-desktop-agent": 2,
+    "macos-applescript-agent": 4,
+    "mcp-builder-agent": 4,
+    "trigger-builder-agent": 5,
+    "schedule-builder-agent": 2,
+    "coding-agent": 3,
 }
 
 
@@ -1198,13 +1303,19 @@ def seed_defaults() -> None:
         content=_CODING_SKILL_CONTENT,
     )
 
+    _seed_skill(
+        name="decision-making",
+        description="Use the jev tool when you are torn between concrete options or unsure whether to proceed. Advisory only; never a substitute for reading a file or for an approval.",
+        content=_DECISION_SKILL_CONTENT,
+    )
+
     # --- Agents ---
     _seed_agent(
         name="claude-session-eval-agent",
         description="Evaluates Claude Code and Cowork agent sessions — reads transcripts, computes quality and efficiency metrics, and runs LLM-as-judge evaluations. Supports both real-time (tail) and offline (post-session) analysis.",
         system_prompt=_CLAUDE_SESSION_EVAL_PROMPT,
         tools=["claude-eval-hook", "agent-eval-service"],
-        skills=["claude-session-eval"],
+        skills=["claude-session-eval", "decision-making"],
     )
 
     _seed_agent(
@@ -1212,7 +1323,7 @@ def seed_defaults() -> None:
         description="Automates web application interactions using Playwright MCP browser tools — navigates pages, fills forms, clicks elements, and extracts data.",
         system_prompt=_PLAYWRIGHT_AGENT_PROMPT,
         tools=["playwright-mcp", "agent-eval-service"],
-        skills=["playwright-browser"],
+        skills=["playwright-browser", "decision-making"],
     )
 
     _seed_agent(
@@ -1220,7 +1331,7 @@ def seed_defaults() -> None:
         description="Evaluates OpenClaw agent sessions — reads transcripts (local or SSH), computes quality and efficiency metrics, and runs LLM-as-judge evaluations. Supports both real-time (tail) and offline (post-session) analysis.",
         system_prompt=_OPENCLAW_SESSION_EVAL_PROMPT,
         tools=["openclaw-eval-hook", "agent-eval-service"],
-        skills=["openclaw-session-eval"],
+        skills=["openclaw-session-eval", "decision-making"],
     )
 
     _seed_agent(
@@ -1228,7 +1339,7 @@ def seed_defaults() -> None:
         description="Automates native macOS desktop apps using Accessibility tools and pyautogui — open apps, click controls, type into fields, read values (macOS only; requires Accessibility permission).",
         system_prompt=_MACOS_DESKTOP_AGENT_PROMPT,
         tools=["macos-native"],
-        skills=["macos-desktop"],
+        skills=["macos-desktop", "decision-making"],
     )
 
     _seed_agent(
@@ -1236,7 +1347,7 @@ def seed_defaults() -> None:
         description="Reads or updates state in native macOS apps and system settings via AppleScript / JXA executed through the macos-osascript MCP. Preferred over UI automation for any local-app read/update where the target app has an AppleScript dictionary (Mail, Notes, Calendar, Reminders, Music, Spotify, Safari, Finder, Messages, System Events). Falls back to macos-desktop-agent (UI automation) when the dictionary doesn't expose the required verb.",
         system_prompt=_MACOS_APPLESCRIPT_AGENT_PROMPT,
         tools=["macos-osascript"],
-        skills=["macos-applescript"],
+        skills=["macos-applescript", "decision-making"],
     )
 
     _seed_agent(
@@ -1244,7 +1355,7 @@ def seed_defaults() -> None:
         description="Authors new MCP servers (FastMCP, Python) from API specs OR registers existing third-party MCPs. Owns the full lifecycle: API spec discovery, secure credential acquisition via OS keychain, code generation under a strict audit allowlist, smoke testing, and lifecycle wiring. Never sees credential values — they're injected into the MCP subprocess at spawn time only.",
         system_prompt=_MCP_BUILDER_AGENT_PROMPT,
         tools=[],  # mcp_builder_tools and ask_user_tools are auto-attached
-        skills=["mcp-builder"],
+        skills=["mcp-builder", "decision-making"],
     )
 
     _seed_agent(
@@ -1252,7 +1363,7 @@ def seed_defaults() -> None:
         description="Wires up custom triggers — fires a worker agent when a file changes (fileos) or an osascript output transitions (macostool). Always creates the worker agent first when one doesn't exist, then the trigger. Smoke-tests AppleScript via the macos-osascript MCP before persisting.",
         system_prompt=_TRIGGER_BUILDER_AGENT_PROMPT,
         tools=["macos-osascript"],
-        skills=["trigger-builder"],
+        skills=["trigger-builder", "decision-making"],
     )
 
     _seed_agent(
@@ -1260,7 +1371,7 @@ def seed_defaults() -> None:
         description="Wires up recurring (cron-style) scheduled agent runs — picks or builds a worker agent first, validates the cron cadence, then creates the schedule. Manages the full schedule lifecycle (list/update/delete/run-now). Use for time-based recurring jobs; use the trigger-builder-agent for condition/event-driven firing.",
         system_prompt=_SCHEDULE_BUILDER_AGENT_PROMPT,
         tools=[],  # schedule_tools and management/ask_user tools are auto-attached
-        skills=[],
+        skills=["decision-making"],
     )
 
     _seed_agent(
@@ -1273,7 +1384,7 @@ def seed_defaults() -> None:
         ),
         system_prompt=_CODING_AGENT_PROMPT,
         tools=[],  # file/shell tools are always attached; no extra MCP required
-        skills=["coding"],
+        skills=["coding", "decision-making"],
     )
 
 
