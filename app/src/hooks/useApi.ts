@@ -188,11 +188,7 @@ export const api = {
       { method: "POST" },
     ),
   decisionSnapshot: () =>
-    request<{
-      config: import("../types").DecisionConfig;
-      status: Record<string, unknown>;
-      models: Record<string, unknown>[];
-    }>("/api/decision"),
+    request<import("../types").DecisionSnapshot>("/api/decision"),
   decisionJob: (jobId: string) =>
     request<{ id: string; kind: string; status: string; message: string; error: string | null }>(
       `/api/decision/jobs/${encodeURIComponent(jobId)}`,

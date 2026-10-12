@@ -1,40 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, Loader2, Sparkles, X } from "lucide-react";
 import { api } from "../../hooks/useApi";
-import type { AppSettings, DecisionConfig, MlxDownloadJob } from "../../types";
-
-interface DecisionModelRow {
-  repo_id: string;
-  display_name: string;
-  quant: string;
-  weights_gb: number;
-  resident_gb: number;
-  license: string;
-  blurb: string;
-  featured?: boolean;
-  fits: "comfortable" | "tight" | "over" | "unknown" | string;
-  disk_ok: boolean;
-  already_cached?: boolean;
-  cache_complete?: boolean;
-}
-
-interface DecisionStatus {
-  installed: boolean;
-  installed_ref: string;
-  running: boolean;
-  model_cached: boolean;
-  fit: string;
-  endpoint: string;
-  local: boolean;
-  remote_key_set: boolean;
-  port: number;
-}
-
-interface Snapshot {
-  config: DecisionConfig;
-  status: DecisionStatus;
-  models: DecisionModelRow[];
-}
+import type {
+  AppSettings,
+  DecisionConfig,
+  DecisionModelRow,
+  DecisionSnapshot as Snapshot,
+  MlxDownloadJob,
+} from "../../types";
 
 const TYPESAFE_URL = "https://api.typesafe.ai";
 
@@ -349,7 +322,7 @@ export default function DecisionPanel({
 
   const refresh = useCallback(async () => {
     try {
-      const next = await api.decisionSnapshot() as Snapshot;
+      const next = await api.decisionSnapshot();
       setSnap(next);
       setError("");
     } catch (err) {
