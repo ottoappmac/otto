@@ -70,6 +70,9 @@ app/src-tauri/audiotap/.build/
 app/src-tauri/binaries/
 # PyInstaller --onedir backend bundled as Tauri resources
 app/src-tauri/resources/backend/
+# OpenJev venv built by scripts/build_openjev.py for the packaged app
+app/src-tauri/resources/openjev/**
+!app/src-tauri/resources/openjev/.gitkeep
 # Playwright MCP bundled node binary + node_modules (too large for git)
 app/src-tauri/resources/playwright-mcp/
 

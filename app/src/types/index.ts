@@ -1608,6 +1608,54 @@ export interface VideoConfig {
   live_batch_frames: number;
 }
 
+export interface DecisionConfig {
+  enabled: boolean;
+  model_repo: string;
+  port: number;
+  idle_stop_minutes: number;
+  mlx_cache_limit_gb: number;
+  runtime_ref: string;
+  confident_threshold: number;
+  unsure_threshold: number;
+  max_calls_per_turn: number;
+  /** Empty means the local sidecar. A non-loopback URL sends state off the machine. */
+  endpoint_override: string;
+}
+
+/** One row of the Jev model list (GET /api/decision). */
+export interface DecisionModelRow {
+  repo_id: string;
+  display_name: string;
+  quant: string;
+  weights_gb: number;
+  resident_gb: number;
+  license: string;
+  blurb: string;
+  featured?: boolean;
+  fits: "comfortable" | "tight" | "over" | "unknown" | string;
+  disk_ok: boolean;
+  already_cached?: boolean;
+  cache_complete?: boolean;
+}
+
+export interface DecisionStatus {
+  installed: boolean;
+  installed_ref: string;
+  running: boolean;
+  model_cached: boolean;
+  fit: string;
+  endpoint: string;
+  local: boolean;
+  remote_key_set: boolean;
+  port: number;
+}
+
+export interface DecisionSnapshot {
+  config: DecisionConfig;
+  status: DecisionStatus;
+  models: DecisionModelRow[];
+}
+
 export interface OmlxConfig {
   enabled: boolean;
   api_port: number;
@@ -1852,6 +1900,7 @@ export interface AppSettings {
   ambient: AmbientConfig;
   voice: VoiceConfig;
   distillation: DistillationConfig;
+  decision: DecisionConfig;
 }
 
 // ---------------------------------------------------------------------------

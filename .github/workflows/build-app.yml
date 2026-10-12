@@ -11,6 +11,7 @@ on:
       - "backend/**"
       - "pyproject.toml"
       - "scripts/build_backend.py"
+      - "scripts/build_openjev.py"
       - ".github/workflows/build-app.yml"
   workflow_dispatch:
 
@@ -63,6 +64,12 @@ jobs:
 
       - name: Build Python backend
         run: python scripts/build_backend.py
+
+      # Relocatable OpenJev venv. Tauri copies resources/openjev into the
+      # .app; the sign step below covers its Mach-O files. A first-launch
+      # pip install would leave unsigned binaries in a notarised app.
+      - name: Bundle OpenJev decision runtime
+        run: python scripts/build_openjev.py
 
       - uses: actions/setup-node@v6
         with:
@@ -353,6 +360,28 @@ jobs:
           else
             echo "WARNING: audiotap binary not found at $AUDIOTAP"
           fi
+
+          # ── 3c. Sign the bundled OpenJev runtime ────────────────────────
+          # Built by scripts/build_openjev.py into resources/openjev and
+          # copied here by Tauri. The interpreter gets the same JIT
+          # entitlements as the backend: MLX compiles Metal shaders at
+          # runtime. Other Mach-O files are signed without entitlements.
+          OPENJEV="$APP/Contents/Resources/openjev"
+          if [ ! -f "$OPENJEV/venv/bin/python" ]; then
+            echo "ERROR: bundled OpenJev runtime missing at $OPENJEV/venv/bin/python"
+            ls -la "$APP/Contents/Resources/" || true
+            exit 1
+          fi
+          find "$OPENJEV" -type f \
+            \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) \
+          | while read -r f; do
+            if file "$f" | grep -qE "Mach-O|shared library"; then
+              case "$f" in
+                */bin/python*) sign_one "$f" "$ENTITLEMENTS" ;;
+                *) sign_one "$f" ;;
+              esac
+            fi
+          done
 
           # ── 4. Re-sign the .app bundle ──────────────────────────────────
           # All nested code is now correctly signed. Sign the main Tauri

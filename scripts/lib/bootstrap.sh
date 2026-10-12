@@ -182,6 +182,30 @@ sync_python_deps() {
     success "Python dependencies installed."
 }
 
+# ── OpenJev decision runtime ──────────────────────────────────────────
+# Its own uv venv under Application Support. Otto's environment cannot
+# take this package: the MLX pins conflict. Model weights are not
+# downloaded here. A failure must not stop Otto from starting.
+ensure_openjev() {
+    if (cd "$OTTO_ROOT" && "$VENV_DIR/bin/python" -c '
+from backend.config import DecisionConfig
+from backend.decision_runtime import runtime_current
+raise SystemExit(0 if runtime_current(DecisionConfig()) else 1)
+'); then
+        return 0
+    fi
+    info "Installing the decision runtime (separate environment). First run can take a few minutes…"
+    if (cd "$OTTO_ROOT" && "$VENV_DIR/bin/python" -c '
+from backend.config import DecisionConfig
+from backend.decision_runtime import install_sync
+install_sync(DecisionConfig())
+'); then
+        success "Decision runtime installed."
+    else
+        warn "Decision runtime install failed. Otto will still start. Retry from Settings → Decisions."
+    fi
+}
+
 # ── .env ──────────────────────────────────────────────────────────────
 ensure_env_file() {
     if [[ -f "$OTTO_ROOT/.env" ]]; then

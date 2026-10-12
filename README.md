@@ -35,7 +35,7 @@ Per-page guides for the desktop UI (each with screenshots). The pages below map 
 | Triggers | [`triggers.md`](./docs/triggers.md) | Event-driven runs, plus Claude Code hooks and OpenClaw session watching |
 | Activity | [`activity.md`](./docs/activity.md) | The on-device macOS activity timeline |
 | Distill | [`distill.md`](./docs/distill.md) | On-device LoRA distillation from session traces or an uploaded JSONL |
-| Settings | [`settings.md`](./docs/settings.md) | LLM, Agent Memory, Voice, Video, Privacy, and all other settings |
+| Settings | [`settings.md`](./docs/settings.md) | LLM, Agent Memory, Voice, Video, Jev, Privacy, and all other settings |
 
 Also in [`docs/`](./docs/): [`QUICKSTART.md`](./docs/QUICKSTART.md) (install the `.dmg`, run from source in the browser without Rust, run the native app, download MLX models via the CLI) and [`features.md`](./docs/features.md) (a longer, screenshot-heavy feature tour).
 
@@ -80,6 +80,7 @@ The `DeepAgent` (`src/deep_agent/`) is a LangGraph ReAct graph that wires up a c
 | `view_image` | Let the agent see uploaded images (PNG, JPEG, GIF, WebP) |
 | `execute` | Run shell commands in a per-session sandbox with `SESSION_FILES` anchoring |
 | `ask_user` | Interrupt execution and ask the user a free-text or multiple-choice question |
+| `jev` | Optional local classifier for when the agent is torn between concrete options. Advisory only; off until Settings → Jev is enabled |
 | `spawn_followup_session` | Hand off to a fresh session after building new tools mid-turn |
 | `get_settings` / `set_*` | Read and update app config from inside an agent turn |
 
@@ -598,6 +599,10 @@ agents/
 │   ├── streaming_subagent.py  # Real-time subagent event relay to WebSocket
 │   ├── spawn_tools.py         # spawn_followup_session tool
 │   ├── ask_user_tools.py      # ask_user interrupt tool
+│   ├── decision_tools.py      # jev tool (advisory classifier)
+│   ├── decision_client.py     # Jev-compatible /v1/systemone client
+│   ├── decision_runtime.py    # local OpenJev sidecar lifecycle
+│   ├── decision_catalog.py    # decision model list + fit scoring
 │   ├── file_tools.py          # Image upload/view tools
 │   ├── settings_tools.py      # Agent-facing config read/write tools
 │   ├── mlx_catalog.py         # Curated MLX models + hardware fit scoring

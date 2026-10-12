@@ -134,6 +134,34 @@ def _effective_local_providers(p: PrivacyConfig) -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 
+def enforce_decision_endpoint(url: str, cfg: AppConfig | None = None) -> None:
+    """Refuse a non-loopback decision endpoint while the privacy lock is on.
+
+    An empty URL means the local sidecar and is always allowed. Loopback
+    hosts (``127.0.0.1``, ``localhost``, ``::1``) are allowed. Anything
+    else would send the decision state off the machine.
+    """
+    from backend.decision_client import is_loopback_url
+
+    if cfg is None:
+        cfg = AppConfig.load()
+    if not cfg.privacy.enabled:
+        return
+    target = (url or "").strip()
+    if not target or is_loopback_url(target):
+        return
+    audit_event(
+        "refuse_decision_endpoint",
+        cfg,
+        extra={"endpoint": target},
+    )
+    raise PrivacyLockActive(
+        "Privacy lock is engaged. A remote decision endpoint would send "
+        "the situation off this machine. Clear the custom endpoint in "
+        "Settings → Jev, or disengage the privacy lock."
+    )
+
+
 def enforce_provider_allowed(provider: str, cfg: AppConfig | None = None) -> None:
     """Raise :class:`PrivacyLockActive` when *provider* would breach the lock.
 

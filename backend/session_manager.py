@@ -749,8 +749,14 @@ def _build_standard_tools(
     files_dir: Path | None = None,
     backend: Any = None,
     extract_images: bool = False,
+    session_id: str | None = None,
+    decide_enabled: bool | None = None,
 ) -> list[Any]:
     """Load standard research tools available to all agents (main and subagents).
+
+    *decide_enabled* is the Jev setting as the caller read it. Passing it
+    keeps the tool list and the system prompt on the same value. ``None``
+    reads the saved config.
 
     When *extract_images* is True (a vision model is available for the
     session), the document tools extract embedded images from PDF/DOCX/PPTX
@@ -805,6 +811,15 @@ def _build_standard_tools(
         tools.append(CheckDatesTool())
     except Exception as exc:
         logger.warning("Standard tool check_dates: could not load — %s", exc)
+    try:
+        if decide_enabled is None:
+            from backend.config import AppConfig
+            decide_enabled = AppConfig.load().decision.enabled
+        if decide_enabled:
+            from backend.decision_tools import build_decision_tools
+            tools.extend(build_decision_tools(session_id))
+    except Exception as exc:
+        logger.warning("Standard tool jev: could not load — %s", exc)
     return tools
 
 
@@ -835,13 +850,19 @@ def _apply_universal_loop_guard(
 
             on_escalate = request_loop_abort_current
 
+        recovery_hint = (
+            "You are repeating tool calls without making progress. Stop "
+            "and either try a fundamentally different approach/tool or "
+            "report your best answer from what you already have."
+        )
+        if any(getattr(tool, "name", "") == "jev" for tool in tools):
+            recovery_hint += (
+                " If you are stuck between a few concrete approaches, "
+                "call jev once with those options."
+            )
         return guard_all_tools(
             tools,
-            recovery_hint=(
-                "You are repeating tool calls without making progress. Stop "
-                "and either try a fundamentally different approach/tool or "
-                "report your best answer from what you already have."
-            ),
+            recovery_hint=recovery_hint,
             window=Environment.get_loop_guard_window(),
             max_no_progress=Environment.get_loop_guard_max_no_progress(),
             max_identical_success=Environment.get_loop_guard_max_success(),
@@ -2182,6 +2203,10 @@ class Session:
         # re-reading the config (the user may change the config mid-session).
         self.llm_provider = llm_provider
         self.distill_catalog_id: Optional[str] = distill_catalog_id
+        # Whether the graph was built with the Jev tool and its prompt
+        # guidance. Compared with the saved setting at the start of each user
+        # turn; a mismatch rebuilds the graph (see ``_reconcile_decide``).
+        self.decide_bound: bool = False
         # Chat model for this session. Used by the Auto run-depth judge,
         # which must run before the graph so Quick limits are already on.
         self.llm: Any = None
@@ -2505,7 +2530,12 @@ class SessionManager:
             from utilities.environment import Environment
 
             use_lite = Environment.use_lite_orchestrator_prompt() or bool(distill_catalog_id)
-            system_prompt = build_orchestrator_prompt([], lite=use_lite)
+            # The tool list is not known yet, so pass the setting itself.
+            # Passing the real tools would also switch on the capability
+            # ladder and activity sections, which this call site leaves off.
+            system_prompt = build_orchestrator_prompt(
+                [], lite=use_lite, decide=bool(config.decision.enabled),
+            )
             logger.info(
                 "[build_graph] orchestrator prompt mode=%s (provider=%s, da_provider=%s)",
                 "lite" if use_lite else "full",
@@ -2690,6 +2720,8 @@ class SessionManager:
             files_dir=files_dir,
             backend=backend,
             extract_images=_vision_available,
+            session_id=session_id,
+            decide_enabled=bool(config.decision.enabled),
         )
         management_tools = build_management_tools(mcp_mgr)
         # mcp_builder_tools let the agent author its own MCP servers at
@@ -3344,6 +3376,7 @@ class SessionManager:
             distill_catalog_id=cid,
         )
         session.llm = llm
+        session.decide_bound = bool(config.decision.enabled)
         if cid:
             session.model = cid
             logger.info(
@@ -3485,6 +3518,7 @@ class SessionManager:
             distill_catalog_id=info.distill_catalog_id,
         )
         session.llm = llm
+        session.decide_bound = bool(config.decision.enabled)
         session.live_output_queue = live_output_queue
         session.memory_inject = config.memory.effective_inject_realtime
         session.title = info.title
@@ -3552,6 +3586,7 @@ class SessionManager:
             session.graph = graph
             session.tool_set = mcp_mgr
             session.llm = llm
+            session.decide_bound = bool(config.decision.enabled)
             if old_tool_set is not None:
                 try:
                     await old_tool_set.close()
@@ -3582,11 +3617,36 @@ class SessionManager:
         session.graph = graph
         session.tool_set = mcp_mgr
         session.llm = llm
+        session.decide_bound = bool(config.decision.enabled)
         if old_tool_set is not None:
             try:
                 await old_tool_set.close()
             except Exception:
                 logger.debug("Error closing old tool set for session %s", session.id, exc_info=True)
+
+    async def _reconcile_decide(self, session: Session) -> None:
+        """Rebuild an idle session whose graph disagrees with the Jev setting.
+
+        Runs at the start of each new user turn, like the privacy-lock check,
+        so flipping the setting reaches chats that are already open. A running
+        session is left alone: swapping its graph would close the tool set the
+        current turn is using. The next message reconciles it. A failed rebuild
+        keeps the old graph, and the tool's own call-time check still applies.
+        """
+        try:
+            config = await AppConfig.aload()
+            wanted = bool(config.decision.enabled)
+            if session.decide_bound == wanted or session.status == "running":
+                return
+            await self._rebuild_one_session(session, config)
+            logger.info(
+                "Session %s rebuilt: jev %s", session.id, "on" if wanted else "off",
+            )
+        except Exception as exc:
+            logger.warning(
+                "jev reconcile failed for session %s — keeping existing graph: %s",
+                session.id, exc,
+            )
 
     async def _maybe_start_deferred_distill(self) -> None:
         try:
@@ -4364,6 +4424,14 @@ class SessionManager:
         if not session:
             yield {"type": "error", "content": "Session not found"}
             return
+
+        try:
+            from backend.decision_tools import reset_decision_turn
+            reset_decision_turn(session_id)
+        except Exception:
+            logger.debug("jev turn reset failed", exc_info=True)
+
+        await self._reconcile_decide(session)
 
         privacy_err = await self._check_privacy_lock(session)
         if privacy_err:

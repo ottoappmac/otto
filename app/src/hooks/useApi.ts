@@ -187,6 +187,34 @@ export const api = {
       `/api/mlx/download/${encodeURIComponent(jobId)}/cancel`,
       { method: "POST" },
     ),
+  decisionSnapshot: () =>
+    request<import("../types").DecisionSnapshot>("/api/decision"),
+  decisionJob: (jobId: string) =>
+    request<{ id: string; kind: string; status: string; message: string; error: string | null }>(
+      `/api/decision/jobs/${encodeURIComponent(jobId)}`,
+    ),
+  decisionInstall: () =>
+    request<{ job_id: string; status: string }>("/api/decision/install", { method: "POST" }),
+  decisionStart: () =>
+    request<{ job_id: string; status: string }>("/api/decision/start", { method: "POST" }),
+  decisionStop: () =>
+    request<{ job_id: string; status: string }>("/api/decision/stop", { method: "POST" }),
+  decisionSelect: (model_repo: string) =>
+    request<{ model_repo: string; restarted: boolean }>("/api/decision/select", {
+      method: "POST",
+      body: JSON.stringify({ model_repo }),
+    }),
+  decisionCredential: (api_key: string) =>
+    request<{ set: boolean }>("/api/decision/credential", {
+      method: "POST",
+      body: JSON.stringify({ api_key }),
+    }),
+  decisionTest: (body: { situation: string; question: string; options?: string[] }) =>
+    request<{ text: string }>("/api/decision/test", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  decisionLog: () => request<{ log: string }>("/api/decision/log"),
 
   // Setup Hub: capabilities probe + scored MLX catalog.
   mlxCapabilities: () =>

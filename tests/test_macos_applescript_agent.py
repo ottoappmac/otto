@@ -3,7 +3,7 @@
 The new built-in agent + skill must:
 
 * Materialise on macOS hosts with ``tools=["macos-osascript"]`` and
-  ``skills=["macos-applescript"]`` so the orchestrator's capability ladder
+  ``skills=["macos-applescript", "decision-making"]`` so the orchestrator's capability ladder
   can address it via ``task(subagent_type="macos-applescript-agent", ...)``.
 * Be hidden from ``list_agents`` / ``get_agent`` / ``list_skills`` /
   ``get_skill`` on non-macOS hosts, the same gate that applies to the
@@ -50,7 +50,7 @@ def test_seed_creates_macos_applescript_agent_on_macos(
     spec = agent_library.get_agent("macos-applescript-agent")
     assert spec is not None
     assert spec.tools == ["macos-osascript"]
-    assert spec.skills == ["macos-applescript"]
+    assert spec.skills == ["macos-applescript", "decision-making"]
     assert spec.builtin is True
     # The agent's prompt must reference the deterministic AppleScript path
     # and the structured fallback contract — both are load-bearing for

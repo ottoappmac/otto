@@ -27,10 +27,11 @@ Settings can also be changed through conversation:
 4. [macOS Activity](#macos-activity)
 5. [Voice](#voice)
 6. [Video](#video)
-7. [Advanced](#advanced)
-8. [Observability](#observability)
-9. [Privacy & Security](#privacy--security)
-10. [About](#about)
+7. [Jev](#jev)
+8. [Advanced](#advanced)
+9. [Observability](#observability)
+10. [Privacy & Security](#privacy--security)
+11. [About](#about)
 
 ---
 
@@ -389,6 +390,27 @@ Controls for **[Watch](watch.md)** — uploaded files, screen recordings, YouTub
 | Option | Description |
 |---|---|
 | Save sampled frames to the session | Writes the exact frames the model was shown into the session's `video-frames/` folder, with a timestamp manifest. Screen-recording frames are desktop screenshots and are otherwise discarded when analysis finishes. Roughly 0.15 MB per frame, and the folder is not cleaned up automatically. |
+
+---
+
+## Jev
+
+Lets every agent call `jev` when it is torn between a few concrete options or unsure whether to proceed. The classifier returns a choice, a yes/no, or a score, plus a confidence. The answer is advisory: it does not approve shell commands, messages, or any other side effect.
+
+Off by default. The model runs locally in a separate process so it does not change Otto's own MLX packages. `install.sh`, `start_app.sh`, and `start_web.sh` install that package. The macOS app built on GitHub carries a signed copy of it. The model weights are a separate download.
+
+| Control | What it does |
+|---|---|
+| Enable | Attaches the `jev` tool to every agent and adds its usage guidance to the prompt. While this is off, neither is there. A chat that is already open picks up a change on its next message. A reply that is still running finishes as it started. |
+| Model | DiffusionGemma MLX builds. A model marked **over** does not fit beside a chat model on this Mac and cannot be selected. The 4-bit build is about 17 GB to download and about 18 GB in memory while running. |
+| Download | Uses the same Hugging Face download as the MLX model picker, with progress and cancel. |
+| Install runtime | Installs the pinned OpenJev server into its own environment. The installers already do this; use the button to retry. |
+| Start / Stop | The server also starts on the first `jev` call and stops after it has been idle (10 minutes by default). |
+| Thresholds | Confident, moderate, and unsure wording. Confidence is how peaked the answer is, not a calibrated probability. |
+| Provider | Local uses the sidecar on this Mac. TypeSafe sends the situation to `https://api.typesafe.ai` and needs an API key. Refused while the privacy lock is on. |
+| Test | One sample question against the selected endpoint. |
+
+A 16 GB Mac should leave this off. The 4-bit model does not fit beside a chat model there.
 
 ---
 
