@@ -91,6 +91,27 @@ def _is_injected_human(text: str, injected: set[str]) -> bool:
     return text.startswith("Date check failed.")
 
 
+def is_genuine_user_message(message: object) -> bool:
+    """True for a real user turn, false for a guard nudge or retry note.
+
+    Guards inject their own transient ``HumanMessage``s; those must never be
+    mistaken for something the user said.
+    """
+    if not isinstance(message, HumanMessage):
+        return False
+    return not _is_injected_human(
+        _content_to_text(message.content), _injected_nudge_texts()
+    )
+
+
+def latest_genuine_user_text(messages: list[BaseMessage]) -> str:
+    """Text of the most recent genuine user message, or ``""`` if there is none."""
+    for message in reversed(list(messages or [])):
+        if is_genuine_user_message(message):
+            return _content_to_text(message.content)
+    return ""
+
+
 def count_run_tool_calls(messages: list[BaseMessage]) -> int:
     """Count tool calls in the current run (since the last genuine user turn).
 
@@ -98,11 +119,10 @@ def count_run_tool_calls(messages: list[BaseMessage]) -> int:
     ``HumanMessage`` is seen, so a multi-turn chat is scoped per user message.
     Injected guard nudges (which are also ``HumanMessage``s) do not reset it.
     """
-    injected = _injected_nudge_texts()
     count = 0
     for msg in messages:
         if isinstance(msg, HumanMessage):
-            if not _is_injected_human(_content_to_text(msg.content), injected):
+            if is_genuine_user_message(msg):
                 count = 0
         elif isinstance(msg, AIMessage):
             count += len(getattr(msg, "tool_calls", None) or [])

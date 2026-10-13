@@ -15,8 +15,30 @@ from backend.decision_runtime import (
     local_api_key,
     log_path,
     runtime_current,
+    snapshot_dir,
     venv_python,
 )
+from backend.routes.mlx import _DEFAULT_ALLOW_PATTERNS
+
+
+def test_jev_download_keeps_the_chat_template() -> None:
+    assert "*.jinja" in _DEFAULT_ALLOW_PATTERNS
+
+
+def test_snapshot_is_incomplete_without_the_chat_template(tmp_path, monkeypatch) -> None:
+    repo = "mlx-community/diffusiongemma-26B-A4B-it-4bit"
+    root = tmp_path / "models--mlx-community--diffusiongemma-26B-A4B-it-4bit"
+    snap = root / "snapshots" / "rev"
+    snap.mkdir(parents=True)
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    (snap / "model.safetensors").write_text("", encoding="utf-8")
+    (root / "refs").mkdir()
+    (root / "refs" / "main").write_text("rev\n", encoding="utf-8")
+    monkeypatch.setattr("backend.decision_runtime.hf_repo_dir", lambda _repo_id: root)
+
+    assert snapshot_dir(repo) is None
+    (snap / "chat_template.jinja").write_text("{{ messages }}", encoding="utf-8")
+    assert snapshot_dir(repo) == snap
 
 
 def test_process_env_is_loopback_and_offline() -> None:

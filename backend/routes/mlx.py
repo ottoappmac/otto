@@ -56,9 +56,11 @@ class MlxDownloadRequest(BaseModel):
     label: str = ""
     hf_token: str = ""
     cache_dir: str | None = None
-    # When True, restrict the download to safetensors/tokenizer/config files
-    # (typical MLX repos ship everything else as duplicates of the same
-    # weights in different formats).  Defaults to True; turn off only for
+    # When True, restrict the download to safetensors, tokenizer, config,
+    # and chat-template files. Typical MLX repos also publish the same
+    # weights as ``.bin`` / ``.gguf`` duplicates. Gemma ships its chat
+    # template as ``chat_template.jinja``, which is not inside
+    # ``tokenizer_config.json``. Defaults to True; turn off only for
     # repos where the user explicitly wants the extra artefacts.
     safetensors_only: bool = True
     # Optional hint passed straight to ``snapshot_download``.  16 is a
@@ -295,6 +297,7 @@ _DEFAULT_ALLOW_PATTERNS = [
     "*.model",
     "*.tiktoken",
     "*.py",
+    "*.jinja",
     "README*",
 ]
 _DEFAULT_IGNORE_PATTERNS = [

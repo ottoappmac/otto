@@ -1322,6 +1322,12 @@ class DecisionConfig(BaseModel):
     unsure_threshold: float = 0.6
     max_calls_per_turn: int = 8
     endpoint_override: str = ""
+    # Safety guardrail: Jev judges the user's message and every proposed
+    # agent action, and the run stops when either is unsafe or cannot be
+    # checked. Independent of ``enabled`` (the ``jev`` tool).
+    safety_guard_enabled: bool = False
+    # Minimum probability of "unsafe" that stops a run.
+    safety_block_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
 
 
 class DistillationConfig(BaseModel):

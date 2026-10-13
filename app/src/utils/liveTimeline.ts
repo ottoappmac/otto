@@ -33,6 +33,7 @@ export const TIMELINE_RENDER_TYPES = new Set([
   "error",
   "done",
   "stopped",
+  "safety_guard",
 ]);
 
 function isStreamingAssistant(ev: TimelineEvent | undefined): boolean {

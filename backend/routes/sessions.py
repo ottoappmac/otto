@@ -885,9 +885,13 @@ async def _persist_subagent_to_transcript(session_id: str, item: dict) -> None:
             content = item.get("content")
             if not content:
                 return
+            tr_meta: dict[str, Any] = {"subagent": subagent}
+            guard = metadata.get("safety_guard")
+            if isinstance(guard, dict) and guard:
+                tr_meta["safety_guard"] = dict(guard)
             await _transcript(
                 session_id, "assistant", content,
-                role="assistant", metadata={"subagent": subagent},
+                role="assistant", metadata=tr_meta,
             )
         elif rtype == "tool_call":
             await _transcript(
