@@ -346,6 +346,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     unsure_threshold: 0.6,
     max_calls_per_turn: 8,
     endpoint_override: "",
+    safety_guard_enabled: false,
+    safety_block_threshold: 0.7,
   },
 };
 

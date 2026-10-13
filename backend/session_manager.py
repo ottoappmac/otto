@@ -520,7 +520,9 @@ def _ws_events_from_ai_message(
     text-only turns) so the live session panel counts each turn once.
     """
     content = extract_text_content(msg.content)
-    thought = (getattr(msg, "additional_kwargs", None) or {}).get("thought")
+    extras = getattr(msg, "additional_kwargs", None) or {}
+    thought = extras.get("thought")
+    safety_guard = extras.get("safety_guard")
     tool_calls = getattr(msg, "tool_calls", None) or []
     events: list[dict[str, Any]] = []
     if content:
@@ -529,6 +531,9 @@ def _ws_events_from_ai_message(
             meta["memory_topics"] = memory_topics
         if thought:
             meta["thought"] = thought
+        if isinstance(safety_guard, dict) and safety_guard:
+            # Lets the chat render a Jev guardrail stop as a chip.
+            meta["safety_guard"] = dict(safety_guard)
         if stats and not tool_calls:
             meta["stats"] = stats
         resp: dict[str, Any] = {"type": "agent", "content": content}
@@ -549,6 +554,18 @@ def _ws_events_from_ai_message(
             "metadata": tc_meta,
         })
     return events
+
+
+def _guard_transcript_kwargs(resp: dict[str, Any]) -> dict[str, Any]:
+    """Transcript kwargs for an agent event stopped by the safety guardrail.
+
+    Empty when the event is an ordinary reply, so the assistant line stays
+    unchanged. A stop keeps the stage, reason, and probability beside the text.
+    """
+    guard = (resp.get("metadata") or {}).get("safety_guard")
+    if isinstance(guard, dict) and guard:
+        return {"metadata": {"safety_guard": dict(guard)}}
+    return {}
 
 
 def _normalize_interrupt_value(hitl_value: Any) -> Any:
@@ -968,6 +985,56 @@ def _insert_repeated_thought_guard(middleware: list[Any], *, scope: str) -> None
         )
 
 
+def _insert_safety_guard(
+    middleware: list[Any], *, scope: str, enabled: bool, check_input: bool
+) -> None:
+    """Attach the Jev safety guardrail when Settings → Jev has it on.
+
+    *enabled* is the setting as ``build_graph`` read it, so every graph built
+    in one pass agrees. Call this before :func:`_insert_repeated_thought_guard`:
+    each insert lands just inside any ReAct shim, so the later call ends up
+    outer and this guard sits closest to the model. It then judges the raw
+    reply rather than a canned guard message, and an abort from an outer guard
+    never costs a Jev call.
+
+    *check_input* is True for the orchestrator only. A subagent's first message
+    is a task the orchestrator wrote, not something the user said.
+
+    A wiring failure leaves the agent running unguarded, and says so loudly.
+    """
+    if not enabled:
+        return
+    try:
+        from backend.safety_guard import build_safety_judge
+        from middleware.react_middleware import MLXReActMiddleware
+        from middleware.safety_guard import SafetyGuardMiddleware
+
+        idx = 0
+        for i, mw in enumerate(middleware):
+            if isinstance(mw, MLXReActMiddleware):
+                idx = i + 1
+                break
+        middleware.insert(
+            idx,
+            SafetyGuardMiddleware(build_safety_judge(), check_input=check_input),
+        )
+    except Exception:  # pragma: no cover — defensive
+        logger.exception(
+            "Safety guardrail (%s): could not apply — this agent is NOT guarded",
+            scope,
+        )
+
+
+def _bind_decision_flags(session: Any, config: AppConfig) -> None:
+    """Record which Jev features *session*'s graph was built with.
+
+    Compared with the saved settings at the start of each user turn; see
+    :meth:`SessionManager._reconcile_decide`.
+    """
+    session.decide_bound = bool(config.decision.enabled)
+    session.safety_bound = bool(config.decision.safety_guard_enabled)
+
+
 def _append_date_context(middleware: list[Any]) -> None:
     """Append the calendar injector so it runs closest to the model.
 
@@ -990,6 +1057,7 @@ def _build_gp_subagent(
     pw_pool: Any = None,
     memory_middleware: list[Any] | None = None,
     session_id: str | None = None,
+    safety_guard: bool = False,
 ) -> dict[str, Any]:
     """Build the general-purpose subagent as a ``CompiledSubAgent``.
 
@@ -1136,6 +1204,9 @@ def _build_gp_subagent(
     _apply_universal_loop_guard(
         tools, scope="general-purpose", session_id=session_id
     )
+    _insert_safety_guard(
+        middleware, scope="general-purpose", enabled=safety_guard, check_input=False
+    )
     _insert_repeated_thought_guard(middleware, scope="general-purpose")
     _append_date_context(middleware)
     graph = create_agent(
@@ -1174,6 +1245,7 @@ def _build_named_agent_subagent(
     pw_pool: Any = None,
     memory_middleware: list[Any] | None = None,
     session_id: str | None = None,
+    safety_guard: bool = False,
 ) -> dict[str, Any] | None:
     """Build a ``CompiledSubAgent`` that runs *agent_name* as a subagent.
 
@@ -1258,6 +1330,9 @@ def _build_named_agent_subagent(
         middleware.append(ctx_trunc)
 
     _apply_universal_loop_guard(tools, scope=agent_name, session_id=session_id)
+    _insert_safety_guard(
+        middleware, scope=agent_name, enabled=safety_guard, check_input=False
+    )
     _insert_repeated_thought_guard(middleware, scope=agent_name)
     _append_date_context(middleware)
     graph = create_agent(
@@ -1873,6 +1948,7 @@ def _compile_library_subagent(
     mcp_mgr: Any,
     session_id: str | None,
     workspace: SessionWorkspace | None = None,
+    safety_guard: bool = False,
 ) -> Any:
     """Compile one library agent's subagent graph (model resolution,
     middleware stack, ``create_agent``) and return the streaming-wrapped
@@ -2048,6 +2124,12 @@ def _compile_library_subagent(
         scope=f"subagent:{agent_spec.name}",
         session_id=session_id,
     )
+    _insert_safety_guard(
+        middleware,
+        scope=f"subagent:{agent_spec.name}",
+        enabled=safety_guard,
+        check_input=False,
+    )
     _insert_repeated_thought_guard(
         middleware, scope=f"subagent:{agent_spec.name}"
     )
@@ -2079,6 +2161,7 @@ def _build_subagents_from_library(
     subagent_vision_resolver: Any = None,
     session_id: str | None = None,
     workspace: SessionWorkspace | None = None,
+    safety_guard: bool = False,
 ) -> tuple[Optional[list[dict[str, Any]]], set[str]]:
     """Build ``CompiledSubAgent`` specs from every agent in the library.
 
@@ -2150,6 +2233,7 @@ def _build_subagents_from_library(
             mcp_mgr,
             session_id,
             workspace,
+            safety_guard=safety_guard,
         )
         subagents.append({
             "name": agent_spec.name,
@@ -2204,9 +2288,11 @@ class Session:
         self.llm_provider = llm_provider
         self.distill_catalog_id: Optional[str] = distill_catalog_id
         # Whether the graph was built with the Jev tool and its prompt
-        # guidance. Compared with the saved setting at the start of each user
-        # turn; a mismatch rebuilds the graph (see ``_reconcile_decide``).
+        # guidance, and with the Jev safety guardrail. Compared with the saved
+        # settings at the start of each user turn; a mismatch rebuilds the
+        # graph (see ``_reconcile_decide``).
         self.decide_bound: bool = False
+        self.safety_bound: bool = False
         # Chat model for this session. Used by the Auto run-depth judge,
         # which must run before the graph so Quick limits are already on.
         self.llm: Any = None
@@ -2723,6 +2809,9 @@ class SessionManager:
             session_id=session_id,
             decide_enabled=bool(config.decision.enabled),
         )
+        # Read once so the orchestrator and every subagent graph built below
+        # agree on whether the Jev safety guardrail is attached.
+        safety_guard_on = bool(config.decision.safety_guard_enabled)
         management_tools = build_management_tools(mcp_mgr)
         # mcp_builder_tools let the agent author its own MCP servers at
         # runtime — see backend.mcp_builder for the generation pipeline
@@ -2944,6 +3033,7 @@ class SessionManager:
                 pw_pool=pw_pool if main_has_playwright else None,
                 memory_middleware=memory_middleware or None,
                 session_id=session_id,
+                safety_guard=safety_guard_on,
             )
             # Also register the current named agent as a self-subagent so the
             # orchestrator can delegate subtasks to it via
@@ -2960,6 +3050,7 @@ class SessionManager:
                 pw_pool=pw_pool if main_has_playwright else None,
                 memory_middleware=memory_middleware or None,
                 session_id=session_id,
+                safety_guard=safety_guard_on,
             )
             if named_subagent is not None:
                 subagents = [gp_subagent, named_subagent]
@@ -2993,6 +3084,7 @@ class SessionManager:
                 subagent_vision_resolver=_subagent_vision,
                 session_id=session_id,
                 workspace=workspace,
+                safety_guard=safety_guard_on,
             )
             from backend.mcp_manager import dedupe_tool_names
 
@@ -3051,6 +3143,7 @@ class SessionManager:
                 pw_pool=pw_pool if gp_has_pw else None,
                 memory_middleware=memory_middleware or None,
                 session_id=session_id,
+                safety_guard=safety_guard_on,
             )
             if subagents is None:
                 subagents = [gp_subagent]
@@ -3290,6 +3383,12 @@ class SessionManager:
 
         system_prompt += "\n" + build_distilled_adapters_prompt_block(distill_catalog_id)
 
+        _insert_safety_guard(
+            extra_middleware,
+            scope="orchestrator",
+            enabled=safety_guard_on,
+            check_input=True,
+        )
         _insert_repeated_thought_guard(extra_middleware, scope="orchestrator")
         try:
             from middleware.run_depth import RunDepthMiddleware
@@ -3376,7 +3475,7 @@ class SessionManager:
             distill_catalog_id=cid,
         )
         session.llm = llm
-        session.decide_bound = bool(config.decision.enabled)
+        _bind_decision_flags(session, config)
         if cid:
             session.model = cid
             logger.info(
@@ -3518,7 +3617,7 @@ class SessionManager:
             distill_catalog_id=info.distill_catalog_id,
         )
         session.llm = llm
-        session.decide_bound = bool(config.decision.enabled)
+        _bind_decision_flags(session, config)
         session.live_output_queue = live_output_queue
         session.memory_inject = config.memory.effective_inject_realtime
         session.title = info.title
@@ -3586,7 +3685,7 @@ class SessionManager:
             session.graph = graph
             session.tool_set = mcp_mgr
             session.llm = llm
-            session.decide_bound = bool(config.decision.enabled)
+            _bind_decision_flags(session, config)
             if old_tool_set is not None:
                 try:
                     await old_tool_set.close()
@@ -3617,36 +3716,62 @@ class SessionManager:
         session.graph = graph
         session.tool_set = mcp_mgr
         session.llm = llm
-        session.decide_bound = bool(config.decision.enabled)
+        _bind_decision_flags(session, config)
         if old_tool_set is not None:
             try:
                 await old_tool_set.close()
             except Exception:
                 logger.debug("Error closing old tool set for session %s", session.id, exc_info=True)
 
-    async def _reconcile_decide(self, session: Session) -> None:
-        """Rebuild an idle session whose graph disagrees with the Jev setting.
+    async def _reconcile_decide(self, session: Session) -> dict[str, Any] | None:
+        """Rebuild an idle session whose graph disagrees with the Jev settings.
 
-        Runs at the start of each new user turn, like the privacy-lock check,
-        so flipping the setting reaches chats that are already open. A running
-        session is left alone: swapping its graph would close the tool set the
-        current turn is using. The next message reconciles it. A failed rebuild
-        keeps the old graph, and the tool's own call-time check still applies.
+        Covers both the ``jev`` tool and the safety guardrail. Runs at the
+        start of each new user turn, like the privacy-lock check, so flipping
+        a setting reaches chats that are already open. A running session is
+        left alone: swapping its graph would close the tool set the current
+        turn is using. The next message reconciles it.
+
+        A failed rebuild keeps the old graph, and the tool's own call-time
+        check still applies. The guardrail fails closed instead: when it is on
+        but the graph could not be rebuilt with it, this returns an error event
+        and the turn must not run unguarded. Returns ``None`` otherwise.
         """
         try:
             config = await AppConfig.aload()
-            wanted = bool(config.decision.enabled)
-            if session.decide_bound == wanted or session.status == "running":
-                return
+        except Exception as exc:
+            logger.warning("jev reconcile could not read settings: %s", exc)
+            return None
+        tool_wanted = bool(config.decision.enabled)
+        guard_wanted = bool(config.decision.safety_guard_enabled)
+        if session.status == "running":
+            return None
+        if session.decide_bound == tool_wanted and session.safety_bound == guard_wanted:
+            return None
+        try:
             await self._rebuild_one_session(session, config)
             logger.info(
-                "Session %s rebuilt: jev %s", session.id, "on" if wanted else "off",
+                "Session %s rebuilt: jev tool %s, safety guardrail %s",
+                session.id,
+                "on" if tool_wanted else "off",
+                "on" if guard_wanted else "off",
             )
         except Exception as exc:
             logger.warning(
                 "jev reconcile failed for session %s — keeping existing graph: %s",
                 session.id, exc,
             )
+            if guard_wanted and not session.safety_bound:
+                return {
+                    "type": "error",
+                    "content": (
+                        "The Jev safety guardrail is on, but this chat could not be "
+                        f"rebuilt with it ({exc}). Nothing was run. Fix the problem "
+                        "or turn the guardrail off in **Settings → Jev**."
+                    ),
+                    "metadata": {"error_code": "safety_guard_unavailable"},
+                }
+        return None
 
     async def _maybe_start_deferred_distill(self) -> None:
         try:
@@ -3975,6 +4100,31 @@ class SessionManager:
         context_queue: Optional[Any] = None,
         run_config: Optional[dict] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
+        """Bind the session, then stream. The guardrail reads this binding
+        when it writes a check to the transcript."""
+        from backend.streaming_subagent import reset_current_session, set_current_session
+
+        token = set_current_session(session_id)
+        try:
+            async for item in self._do_stream_inner(
+                session, session_id, astream_iter,
+                printed_offset=printed_offset,
+                context_queue=context_queue,
+                run_config=run_config,
+            ):
+                yield item
+        finally:
+            reset_current_session(token)
+
+    async def _do_stream_inner(
+        self,
+        session: Session,
+        session_id: str,
+        astream_iter: Any,
+        printed_offset: int = 0,
+        context_queue: Optional[Any] = None,
+        run_config: Optional[dict] = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
         printed = printed_offset
@@ -4118,6 +4268,7 @@ class SessionManager:
                             await _append_message_async(session_id, resp)
                             await _transcript(
                                 session_id, "assistant", resp["content"], role="assistant",
+                                **_guard_transcript_kwargs(resp),
                             )
                             yield resp
                 elif isinstance(msg, ToolMessage):
@@ -4431,7 +4582,10 @@ class SessionManager:
         except Exception:
             logger.debug("jev turn reset failed", exc_info=True)
 
-        await self._reconcile_decide(session)
+        reconcile_err = await self._reconcile_decide(session)
+        if reconcile_err:
+            yield reconcile_err
+            return
 
         privacy_err = await self._check_privacy_lock(session)
         if privacy_err:

@@ -43,6 +43,11 @@ function NodeDot({ event }: { event: AugmentedEvent }) {
   }
   if (type === "done") return <span className="block w-3 h-3 rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.16)]" />;
   if (type === "stopped") return <span className="block w-3 h-3 rounded-full bg-th-text-muted" />;
+  if (type === "safety_guard") {
+    const outcome = event.meta?.outcome;
+    const color = outcome === "unsafe" ? "bg-red-400" : outcome === "unavailable" ? "bg-amber-400" : "bg-th-text-muted/40";
+    return <span className={`block w-1.5 h-1.5 rounded-full ${color}`} />;
+  }
   if (type === "error") return <span className="block w-3 h-3 rounded-full bg-red-400 shadow-[0_0_0_3px_rgba(248,113,113,0.16)]" />;
   return <span className="block w-2 h-2 rounded-full bg-th-border" />;
 }
@@ -151,6 +156,34 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
     );
   }
 
+  if (type === "safety_guard") {
+    const outcome = event.meta?.outcome;
+    const tone = outcome === "unsafe"
+      ? "text-red-400"
+      : outcome === "unavailable"
+        ? "text-amber-400"
+        : "text-th-text-muted";
+    const summary = (typeof event.meta?.summary === "string" && event.meta.summary)
+      || content.split("\n", 1)[0];
+    const body = content.startsWith(summary) ? content.slice(summary.length).trim() : "";
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => body && setExpanded((v) => !v)}
+          className={`text-[11px] leading-relaxed text-left ${tone} ${body ? "hover:opacity-80" : ""}`}
+        >
+          {summary}
+        </button>
+        {expanded && body && (
+          <pre className="mt-1.5 text-[11px] leading-relaxed whitespace-pre-wrap break-words text-th-text-muted bg-th-inset-bg border border-th-border/60 rounded-md p-2">
+            {body}
+          </pre>
+        )}
+      </div>
+    );
+  }
+
   if (type === "system" || type === "status") {
     const depth = event.meta?.run_depth;
     if (depth === "quick" || depth === "deep") {
@@ -193,7 +226,7 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
 
 // ── A single row: rail gutter (dot) + content ────────────────────────────────
 function TimelineRow({ event, inGroup = false }: { event: AugmentedEvent; inGroup?: boolean }) {
-  const compact = event.type === "tool_call" || event.type === "tool_result" || event.type === "system" || event.type === "status";
+  const compact = event.type === "tool_call" || event.type === "tool_result" || event.type === "system" || event.type === "status" || event.type === "safety_guard";
   return (
     <div className="flex gap-3">
       <div className="relative z-10 flex w-[22px] shrink-0 justify-center">

@@ -111,22 +111,9 @@ def build_decision_tools(session_id: str | None = None) -> list:
         apply. If the verdict is UNSURE, call ``ask_user``.
         """
         from backend.config import AppConfig
-        from backend.decision_client import (
-            DecisionClientError,
-            ask,
-            format_answer,
-            source_label,
-        )
-        from backend.decision_runtime import (
-            effective_base_url,
-            ensure_running,
-            local_api_key,
-            note_used,
-            remote_api_key,
-            stop_sync,
-            uses_local_sidecar,
-        )
-        from backend.privacy_lock import PrivacyLockActive, enforce_decision_endpoint
+        from backend.decision_client import format_answer, source_label
+        from backend.decision_runtime import effective_base_url
+        from backend.decision_service import DecisionUnavailable, ask_once
 
         try:
             cfg = AppConfig.load()
@@ -140,74 +127,16 @@ def build_decision_tools(session_id: str | None = None) -> list:
         if capped:
             return capped
 
-        base = effective_base_url(decision)
         try:
-            enforce_decision_endpoint(base if not uses_local_sidecar(decision) else "", cfg)
-        except PrivacyLockActive as exc:
+            result = ask_once(cfg, situation, question, options, scale)
+        except DecisionUnavailable as exc:
             return _failure(str(exc))
-
-        if uses_local_sidecar(decision):
-            try:
-                base = ensure_running(decision)
-            except Exception as exc:
-                logger.info("jev: sidecar not ready: %s", exc)
-                return _failure(str(exc))
-            api_key = local_api_key()
-        else:
-            api_key = remote_api_key() or ""
-            if not api_key:
-                return _failure(
-                    "A custom Jev endpoint is set but no API key is stored."
-                )
-
-        import httpx
-
-        def _call(url: str, key: str):
-            return ask(
-                situation,
-                question,
-                options,
-                scale,
-                base_url=url,
-                api_key=key,
-            )
-
-        try:
-            try:
-                result = _call(base, api_key)
-            except httpx.HTTPStatusError as exc:
-                # A Settings save used to rotate the key out from under a
-                # sidecar that was already up. Restart once and retry.
-                if exc.response.status_code == 401 and uses_local_sidecar(decision):
-                    logger.info("jev: sidecar rejected the API key; restarting")
-                    stop_sync()
-                    base = ensure_running(decision)
-                    api_key = local_api_key()
-                    result = _call(base, api_key)
-                else:
-                    raise
-        except DecisionClientError as exc:
-            return _failure(str(exc))
-        except httpx.HTTPStatusError as exc:
-            code = exc.response.status_code
-            logger.info("jev: HTTP %s", code)
-            if code == 401:
-                return _failure("The Jev server rejected the API key (HTTP 401).")
-            return _failure(f"The Jev server returned HTTP {code}.")
-        except httpx.TimeoutException:
-            return _failure("The Jev server timed out.")
-        except Exception as exc:
-            logger.info("jev: request failed: %s", exc)
-            return _failure(
-                "The Jev server did not answer (connection error)."
-            )
-        note_used()
         return format_answer(
             result,
             confident_threshold=float(decision.confident_threshold),
             unsure_threshold=float(decision.unsure_threshold),
             unattended=_unattended(sid),
-            source=source_label(base),
+            source=source_label(effective_base_url(decision)),
         )
 
     return [jev]

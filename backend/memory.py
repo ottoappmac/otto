@@ -152,6 +152,7 @@ _EVENT_LABELS = {
     "assistant": "Assistant",
     "tool_call": "Tool call",
     "tool_result": "Tool result",
+    "safety_guard": "Safety check",
 }
 
 
@@ -176,6 +177,10 @@ def _render_event(record: dict[str, Any]) -> str:
     if not isinstance(content, str):
         content = json.dumps(content, ensure_ascii=False, default=str)
     label = _EVENT_LABELS.get(kind, kind)
+    if kind == "safety_guard":
+        # An unsafe check stores the text Jev judged after the verdict line.
+        # Memory keeps the verdict only.
+        content = content.split("\n", 1)[0]
     if kind.startswith("tool"):
         label += f" {record.get('tool') or ''}".rstrip()
         text = _clip_middle(" ".join(content.split()), _TOOL_MAX_CHARS)

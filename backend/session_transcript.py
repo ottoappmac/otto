@@ -31,6 +31,7 @@ TranscriptEventType = Literal[
     "tool_call",
     "tool_result",
     "system",
+    "safety_guard",
 ]
 
 # ---------------------------------------------------------------------------

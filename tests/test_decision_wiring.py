@@ -13,7 +13,15 @@ import pytest
 
 from backend.config import AppConfig
 from backend.privacy_lock import PrivacyLockActive, enforce_decision_endpoint
-from backend.session_manager import SessionManager, _build_standard_tools
+from backend.session_manager import (
+    SessionManager,
+    _bind_decision_flags,
+    _build_standard_tools,
+    _insert_repeated_thought_guard,
+    _insert_safety_guard,
+)
+from middleware.repeated_thought_guard import RepeatedThoughtGuardMiddleware
+from middleware.safety_guard import SafetyGuardMiddleware
 from deep_agent.prompt import build_orchestrator_prompt
 
 
@@ -99,10 +107,11 @@ def test_privacy_lock_refuses_a_remote_endpoint(monkeypatch) -> None:
 # ── Open chats follow the setting ────────────────────────────────────────────
 
 
-def _manager(monkeypatch, *, enabled: bool):
+def _manager(monkeypatch, *, enabled: bool, guard: bool = False):
     """A real SessionManager whose rebuild is recorded instead of run."""
     cfg = AppConfig()
     cfg.decision.enabled = enabled
+    cfg.decision.safety_guard_enabled = guard
 
     async def _aload():
         return cfg
@@ -113,14 +122,16 @@ def _manager(monkeypatch, *, enabled: bool):
 
     async def _rebuild(session, config):
         rebuilt.append(session)
-        session.decide_bound = bool(config.decision.enabled)
+        _bind_decision_flags(session, config)
 
     monkeypatch.setattr(mgr, "_rebuild_one_session", _rebuild)
     return mgr, rebuilt
 
 
-def _session(*, bound: bool, status: str = "completed"):
-    return SimpleNamespace(id="s1", decide_bound=bound, status=status)
+def _session(*, bound: bool, guard_bound: bool = False, status: str = "completed"):
+    return SimpleNamespace(
+        id="s1", decide_bound=bound, safety_bound=guard_bound, status=status,
+    )
 
 
 @pytest.mark.asyncio
@@ -215,3 +226,136 @@ def test_toggle_state_is_independent_per_session(monkeypatch) -> None:
     rebuilt, a, b = asyncio.run(_go())
     assert rebuilt == [a]
     assert a.decide_bound is True and b.decide_bound is True
+
+
+# ── Safety guardrail ─────────────────────────────────────────────────────────
+
+
+def test_guardrail_is_attached_only_when_enabled() -> None:
+    off: list = []
+    _insert_safety_guard(off, scope="t", enabled=False, check_input=True)
+    assert off == []
+
+    on: list = []
+    _insert_safety_guard(on, scope="t", enabled=True, check_input=True)
+    assert len(on) == 1 and isinstance(on[0], SafetyGuardMiddleware)
+
+
+def test_only_the_orchestrator_guard_checks_the_users_message() -> None:
+    orchestrator: list = []
+    subagent: list = []
+    _insert_safety_guard(orchestrator, scope="o", enabled=True, check_input=True)
+    _insert_safety_guard(subagent, scope="s", enabled=True, check_input=False)
+    assert orchestrator[0]._check_input is True
+    assert subagent[0]._check_input is False
+
+
+def test_guardrail_sits_inside_the_other_guards() -> None:
+    """It must see the model's raw reply, not a canned abort from an outer guard."""
+    middleware: list = []
+    _insert_safety_guard(middleware, scope="t", enabled=True, check_input=True)
+    _insert_repeated_thought_guard(middleware, scope="t")
+    kinds = [type(mw) for mw in middleware]
+    assert kinds.index(RepeatedThoughtGuardMiddleware) < kinds.index(SafetyGuardMiddleware)
+
+
+@pytest.mark.asyncio
+async def test_enabling_only_the_guardrail_rebuilds_once(monkeypatch) -> None:
+    mgr, rebuilt = _manager(monkeypatch, enabled=False, guard=True)
+    session = _session(bound=False, guard_bound=False)
+    assert await mgr._reconcile_decide(session) is None
+    assert rebuilt == [session]
+    assert session.safety_bound is True and session.decide_bound is False
+    await mgr._reconcile_decide(session)
+    assert rebuilt == [session]
+
+
+@pytest.mark.asyncio
+async def test_disabling_only_the_guardrail_rebuilds_once(monkeypatch) -> None:
+    mgr, rebuilt = _manager(monkeypatch, enabled=True, guard=False)
+    session = _session(bound=True, guard_bound=True)
+    await mgr._reconcile_decide(session)
+    assert rebuilt == [session]
+    assert session.safety_bound is False and session.decide_bound is True
+    await mgr._reconcile_decide(session)
+    assert rebuilt == [session]
+
+
+@pytest.mark.asyncio
+async def test_a_running_chat_keeps_its_guardrail_state_until_the_next_turn(monkeypatch) -> None:
+    mgr, rebuilt = _manager(monkeypatch, enabled=False, guard=True)
+    session = _session(bound=False, status="running")
+    assert await mgr._reconcile_decide(session) is None
+    assert rebuilt == []
+    assert session.safety_bound is False
+
+    session.status = "completed"
+    await mgr._reconcile_decide(session)
+    assert rebuilt == [session]
+
+
+@pytest.mark.asyncio
+async def test_failed_rebuild_stops_the_turn_when_the_guardrail_is_wanted(monkeypatch) -> None:
+    mgr, _ = _manager(monkeypatch, enabled=False, guard=True)
+
+    async def _boom(session, config):
+        raise RuntimeError("model not downloaded")
+
+    monkeypatch.setattr(mgr, "_rebuild_one_session", _boom)
+    session = _session(bound=False, guard_bound=False)
+    error = await mgr._reconcile_decide(session)
+    assert error is not None
+    assert error["type"] == "error"
+    assert error["metadata"]["error_code"] == "safety_guard_unavailable"
+    assert "model not downloaded" in error["content"]
+    assert session.safety_bound is False
+
+
+@pytest.mark.asyncio
+async def test_failed_rebuild_does_not_stop_a_turn_that_needs_no_guardrail(monkeypatch) -> None:
+    mgr, _ = _manager(monkeypatch, enabled=True, guard=False)
+
+    async def _boom(session, config):
+        raise RuntimeError("model not downloaded")
+
+    monkeypatch.setattr(mgr, "_rebuild_one_session", _boom)
+    assert await mgr._reconcile_decide(_session(bound=False)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_chat_already_guarded_is_not_stopped_by_a_failed_rebuild(monkeypatch) -> None:
+    """Guardrail on and already bound: a rebuild for the tool flag must not block it."""
+    mgr, _ = _manager(monkeypatch, enabled=True, guard=True)
+
+    async def _boom(session, config):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mgr, "_rebuild_one_session", _boom)
+    assert await mgr._reconcile_decide(_session(bound=False, guard_bound=True)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_reconcile_error_stops_the_turn_before_the_privacy_check(monkeypatch) -> None:
+    mgr, _ = _manager(monkeypatch, enabled=False, guard=True)
+    order: list[str] = []
+    session = _session(bound=False)
+    error = {"type": "error", "content": "guardrail unavailable"}
+
+    async def _ensure(session_id):
+        return session
+
+    async def _reconcile(s):
+        order.append("reconcile")
+        return error
+
+    async def _privacy(s):
+        order.append("privacy")
+        return None
+
+    monkeypatch.setattr(mgr, "_ensure_session", _ensure)
+    monkeypatch.setattr(mgr, "_reconcile_decide", _reconcile)
+    monkeypatch.setattr(mgr, "_check_privacy_lock", _privacy)
+
+    events = [event async for event in mgr.stream_message("s1", "hello")]
+    assert order == ["reconcile"]
+    assert events == [error]
