@@ -225,16 +225,30 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                 raise ValueError(f"timeout must be positive, got {effective_timeout}")
             shell_cwd = getattr(self, "_execute_cwd", None) or self.cwd
             try:
-                result = _subprocess.run(  # noqa: S602
+                from backend.exec_sandbox import passthrough_names, run_shell, sandbox_settings, scrub_env
+
+                enabled, network, extra_read, extra_write = sandbox_settings()
+                write_paths = [Path(self.cwd)]
+                if shell_cwd is not None:
+                    write_paths.append(Path(shell_cwd))
+                for raw in extra_write:
+                    if raw:
+                        write_paths.append(Path(raw).expanduser())
+                read_paths = [Path(raw).expanduser() for raw in extra_read if raw]
+                env = scrub_env(self._env, passthrough=passthrough_names())
+                result = run_shell(
                     command,
-                    check=False,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
+                    cwd=Path(shell_cwd),
+                    env=env,
                     timeout=effective_timeout,
-                    env=self._env,
-                    cwd=str(shell_cwd),
+                    sandbox=enabled,
+                    network=network,
+                    write_paths=write_paths,
+                    read_paths=read_paths,
+                    profile_dir=Path(self.cwd),
                 )
+                if result.error:
+                    return ExecuteResponse(output=result.error, exit_code=1, truncated=False)
                 output_parts = []
                 if result.stdout:
                     output_parts.append(result.stdout)
@@ -254,14 +268,6 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                     exit_code=result.returncode,
                     truncated=truncated,
                 )
-            except _subprocess.TimeoutExpired:
-                return ExecuteResponse(
-                    output=(
-                        f"Error: Command timed out after {effective_timeout} seconds."
-                    ),
-                    exit_code=124,
-                    truncated=False,
-                )
             except Exception as exc:  # noqa: BLE001
                 return ExecuteResponse(
                     output=f"Error executing command ({type(exc).__name__}): {exc}",
@@ -272,11 +278,17 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
     env: dict[str, str] = {"SESSION_FILES": str(files_dir)}
     if project_root is not None:
         env["PROJECT_ROOT"] = str(project_root)
+    # inherit_env would copy API keys into every command. Start from a
+    # scrubbed copy of the process environment and add only the session
+    # paths. execute() scrubs again at call time in case the process
+    # environment changed.
+    from backend.exec_sandbox import passthrough_names, scrub_env
+    safe_env = scrub_env(os.environ, extra=env, passthrough=passthrough_names())
     backend = _SymlinkAwareBackend(
         root_dir=files_dir,
         virtual_mode=True,
-        inherit_env=True,
-        env=env,
+        inherit_env=False,
+        env=safe_env,
     )
     backend._execute_cwd = Path(project_root) if project_root is not None else files_dir
     return backend
@@ -968,6 +980,48 @@ def _insert_repeated_thought_guard(middleware: list[Any], *, scope: str) -> None
         )
 
 
+def _append_action_policy(middleware: list[Any], *, agent_name: str | None) -> None:
+    """Gate high-risk tools. Always attached; it reads settings per call."""
+    from backend.action_policy.middleware import ActionPolicyMiddleware
+
+    middleware.append(ActionPolicyMiddleware(agent_name=agent_name))
+
+
+def _action_allowlist(session: "Session") -> frozenset[str]:
+    """Categories the user pre-authorised on this schedule or trigger."""
+    try:
+        if session.trigger_source == "schedule" and session.schedule_id:
+            from backend.scheduler import load_schedule
+            spec = load_schedule(session.schedule_id)
+            return frozenset(getattr(spec, "allowed_actions", None) or [])
+        if session.trigger_source == "trigger" and session.trigger_id:
+            from backend.trigger_manager import load_trigger
+            spec = load_trigger(session.trigger_id)
+            return frozenset(getattr(spec, "allowed_actions", None) or [])
+    except Exception:
+        logger.warning("action policy: could not load the allowlist", exc_info=True)
+    return frozenset()
+
+
+def _enter_action_scope(session: "Session") -> tuple[Any, Any]:
+    from backend.action_policy.gate import is_unattended
+    from backend.action_policy.runtime import RunScope, begin_invocation, set_scope
+
+    scope = RunScope(
+        session_id=session.id,
+        attended=not is_unattended(session.trigger_source),
+        allowlist=_action_allowlist(session),
+        agent_name=session.agent_name,
+    )
+    return set_scope(scope), begin_invocation()
+
+
+def _exit_action_scope(scope_token: Any, invocation_token: Any) -> None:
+    from backend.action_policy.runtime import end_invocation, reset_scope
+    end_invocation(invocation_token)
+    reset_scope(scope_token)
+
+
 def _append_date_context(middleware: list[Any]) -> None:
     """Append the calendar injector so it runs closest to the model.
 
@@ -1050,6 +1104,7 @@ def _build_gp_subagent(
     )
     middleware.append(ExecutePathSafetyMiddleware())
     middleware.append(HighRiskExecuteFlaggerMiddleware())
+    _append_action_policy(middleware, agent_name="general-purpose")
 
     # When the general-purpose subagent owns the Playwright tools (i.e. no
     # library sub-agent claimed ``playwright-mcp``), attach the snapshot
@@ -1232,6 +1287,7 @@ def _build_named_agent_subagent(
     )
     middleware.append(ExecutePathSafetyMiddleware())
     middleware.append(HighRiskExecuteFlaggerMiddleware())
+    _append_action_policy(middleware, agent_name=agent_name)
 
     if pw_pool is not None:
         from middleware.playwright_pruning import PlaywrightSnapshotPruningMiddleware
@@ -1965,6 +2021,7 @@ def _compile_library_subagent(
     )
     middleware.append(ExecutePathSafetyMiddleware())
     middleware.append(HighRiskExecuteFlaggerMiddleware())
+    _append_action_policy(middleware, agent_name=agent_spec.name)
 
     if "playwright-mcp" in required_ids:
         middleware.insert(0, PlaywrightSnapshotPruningMiddleware())
@@ -2551,6 +2608,14 @@ class SessionManager:
             and (not s.requires_os or s.requires_os == _os_label)
             and (not tool_mcp_ids or s.id in tool_mcp_ids)
         ]
+        from backend.action_policy.catalog import drop_macos_servers
+        attached = drop_macos_servers(
+            enabled_servers,
+            macos_automation_enabled=config.action_policy.macos_automation_enabled,
+        )
+        if len(attached) != len(enabled_servers):
+            logger.info("[build_graph] macOS automation is off; those servers were not attached")
+        enabled_servers = attached
         logger.info("[build_graph] connecting %d MCP servers", len(enabled_servers))
         t_mcp = time.monotonic()
         try:
@@ -2931,10 +2996,10 @@ class SessionManager:
 
             # Build the properly-configured GP subagent for direct-agent mode.
             # Without this, ``create_deep_agent`` would add a default GP
-            # subagent that (a) inherits ``interrupt_on={"execute": True}``
-            # from the parent — causing HITL interrupts inside ``task`` that
-            # hang in scheduled/unattended runs — and (b) lacks the
-            # StreamingSubagentRunnable wrapper needed for live UI feedback.
+            # subagent that lacks the StreamingSubagentRunnable wrapper
+            # needed for live UI feedback. execute is gated by
+            # ActionPolicyMiddleware on this subagent too, not by a
+            # graph interrupt.
             # Passing a pre-compiled ``CompiledSubAgent`` here causes
             # ``create_deep_agent`` to skip its built-in GP subagent entirely.
             gp_subagent = _build_gp_subagent(
@@ -3121,15 +3186,19 @@ class SessionManager:
             LiveOutputMiddleware,
             SubagentAsToolGuardMiddleware,
         )
-        extra_middleware.append(ExecutePathSafetyMiddleware())
-        extra_middleware.append(HighRiskExecuteFlaggerMiddleware())
-        extra_middleware.append(LiveOutputMiddleware(live_output_queue, files_dir))
+        # Guard first so a mis-named sub-agent call is rewritten before
+        # the policy classifies it. Policy before live output so the
+        # approval card shows the command, not the tee wrapper.
         if subagents:
             extra_middleware.append(
                 SubagentAsToolGuardMiddleware(
                     subagent_names=[sa["name"] for sa in subagents],
                 )
             )
+        extra_middleware.append(ExecutePathSafetyMiddleware())
+        extra_middleware.append(HighRiskExecuteFlaggerMiddleware())
+        _append_action_policy(extra_middleware, agent_name=agent_name or "orchestrator")
+        extra_middleware.append(LiveOutputMiddleware(live_output_queue, files_dir))
 
         if is_scheduled_run:
             memory_path = files_dir / "learnings.md"
@@ -3318,7 +3387,9 @@ class SessionManager:
             subagents=subagents,
             checkpointer=checkpointer,
             backend=backend,
-            interrupt_on={"execute": True},
+            # execute is gated by ActionPolicyMiddleware, including inside
+            # sub-agents. interrupt_on here would ask a second time.
+            interrupt_on=None,
             middleware=extra_middleware,
         )
 
@@ -3987,7 +4058,27 @@ class SessionManager:
         while True:
             try:
                 t_wait = time.monotonic()
-                item = await aiter.__anext__()
+                # Race the next graph chunk against approval cards. A tool
+                # that is waiting for the user produces no chunk, so a plain
+                # await here would hide the card until they had already answered.
+                next_task = asyncio.ensure_future(aiter.__anext__())
+                try:
+                    from backend.action_policy.runtime import pop_approvals
+                    while not next_task.done():
+                        for pending_card in pop_approvals(session_id):
+                            yield pending_card
+                        await asyncio.wait({next_task}, timeout=0.25)
+                    item = next_task.result()
+                except RuntimeError as exc:
+                    # A Task that hits the end of an async generator raises
+                    # RuntimeError instead of StopAsyncIteration.
+                    if "StopAsyncIteration" not in str(exc):
+                        raise
+                    raise StopAsyncIteration from exc
+                except BaseException:
+                    if not next_task.done():
+                        next_task.cancel()
+                    raise
                 wait_ms = (time.monotonic() - t_wait) * 1000
                 _chunk_idx += 1
                 if wait_ms > 2000:
@@ -4441,6 +4532,7 @@ class SessionManager:
         session.message_count += 1
         session.updated_at = datetime.now(timezone.utc)
         session.status = "running"
+        scope_token, invocation_token = _enter_action_scope(session)
 
         is_first_message = session.message_count == 1
         if is_first_message:
@@ -4479,47 +4571,50 @@ class SessionManager:
         # printed_offset for the first leg: skip all historical messages + the user msg we just added.
         current_printed_offset = existing_count + 1
 
-        while True:
-            astream_iter = session.graph.astream(
-                current_input,
-                config=run_config,
-                stream_mode=["values", "messages"],
-            )
+        try:
+            while True:
+                astream_iter = session.graph.astream(
+                    current_input,
+                    config=run_config,
+                    stream_mode=["values", "messages"],
+                )
 
-            context_injected = False
-            injected_printed = current_printed_offset
+                context_injected = False
+                injected_printed = current_printed_offset
 
-            async for resp in self._do_stream(
-                session, session_id, astream_iter,
-                printed_offset=current_printed_offset,
-                context_queue=context_queue,
-                run_config=run_config,
-            ):
-                if resp.get("type") == "_context_injected":
-                    # Internal signal — do not forward to the caller.
-                    # Carry forward the `printed` cursor so the next leg doesn't re-emit old msgs.
-                    context_injected = True
-                    injected_printed = resp.get("metadata", {}).get("printed", current_printed_offset)
-                else:
-                    yield resp
+                async for resp in self._do_stream(
+                    session, session_id, astream_iter,
+                    printed_offset=current_printed_offset,
+                    context_queue=context_queue,
+                    run_config=run_config,
+                ):
+                    if resp.get("type") == "_context_injected":
+                        # Internal signal — do not forward to the caller.
+                        # Carry forward the `printed` cursor so the next leg doesn't re-emit old msgs.
+                        context_injected = True
+                        injected_printed = resp.get("metadata", {}).get("printed", current_printed_offset)
+                    else:
+                        yield resp
 
-            if not context_injected:
-                break
+                if not context_injected:
+                    break
 
-            # Restart from the checkpoint that now contains the injected HumanMessage.
-            # LangGraph continues from the last checkpoint when input is None.
-            current_input = None
-            current_printed_offset = injected_printed
+                # Restart from the checkpoint that now contains the injected HumanMessage.
+                # LangGraph continues from the last checkpoint when input is None.
+                current_input = None
+                current_printed_offset = injected_printed
 
-        if is_first_message:
-            await self._generate_title(session, session_id, query)
+            if is_first_message:
+                await self._generate_title(session, session_id, query)
 
-        async for resp in self._check_interrupts_or_done(session, session_id):
-            yield resp
+            async for resp in self._check_interrupts_or_done(session, session_id):
+                yield resp
 
-        await self._maybe_consolidate_memory(session)
-        await self._maybe_index_transcript(session)
-        await self._maybe_ambient_sweep(session)
+            await self._maybe_consolidate_memory(session)
+            await self._maybe_index_transcript(session)
+            await self._maybe_ambient_sweep(session)
+        finally:
+            _exit_action_scope(scope_token, invocation_token)
 
     async def stream_resume(
         self,
@@ -4537,25 +4632,29 @@ class SessionManager:
             yield privacy_err
             return
 
-        run_config = {"configurable": {"thread_id": session_id}, "recursion_limit": session.recursion_limit}
-        existing_state = await session.graph.aget_state({"configurable": {"thread_id": session_id}})
-        existing_count = len(existing_state.values.get("messages", []))
+        scope_token, invocation_token = _enter_action_scope(session)
+        try:
+            run_config = {"configurable": {"thread_id": session_id}, "recursion_limit": session.recursion_limit}
+            existing_state = await session.graph.aget_state({"configurable": {"thread_id": session_id}})
+            existing_count = len(existing_state.values.get("messages", []))
 
-        astream_iter = session.graph.astream(
-            Command(resume={"decisions": decisions}),
-            config=run_config,
-            stream_mode=["values", "messages"],
-        )
+            astream_iter = session.graph.astream(
+                Command(resume={"decisions": decisions}),
+                config=run_config,
+                stream_mode=["values", "messages"],
+            )
 
-        async for resp in self._do_stream(session, session_id, astream_iter, printed_offset=existing_count):
-            yield resp
+            async for resp in self._do_stream(session, session_id, astream_iter, printed_offset=existing_count):
+                yield resp
 
-        async for resp in self._check_interrupts_or_done(session, session_id):
-            yield resp
+            async for resp in self._check_interrupts_or_done(session, session_id):
+                yield resp
 
-        await self._maybe_consolidate_memory(session)
-        await self._maybe_index_transcript(session)
-        await self._maybe_ambient_sweep(session)
+            await self._maybe_consolidate_memory(session)
+            await self._maybe_index_transcript(session)
+            await self._maybe_ambient_sweep(session)
+        finally:
+            _exit_action_scope(scope_token, invocation_token)
 
     async def _choose_run_depth(
         self,

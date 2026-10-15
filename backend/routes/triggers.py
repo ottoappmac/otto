@@ -122,6 +122,21 @@ async def api_create_trigger(req: TriggerCreateRequest):
                 content={"error": f"Agent '{req.agent_name}' not found."},
             )
 
+    if req.type in ("macostool", "shell") and not req.acknowledged_host_code:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    "This trigger runs code on this Mac. Confirm it in the form "
+                    "before saving."
+                ),
+            },
+        )
+    from backend.action_policy.gate import validate_allowlist
+    allow_err = validate_allowlist(req.allowed_actions)
+    if allow_err:
+        return JSONResponse(status_code=400, content={"error": allow_err})
+
     spec = TriggerSpec(
         id=req.id,
         type=req.type,
@@ -153,6 +168,7 @@ async def api_create_trigger(req: TriggerCreateRequest):
         shell_mode=req.shell_mode,
         cwd=req.cwd,
         env=req.env or {},
+        allowed_actions=list(req.allowed_actions or []),
     )
     spec_err = validate_spec(spec)
     if spec_err:
@@ -241,6 +257,26 @@ async def api_update_trigger(trigger_id: str, req: TriggerUpdateRequest):
         spec.env = req.env
     if req.keep_last_n_runs is not None:
         spec.keep_last_n_runs = max(1, req.keep_last_n_runs)
+    if req.allowed_actions is not None:
+        from backend.action_policy.gate import validate_allowlist
+        allow_err = validate_allowlist(req.allowed_actions)
+        if allow_err:
+            return JSONResponse(status_code=400, content={"error": allow_err})
+        spec.allowed_actions = list(req.allowed_actions)
+    host_code_changed = (
+        spec.type in ("macostool", "shell")
+        and (req.script is not None or req.command is not None)
+    )
+    if host_code_changed and not req.acknowledged_host_code:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    "This trigger runs code on this Mac. Confirm the new "
+                    "script or command before saving."
+                ),
+            },
+        )
 
     spec_err = validate_spec(spec)
     if spec_err:

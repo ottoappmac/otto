@@ -1324,6 +1324,94 @@ class DecisionConfig(BaseModel):
     endpoint_override: str = ""
 
 
+class ExecuteSandboxConfig(BaseModel):
+    """Seatbelt profile for the ``execute`` tool.
+
+    On by default on macOS. When ``enabled`` is true and the sandbox
+    cannot be applied, the command is refused rather than run on the
+    host. ``network`` defaults off because a shell that can open
+    sockets can also call the local Otto API.
+    """
+
+    enabled: bool = True
+    network: bool = False
+    extra_read_paths: list[str] = Field(default_factory=list)
+    extra_write_paths: list[str] = Field(default_factory=list)
+    env_passthrough: list[str] = Field(default_factory=list)
+
+
+class ActionPolicyConfig(BaseModel):
+    """How the agent may use high-risk tools.
+
+    ``categories`` is the source of truth. ``preset`` records which
+    bundle the user last applied; editing one category does not have
+    to clear it. Per-agent overrides may only tighten a category
+    (allow → ask → deny); a looser override is ignored at decision time.
+
+    ``macos_automation_enabled`` is the kill switch. Off means the macOS
+    tool servers are not attached to new sessions, and a call that
+    still reaches one is denied.
+    """
+
+    preset: str = "balanced"
+    macos_automation_enabled: bool = True
+    categories: dict[str, str] = Field(default_factory=lambda: {
+        "shell": "ask",
+        "applescript": "ask",
+        "desktop_control": "ask",
+        "email_send": "ask",
+        "mail_read": "ask",
+        "message_send": "ask",
+        "message_read": "ask",
+        "destructive": "ask",
+        "persistence": "ask",
+        "mcp_authoring": "ask",
+        "settings_write": "ask",
+        "pim_write": "ask",
+        "work_tools_write": "ask",
+        "browser_automation": "allow",
+        "unclassified": "ask",
+    })
+    agent_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
+    rate_limit_per_session: dict[str, int] = Field(default_factory=lambda: {
+        "email_send": 5,
+        "message_send": 10,
+        "destructive": 10,
+    })
+    execute_sandbox: ExecuteSandboxConfig = Field(default_factory=ExecuteSandboxConfig)
+
+    @model_validator(mode="after")
+    def _complete_categories(self) -> "ActionPolicyConfig":
+        defaults = {
+            "shell": "ask",
+            "applescript": "ask",
+            "desktop_control": "ask",
+            "email_send": "ask",
+            "mail_read": "ask",
+            "message_send": "ask",
+            "message_read": "ask",
+            "destructive": "ask",
+            "persistence": "ask",
+            "mcp_authoring": "ask",
+            "settings_write": "ask",
+            "pim_write": "ask",
+            "work_tools_write": "ask",
+            "browser_automation": "allow",
+            "unclassified": "ask",
+        }
+        merged = dict(defaults)
+        for key, value in (self.categories or {}).items():
+            if key in defaults and value in ("allow", "ask", "deny"):
+                merged[key] = value
+        self.categories = merged
+        limits = {"email_send": 5, "message_send": 10, "destructive": 10}
+        for key, value in (self.rate_limit_per_session or {}).items():
+            if isinstance(value, int) and value >= 0:
+                limits[str(key)] = value
+        self.rate_limit_per_session = limits
+        return self
+
+
 class DistillationConfig(BaseModel):
     """On-device model distillation (LoRA on a user-chosen student).
 
@@ -1362,9 +1450,10 @@ class AppConfig(BaseModel):
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     setup: SetupState = Field(default_factory=SetupState)
     setup_chat: SetupChatConfig = Field(default_factory=SetupChatConfig)
-    # When True, HITL approval prompts are automatically answered with
-    # "approve" — except for commands flagged as high-risk by the safety
-    # middleware, which always require manual confirmation.
+    # Read only by the chat UI. When true, the client auto-approves
+    # approval cards that the server did not stamp ``no_auto_approve``.
+    # The server does not consult this flag. High-risk categories stamp
+    # that marker, so this setting cannot skip them.
     auto_approve_commands: bool = False
 
     # In-chat nudge: after each session Otto checks whether the task looks
@@ -1376,6 +1465,7 @@ class AppConfig(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     distillation: DistillationConfig = Field(default_factory=DistillationConfig)
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
+    action_policy: ActionPolicyConfig = Field(default_factory=ActionPolicyConfig)
 
     @model_validator(mode="after")
     def _fix_memory_llm_family(self) -> "AppConfig":

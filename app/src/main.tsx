@@ -12,6 +12,7 @@ import {
   getStealthFadeOpacity,
   onStealthFadeOpacityChanged,
 } from "./utils/stealthFadeOpacity";
+import { installApiAuth, loadApiToken } from "./config/apiBase";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/source-serif-4";
 import "./index.css";
@@ -35,7 +36,10 @@ if (stealthKind) {
   document.documentElement.classList.add("stealth-window", `stealth-${stealthKind}`);
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+async function boot() {
+  await loadApiToken();
+  installApiAuth();
+  ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <ThemeProvider>
@@ -47,4 +51,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>,
-);
+  );
+}
+
+void boot();

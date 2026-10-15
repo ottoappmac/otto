@@ -482,21 +482,35 @@ async def _execute_scheduled_run(
                         )
                         _next_decisions = [{"answer": _NO_USER_ANSWER}]
                         return False
+                    if rtype == "hitl_request" and (resp.get("metadata") or {}).get("type") == "action_policy":
+                        # The tool is waiting on a future inside this same stream.
+                        # Resolving it here continues the run. Starting a graph
+                        # resume on top would run the graph twice.
+                        from backend.action_policy.gate import unattended_hitl_decisions
+                        from backend.action_policy.runtime import resolve
+                        spec = load_schedule(schedule_id)
+                        allow = set(spec.allowed_actions) if spec else set()
+                        decisions = unattended_hitl_decisions(resp.get("metadata"), allow)
+                        request_id = (resp.get("metadata") or {}).get("request_id")
+                        if request_id:
+                            resolve(session.id, str(request_id), decisions)
+                        continue
                     if rtype == "hitl_request":
-                        # No human present: auto-approve execute commands.
-                        # The model may batch multiple approval-requiring tool
-                        # calls into a single interrupt; the middleware requires
-                        # exactly one decision per hanging tool call.
+                        # Nobody is present. Approve only categories the user
+                        # pre-authorised on this schedule. One decision per action.
+                        from backend.action_policy.gate import unattended_hitl_decisions
                         auto_resumes += 1
-                        n_actions = len(
-                            (resp.get("metadata") or {}).get("action_requests") or []
-                        ) or 1
-                        logger.info(
-                            "Scheduled run %s: auto-approving hitl_request "
-                            "(attempt %d, %d action(s))",
-                            schedule_id, auto_resumes, n_actions,
+                        spec = load_schedule(schedule_id)
+                        allow = set(spec.allowed_actions) if spec else set()
+                        _next_decisions = unattended_hitl_decisions(
+                            resp.get("metadata"), allow,
                         )
-                        _next_decisions = [{"type": "approve"} for _ in range(n_actions)]
+                        logger.info(
+                            "Scheduled run %s: unattended hitl %s (attempt %d)",
+                            schedule_id,
+                            [d.get("type") or d.get("answer") for d in _next_decisions],
+                            auto_resumes,
+                        )
                         return False
                 return True
 

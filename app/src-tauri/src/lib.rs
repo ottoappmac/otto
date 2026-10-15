@@ -311,6 +311,41 @@ fn hide_stealth_overlay(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Read the per-launch API token the Python backend wrote.
+/// The webview cannot set headers on a WebSocket, and a production
+/// build cannot bake the token in: it changes every launch.
+#[tauri::command]
+fn get_api_token() -> Result<String, String> {
+    let path = api_token_path();
+    std::fs::read_to_string(&path)
+        .map(|text| text.trim().to_string())
+        .map_err(|err| format!("API token is not ready ({err})"))
+}
+
+fn api_token_path() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        return std::path::PathBuf::from(home).join("Library/Application Support/Otto/api_token");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var("APPDATA").unwrap_or_else(|_| {
+            let home = std::env::var("USERPROFILE").unwrap_or_default();
+            format!("{home}\\AppData\\Roaming")
+        });
+        return std::path::PathBuf::from(base).join("Otto").join("api_token");
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let base = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{home}/.config")
+        });
+        std::path::PathBuf::from(base).join("Otto").join("api_token")
+    }
+}
+
 /// Bring a single stealth panel to the front (creating it if needed). Used by
 /// the "Show Chat" / "Show Live Capture" buttons so each panel can summon the
 /// other. `panel` is the window label ("overlay" for chat, "capture" for Live
@@ -382,7 +417,8 @@ pub fn run() {
             set_dock_badge,
             show_stealth_overlay,
             hide_stealth_overlay,
-            focus_stealth_panel
+            focus_stealth_panel,
+            get_api_token
         ])
         .setup(|app| {
             tray::create_tray(app)?;

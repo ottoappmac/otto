@@ -429,6 +429,8 @@ export interface ScheduleSpec {
   cron_expression: string;
   enabled: boolean;
   keep_last_n_runs: number;
+  /** High-risk categories this schedule may run with nobody present. */
+  allowed_actions?: string[];
   last_run: string | null;
   last_status: string | null;
   last_error: string | null;
@@ -529,6 +531,8 @@ export interface TriggerSpec {
   shell_mode: ShellMode;
   cwd: string | null;
   env: Record<string, string>;
+  /** High-risk categories a fired run may perform with nobody present. */
+  allowed_actions?: string[];
   state_json: Record<string, unknown>;
   keep_last_n_runs: number;
   timeout_seconds: number;
@@ -1881,6 +1885,25 @@ export interface AmbientHint {
   target_id?: string | null;
 }
 
+export type ActionMode = "allow" | "ask" | "deny";
+
+export interface ExecuteSandboxSettings {
+  enabled: boolean;
+  network: boolean;
+  extra_read_paths: string[];
+  extra_write_paths: string[];
+  env_passthrough: string[];
+}
+
+export interface ActionPolicySettings {
+  preset: string;
+  macos_automation_enabled: boolean;
+  categories: Record<string, ActionMode>;
+  agent_overrides: Record<string, Record<string, ActionMode>>;
+  rate_limit_per_session: Record<string, number>;
+  execute_sandbox: ExecuteSandboxSettings;
+}
+
 export interface AppSettings {
   llm: LLMConfig;
   orchestrator: OrchestratorConfig;
@@ -1896,6 +1919,7 @@ export interface AppSettings {
   video: VideoConfig;
   privacy: PrivacyConfig;
   auto_approve_commands: boolean;
+  action_policy: ActionPolicySettings;
   ambient_suggest_recurrence: boolean;
   ambient: AmbientConfig;
   voice: VoiceConfig;

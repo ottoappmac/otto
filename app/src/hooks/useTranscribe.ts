@@ -21,9 +21,8 @@ import type {
   TranscribeWSEvent,
   TranscriptSegment,
 } from "../types";
-import { WS_BASE } from "../config/apiBase";
+import { wsUrl } from "../config/apiBase";
 
-const TRANSCRIBE_WS_URL = `${WS_BASE}/ws/transcribe`;
 const RECONNECT_DELAY_MS = 3000;
 
 export type SourceMap<T> = Partial<Record<TranscribeSource, T>>;
@@ -117,7 +116,7 @@ export function useTranscribe({
     // Replace any stale (closing/closed) socket cleanly before opening a new one.
     teardownSocket();
 
-    const ws = new WebSocket(TRANSCRIBE_WS_URL);
+    const ws = new WebSocket(wsUrl("/ws/transcribe"));
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);

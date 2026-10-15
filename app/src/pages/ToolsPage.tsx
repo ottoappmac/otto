@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { LogIn, LogOut, Plug, Plus, RefreshCw, Trash2, TestTube, X, Wrench, Play, Square, Zap, Pencil, Loader2, CheckCircle2, XCircle, Download, Upload, FileJson, Database, KeyRound, Sparkles, Eye, EyeOff } from "lucide-react";
+import { mcpRiskBadge } from "../components/action/actionCategories";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
 import type { MCPAuthStatus, MCPServerStatus } from "../types";
@@ -218,6 +219,9 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                       {srv.generated && (
                         <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"><Sparkles size={9} /> Agent-built</span>
                       )}
+                      {mcpRiskBadge(srv.id, !!srv.generated) && (
+                        <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">{mcpRiskBadge(srv.id, !!srv.generated)}</span>
+                      )}
                     </div>
                     <p className="text-xs text-th-text-tertiary mt-0.5">
                       {hasLifecycleControls(srv) && <span className={`mr-2 ${srv.process_running ? "text-emerald-400" : "text-th-text-muted"}`}>Process: {srv.process_running ? "running" : "stopped"}</span>}
@@ -374,6 +378,9 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-th-text-primary">{srv.name}</h3>
+                          {mcpRiskBadge(srv.id, false) && (
+                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">{mcpRiskBadge(srv.id, false)}</span>
+                          )}
                           {!srv.os_supported && srv.requires_os && (
                             <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full font-semibold bg-th-inset-bg text-th-text-tertiary border border-th-border">
                               {srv.requires_os.charAt(0).toUpperCase() + srv.requires_os.slice(1)} only

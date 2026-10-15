@@ -37,6 +37,7 @@ except Exception:  # noqa: BLE001 — never let TLS setup crash startup
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api_token import ApiTokenMiddleware
 from backend.config import AppConfig, get_app_data_dir
 from backend.agent_library import seed_defaults
 from backend.state import mcp_mgr, session_mgr
@@ -677,6 +678,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     asyncio.create_task(_startup_mcp(cfg))
+    from backend.api_token import ensure_token, token_required
+    if token_required():
+        ensure_token()
+
     asyncio.create_task(_auto_provision_node())
     asyncio.create_task(_compact_checkpoint_db_on_startup())
     cleanup_task = asyncio.create_task(_periodic_cleanup())
@@ -735,6 +740,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(ApiTokenMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

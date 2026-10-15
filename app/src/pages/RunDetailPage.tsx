@@ -49,7 +49,7 @@ import { StatCard } from "../components/runs/StatCard";
 import { getSourceIcon, getSourceLabel, getProviderIcon } from "../utils/entityIcons";
 import { familyChipClasses } from "../utils/subagentModelChip";
 import { applyLiveTimelineMessage } from "../utils/liveTimeline";
-import { WS_BASE } from "../config/apiBase";
+import { wsUrl } from "../config/apiBase";
 
 const POLL_MS = 4_000;
 
@@ -860,7 +860,7 @@ export default function RunDetailPage() {
   // WebSocket for live streaming events
   useEffect(() => {
     if (!id || run?.status !== "running") return;
-    const ws = new WebSocket(`${WS_BASE}/ws/chat/${id}`);
+    const ws = new WebSocket(wsUrl(`/ws/chat/${id}`));
     wsRef.current = ws;
 
     ws.onmessage = (evt) => {

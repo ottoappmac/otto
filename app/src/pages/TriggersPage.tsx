@@ -26,6 +26,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
+import { AllowlistField } from "../components/action/AllowlistField";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
 import { useNotification } from "../context/NotificationContext";
@@ -1586,6 +1587,8 @@ function TriggerModal({ initial, agents, error, onClose, onSubmit }: {
   const [shellMode, setShellMode] = useState<ShellMode>(initial?.shell_mode ?? "stdout_change");
   const [cwd, setCwd] = useState(initial?.cwd ?? "");
   const [submitting, setSubmitting] = useState(false);
+  const [allowedActions, setAllowedActions] = useState<string[]>(initial?.allowed_actions ?? []);
+  const [acknowledgedHostCode, setAcknowledgedHostCode] = useState(false);
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -1623,6 +1626,10 @@ function TriggerModal({ initial, agents, error, onClose, onSubmit }: {
         req.shell_mode = shellMode;
         req.cwd = cwd || null;
         req.match = match || null;
+      }
+      req.allowed_actions = allowedActions;
+      if (type === "macostool" || type === "shell") {
+        req.acknowledged_host_code = acknowledgedHostCode;
       }
       await onSubmit(req, isUpdate);
     } finally {
@@ -1863,6 +1870,23 @@ function TriggerModal({ initial, agents, error, onClose, onSubmit }: {
             </>
           )}
 
+          <AllowlistField value={allowedActions} onChange={setAllowedActions} />
+
+          {(type === "macostool" || type === "shell") && (
+            <label className="flex items-start gap-2 text-xs text-th-text-secondary">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={acknowledgedHostCode}
+                onChange={(event) => setAcknowledgedHostCode(event.target.checked)}
+              />
+              <span>
+                I have read this {type === "shell" ? "command" : "script"}. It runs on this Mac
+                whenever the trigger fires, including when I am not here.
+              </span>
+            </label>
+          )}
+
           {error && (
             <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
               {error}
@@ -1880,7 +1904,12 @@ function TriggerModal({ initial, agents, error, onClose, onSubmit }: {
           <button
             className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
             onClick={handleSubmit}
-            disabled={submitting || (!isUpdate && !id) || !prompt}
+            disabled={
+              submitting
+              || (!isUpdate && !id)
+              || !prompt
+              || ((type === "macostool" || type === "shell") && !acknowledgedHostCode)
+            }
           >
             {submitting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
             {isUpdate ? "Save changes" : "Create trigger"}

@@ -211,6 +211,18 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------
 
 
+def _tag_server_tools(tools: list[BaseTool], server_id: str) -> None:
+    """Stamp the server id on each tool so the action policy can classify it.
+
+    Tool names collide across servers and are only prefixed when they do,
+    so the policy cannot recover the server from the name alone.
+    """
+    for tool in tools:
+        meta = dict(getattr(tool, "metadata", None) or {})
+        meta["otto_server_id"] = server_id
+        tool.metadata = meta
+
+
 def dedupe_tool_names(
     server_tools: Iterable[tuple[str, list[BaseTool]]],
 ) -> list[BaseTool]:
@@ -584,21 +596,22 @@ def _harden_generated_command(
                 _json.loads(perms_file.read_text(encoding="utf-8"))
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "mcp_manager: could not parse permissions.json for %s (%s) -- "
-                "running without a sandbox",
-                config.id, exc,
-            )
-            manifest = PermissionManifest(sandbox_enabled=False)
+            raise MCPSignatureError(
+                f"refusing to spawn generated MCP {config.id!r}: "
+                f"permissions.json could not be read ({exc})"
+            ) from exc
 
     # Make sure a profile exists on disk for the sandbox wrap step.
     # If signing happened on a non-macOS host the file may still be
     # absent; in that case wrap_command no-ops and we just rely on the
     # signature + AST audit.
-    if not sandbox_profile_path(config.id).is_file():
-        logger.debug(
-            "mcp_manager: sandbox profile missing for %s -- spawning unwrapped",
-            config.id,
+    if not sandbox_profile_path(config.id).is_file() and manifest.sandbox_enabled:
+        # wrap_command raises SandboxRequired. Surfacing it here keeps the
+        # "missing profile" case next to the other spawn refusals.
+        from backend.mcp_sandbox import SandboxRequired
+        raise SandboxRequired(
+            f"sandbox profile missing for generated MCP {config.id}; "
+            "refusing to spawn unsandboxed"
         )
 
     full_command = [command, *args]
@@ -1455,6 +1468,7 @@ class MCPManager:
             else:
                 tools = await self._load_generic(config, conn)
 
+            _tag_server_tools(tools, config.id)
             conn.tools = tools
             conn.connected = True
             _record_success(config.id)
@@ -1634,6 +1648,18 @@ class MCPManager:
                     command=spawn_command,
                     args=spawn_args,
                 )
+            elif config.builtin:
+                from backend.action_policy.catalog import UNSANDBOXED_SERVER_IDS
+                from backend.mcp_sandbox import wrap_builtin_stdio
+                if config.id not in UNSANDBOXED_SERVER_IDS and sys.platform == "darwin":
+                    from backend.config import get_app_data_dir
+                    work = get_app_data_dir() / "mcp_server" / config.id
+                    wrapped = wrap_builtin_stdio(
+                        [spawn_command, *spawn_args],
+                        server_id=config.id,
+                        work_dir=work if work.is_dir() else None,
+                    )
+                    spawn_command, spawn_args = wrapped[0], list(wrapped[1:])
 
             connection = {
                 "transport": "stdio",

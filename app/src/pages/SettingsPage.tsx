@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { Link, useLocation } from "react-router-dom";
 import { Eye, EyeOff, CheckCircle, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Loader2, Check, ChevronDown, Plus, Trash2, Server, Play, Square, X, Wifi, PlugZap, ShieldCheck, ShieldOff, ShieldAlert, Copy, ClipboardCheck, Lock, Unlock, Mic, Zap, Wand2, Minimize2, Maximize2 } from "lucide-react";
 import { api } from "../hooks/useApi";
-import { WS_BASE } from "../config/apiBase";
+import { wsUrl } from "../config/apiBase";
 import { usePolling } from "../hooks/usePolling";
 import ClusterSetupFlow from "../components/cluster/ClusterSetupFlow";
 import ExoSetupSteps, { type ExoSetupCompletion } from "../components/exo/ExoSetupSteps";
@@ -15,7 +15,8 @@ import { MemoryPanel, AmbientPanel } from "./MemoryPage";
 import VoiceModelChooser from "../components/voice/VoiceModelChooser";
 import DecisionPanel from "../components/decision/DecisionPanel";
 import { DistilledModelsTab } from "../components/distillation/DistilledModelsTab";
-import type { AppSettings, DistillAdapter, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
+import { ActionPolicyPanel } from "../components/action/ActionPolicyPanel";
+import type { ActionPolicySettings, AppSettings, DistillAdapter, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
 import { getFollowFileEdits, setFollowFileEdits } from "../utils/followFileEdits";
 
 const TABS = ["LLM", "Jev", "Agent Memory", "Suggestions", "macOS Activity", "Voice", "Video", "Advanced", "Observability", "Privacy & Security", "About"] as const;
@@ -288,6 +289,36 @@ const DEFAULT_SETTINGS: AppSettings = {
   video: { provider_preference: "follow_main", frame_rate: 1.0, media_resolution: "default", max_duration_secs: 1800, max_frames: 60, frames_per_request: 24, frame_max_side: 1024, include_audio: true, realtime_fps: 1.0, youtube_enabled: true, cache_transcripts: true, debug_save_frames: false, record_audio: false, record_audio_device: "", live_preview: true, live_to_agent: "off", live_agent_flush_secs: 20, live_batch_secs: 12, live_batch_frames: 4 },
   privacy: { enabled: false, local_only_providers: ["mlx", "omlx", "exo"], allowed_hosts: [], allow_loopback: true, allow_mdns: true, pf_anchor: "otto.privacy", engaged_at: "", audit_token: "" },
   auto_approve_commands: false,
+  action_policy: {
+    preset: "balanced",
+    macos_automation_enabled: true,
+    categories: {
+      shell: "ask",
+      applescript: "ask",
+      desktop_control: "ask",
+      email_send: "ask",
+      mail_read: "ask",
+      message_send: "ask",
+      message_read: "ask",
+      destructive: "ask",
+      persistence: "ask",
+      mcp_authoring: "ask",
+      settings_write: "ask",
+      pim_write: "ask",
+      work_tools_write: "ask",
+      browser_automation: "allow",
+      unclassified: "ask",
+    },
+    agent_overrides: {},
+    rate_limit_per_session: { email_send: 5, message_send: 10, destructive: 10 },
+    execute_sandbox: {
+      enabled: true,
+      network: false,
+      extra_read_paths: [],
+      extra_write_paths: [],
+      env_passthrough: [],
+    },
+  } satisfies ActionPolicySettings,
   ambient_suggest_recurrence: false,
   ambient: {
     enabled: false,
@@ -484,6 +515,14 @@ export default function SettingsPage() {
           orchestrator: orch,
           distillation: { ...DEFAULT_SETTINGS.distillation, ...(s.distillation ?? {}) },
           decision: { ...DEFAULT_SETTINGS.decision, ...(s.decision ?? {}) },
+          action_policy: {
+            ...DEFAULT_SETTINGS.action_policy,
+            ...(s.action_policy ?? {}),
+            categories: { ...DEFAULT_SETTINGS.action_policy.categories, ...(s.action_policy?.categories ?? {}) },
+            execute_sandbox: { ...DEFAULT_SETTINGS.action_policy.execute_sandbox, ...(s.action_policy?.execute_sandbox ?? {}) },
+            rate_limit_per_session: { ...DEFAULT_SETTINGS.action_policy.rate_limit_per_session, ...(s.action_policy?.rate_limit_per_session ?? {}) },
+            agent_overrides: s.action_policy?.agent_overrides ?? {},
+          },
           llm: {
             ...DEFAULT_SETTINGS.llm,
             ...(s.llm ?? {}),
@@ -4261,7 +4300,7 @@ export default function SettingsPage() {
         )}
 
         {tab === "Privacy & Security" && (
-          <PrivacyTab />
+          <PrivacyTab settings={settings} setSettings={setSettings} />
         )}
 
         {tab === "About" && (
@@ -5676,7 +5715,10 @@ function ModelPickerField({ value, onChange, models, loading, error, onFetch }: 
 // Privacy & Security tab
 // ===========================================================================
 
-function PrivacyTab() {
+function PrivacyTab({ settings, setSettings }: {
+  settings: AppSettings;
+  setSettings: (updater: AppSettings | ((prev: AppSettings) => AppSettings)) => void;
+}) {
   const [status, setStatus] = useState<PrivacyStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
@@ -5847,6 +5889,11 @@ function PrivacyTab() {
 
   return (
     <div className="max-w-2xl space-y-4">
+
+      <ActionPolicyPanel
+        policy={settings.action_policy}
+        onChange={(action_policy) => setSettings((prev) => ({ ...prev, action_policy }))}
+      />
 
       {/* ── Main toggle card ─────────────────────────────────────────────── */}
       <Card title="Privacy Lock" dot={engaged ? "bg-emerald-500" : "bg-th-text-muted"}>
@@ -6449,7 +6496,7 @@ function VoiceSettingsPanel({
     setWakePhase("listening");
     stopWakeTest();
     try {
-      const ws = new WebSocket(`${WS_BASE}/ws/voice`);
+      const ws = new WebSocket(wsUrl("/ws/voice"));
       wakeWsRef.current = ws;
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: "configure", config: { activation_mode: "wakeword", wake_model: "hey_otto" } }));

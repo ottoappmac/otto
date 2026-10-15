@@ -17,9 +17,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WatchWSEvent } from "../types";
-import { WS_BASE } from "../config/apiBase";
+import { wsUrl } from "../config/apiBase";
 
-const WATCH_WS_URL = `${WS_BASE}/ws/watch`;
 const RECONNECT_DELAY_MS = 3000;
 
 export interface WatchCommentaryLine {
@@ -100,7 +99,7 @@ export function useWatch({ enabled = false }: UseWatchOptions = {}): UseWatchRet
     }
     teardownSocket();
 
-    const ws = new WebSocket(WATCH_WS_URL);
+    const ws = new WebSocket(wsUrl("/ws/watch"));
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);

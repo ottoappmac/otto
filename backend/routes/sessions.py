@@ -1168,9 +1168,32 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
 
                     if msg_type == "hitl_response":
                         decisions = msg.get("decisions", [])
+                        request_id = msg.get("request_id")
                         await asyncio.to_thread(
                             mark_last_interrupt_resolved, session_id, decisions,
                         )
+                        # Action-policy cards wait on an in-process future.
+                        # Resolving that must not also resume the graph, or
+                        # the same click would approve twice.
+                        if request_id:
+                            from backend.action_policy.runtime import has_pending, resolve
+                            if has_pending(session_id, str(request_id)):
+                                resolve(
+                                    session_id,
+                                    str(request_id),
+                                    decisions if isinstance(decisions, list) else [],
+                                )
+                                continue
+                            err = {
+                                "type": "error",
+                                "content": (
+                                    "That approval expired (the run ended or the "
+                                    "app restarted). Send the message again if "
+                                    "you still want it."
+                                ),
+                            }
+                            await queue.put(err)
+                            continue
                         prev_task = running_tasks.get(session_id)
                         running = bool(prev_task and not prev_task.done())
                         action = _hitl_resume_action(

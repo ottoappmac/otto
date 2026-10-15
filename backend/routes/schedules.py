@@ -165,11 +165,17 @@ async def api_create_schedule(req: ScheduleCreateRequest):
     if cron_err:
         return JSONResponse(status_code=400, content={"error": cron_err})
 
+    from backend.action_policy.gate import validate_allowlist
+    allow_err = validate_allowlist(req.allowed_actions)
+    if allow_err:
+        return JSONResponse(status_code=400, content={"error": allow_err})
+
     spec = ScheduleSpec(
         id=req.id,
         agent_name=req.agent_name,
         prompt=req.prompt,
         cron_expression=req.cron_expression,
+        allowed_actions=list(req.allowed_actions or []),
     )
     await asyncio.to_thread(save_schedule, spec)
 
@@ -213,6 +219,12 @@ async def api_update_schedule(schedule_id: str, req: ScheduleUpdateRequest):
         spec.cron_expression = req.cron_expression
     if req.enabled is not None:
         spec.enabled = req.enabled
+    if req.allowed_actions is not None:
+        from backend.action_policy.gate import validate_allowlist
+        allow_err = validate_allowlist(req.allowed_actions)
+        if allow_err:
+            return JSONResponse(status_code=400, content={"error": allow_err})
+        spec.allowed_actions = list(req.allowed_actions)
 
     await asyncio.to_thread(save_schedule, spec)
 

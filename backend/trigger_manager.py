@@ -724,39 +724,49 @@ async def _check_shell(
     if spec.cwd:
         cwd_expanded = str(Path(spec.cwd).expanduser())
 
-    proc_env = None
-    if spec.env:
-        import os as _os
-        proc_env = {**_os.environ, **spec.env}
+    import os as _os
+    from backend.exec_sandbox import passthrough_names, run_shell, sandbox_settings, scrub_env
+
+    enabled, network, extra_read, extra_write = sandbox_settings()
+    cwd_path = Path(cwd_expanded) if cwd_expanded else Path.home()
+    writes = [cwd_path]
+    for extra in extra_write:
+        if extra:
+            writes.append(Path(extra).expanduser())
+    reads = [Path(p).expanduser() for p in extra_read if p]
+    proc_env = scrub_env(
+        _os.environ,
+        extra=spec.env or None,
+        passthrough=passthrough_names(),
+    )
 
     try:
-        proc = await asyncio.create_subprocess_shell(
+        result = await asyncio.to_thread(
+            run_shell,
             cmd,
-            cwd=cwd_expanded,
+            cwd=cwd_path,
             env=proc_env,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            timeout=min(spec.poll_seconds, 60),
+            sandbox=enabled,
+            network=network,
+            write_paths=writes,
+            read_paths=reads,
+            profile_dir=cwd_path,
         )
     except Exception as exc:
         event["error"] = f"failed to launch shell: {exc!s}"
         return False, dict(state), event
 
-    try:
-        out_b, err_b = await asyncio.wait_for(
-            proc.communicate(), timeout=min(spec.poll_seconds, 60),
-        )
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        event["error"] = "shell command timed out"
+    if result.error and not result.stdout:
+        event["error"] = result.error
+        event["exit_code"] = result.returncode
         return False, dict(state), event
 
-    stdout = (out_b or b"").decode("utf-8", errors="replace")
-    stderr = (err_b or b"").decode("utf-8", errors="replace")
-    exit_code = proc.returncode if proc.returncode is not None else -1
+    stdout = result.stdout
+    stderr = result.stderr
+    if result.error:
+        stderr = f"{stderr}\n{result.error}".strip()
+    exit_code = result.returncode
     event["stdout"] = stdout[:4096]
     event["exit_code"] = exit_code
     if stderr:
@@ -899,14 +909,33 @@ async def _execute_trigger_run(
                         )
                         _next_decisions = [{"answer": _NO_USER_ANSWER}]
                         return False
+                    if rtype == "hitl_request" and (resp.get("metadata") or {}).get("type") == "action_policy":
+                        # Waiting on a future inside this stream, not a graph pause.
+                        from backend.action_policy.gate import unattended_hitl_decisions
+                        from backend.action_policy.runtime import resolve
+                        spec_now = load_trigger(trigger_id)
+                        allow = set(spec_now.allowed_actions) if spec_now else set()
+                        decisions = unattended_hitl_decisions(resp.get("metadata"), allow)
+                        request_id = (resp.get("metadata") or {}).get("request_id")
+                        if request_id:
+                            resolve(session.id, str(request_id), decisions)
+                        continue
                     if rtype == "hitl_request":
-                        # No human present: auto-approve execute commands.
+                        # Nobody is present. Approve only categories the user
+                        # pre-authorised on this trigger, one decision per action.
+                        from backend.action_policy.gate import unattended_hitl_decisions
                         auto_resumes += 1
-                        logger.info(
-                            "Trigger run %s: auto-approving hitl_request (attempt %d)",
-                            trigger_id, auto_resumes,
+                        spec_now = load_trigger(trigger_id)
+                        allow = set(spec_now.allowed_actions) if spec_now else set()
+                        _next_decisions = unattended_hitl_decisions(
+                            resp.get("metadata"), allow,
                         )
-                        _next_decisions = [{"type": "approve"}]
+                        logger.info(
+                            "Trigger run %s: unattended hitl %s (attempt %d)",
+                            trigger_id,
+                            [d.get("type") or d.get("answer") for d in _next_decisions],
+                            auto_resumes,
+                        )
                         return False
                 return True
 

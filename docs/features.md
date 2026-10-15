@@ -132,7 +132,7 @@ Beyond the built-ins, any **MCP server** (stdio or SSE) adds its tools to the se
 | `wikipedia` | Wikipedia summary lookup |
 | `duckduckgo` | DuckDuckGo web search — no API key needed |
 | `playwright_mcp` | Browser automation via Playwright MCP (accessibility snapshots) |
-| `execute` | Shell commands in a per-session sandbox |
+| `execute` | Shell commands. On macOS they run under Seatbelt: writes limited to the session and the mapped project, sensitive directories unreadable, no network unless you turn it on. File tools are the ones confined to the session directory. |
 | `ask_user` | Interrupt and ask the user a free-text or multiple-choice question |
 | `spawn_followup_session` | Hand off to a fresh session after building new tools mid-turn |
 | `view_image` | Let the agent interpret uploaded images |

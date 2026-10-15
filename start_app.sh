@@ -90,6 +90,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── API token ─────────────────────────────────────────────────────────────────
+# Same value for the backend and the Vite dev server. A production build
+# reads the token file through the Tauri get_api_token command instead,
+# because the token changes every launch and cannot be compiled in.
+OTTO_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export OTTO_API_TOKEN
+export VITE_OTTO_API_TOKEN="$OTTO_API_TOKEN"
+
 # ── Launch backend ────────────────────────────────────────────────────────────
 info "Starting backend on port $BACKEND_PORT..."
 VIRTUAL_ENV="$VENV_DIR" \

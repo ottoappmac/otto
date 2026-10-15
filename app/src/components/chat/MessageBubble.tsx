@@ -16,6 +16,7 @@ import {
   screenHighRiskCommand,
   describeHighRiskLabel,
 } from "../../utils/highRiskCommands";
+import { GRANT_NOUN } from "../action/actionCategories";
 import { api } from "../../hooks/useApi";
 import { getToolLabel } from "../../utils/toolLabels";
 import { artifactTypeFromPath } from "./ArtifactPanel";
@@ -714,6 +715,16 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
     const resolved = meta?.resolved as boolean | undefined;
     const decisions = meta?.decisions as Array<Record<string, unknown>> | undefined;
     const resolvedType = decisions?.[0]?.type as string | undefined;
+    const risk = meta?.risk as {
+      category?: string;
+      title?: string;
+      grantable?: boolean;
+      no_auto_approve?: boolean;
+      labels?: string[];
+    } | undefined;
+    const isPolicy = meta?.type === "action_policy";
+    const pendingTitle = risk?.title
+      || (actions.length === 1 ? "Run command?" : `Run ${actions.length} commands?`);
 
     return (
       <div className="flex gap-3 justify-start">
@@ -734,7 +745,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
             }`}>
               {resolved
                 ? resolvedType === "approve" ? "Approved" : resolvedType === "edit" ? "Approved (edited)" : "Rejected"
-                : actions.length === 1 ? "Run command?" : `Run ${actions.length} commands?`}
+                : pendingTitle}
             </span>
           </div>
 
@@ -746,8 +757,11 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                 : [];
               const editedDecision = resolved && (decisions?.[i] as Record<string, any> | undefined)?.type === "edit" && decisions?.[i];
               const editedCmd = editedDecision ? (editedDecision as Record<string, any>).edited_action?.args?.command : undefined;
-              const displayCmd = editedCmd ?? action.args?.command ?? JSON.stringify(action.args, null, 2);
-              const isExecute = action.name === "execute";
+              const displayCmd = editedCmd
+                ?? action.description
+                ?? action.args?.command
+                ?? JSON.stringify(action.args, null, 2);
+              const isExecute = action.name === "execute" && !action.description;
               return (
                 <div key={i} className="px-3 pt-2.5 pb-2.5">
                   <div className="flex items-center gap-1.5 mb-1.5">
@@ -827,7 +841,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                   >
                     <Check size={11} /> {actions.length > 1 ? `Run (${actions.length})` : "Run"}
                   </button>
-                  {actions.length === 1 && (
+                  {actions.length === 1 && !isPolicy && (
                     <button
                       onClick={() => {
                         const cmd = String(actions[0]?.args?.command ?? "");
@@ -845,13 +859,26 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                   >
                     <X size={11} /> {actions.length > 1 ? "Reject all" : "Reject"}
                   </button>
-                  <button
-                    onClick={() => onApproveAllSession?.(actions.map(() => ({ type: "approve" })))}
-                    title="Auto-approve all further commands this session"
-                    className="ml-auto flex items-center gap-1 px-2 py-1.5 text-[11px] text-th-text-muted hover:text-th-text-tertiary transition-colors"
-                  >
-                    <CheckCheck size={10} /> Always allow
-                  </button>
+                  {risk?.grantable && risk.category ? (
+                    <button
+                      onClick={() => onHitlDecision?.(actions.map(() => ({
+                        type: "approve",
+                        grant_category: risk.category,
+                      })))}
+                      title="Allow this kind of action for the rest of this chat"
+                      className="ml-auto flex items-center gap-1 px-2 py-1.5 text-[11px] text-th-text-muted hover:text-th-text-tertiary transition-colors"
+                    >
+                      <CheckCheck size={10} /> Allow {GRANT_NOUN[risk.category] ?? risk.category} this session
+                    </button>
+                  ) : !isPolicy ? (
+                    <button
+                      onClick={() => onApproveAllSession?.(actions.map(() => ({ type: "approve" })))}
+                      title="Auto-approve further commands this session, except ones the server marks as always asking"
+                      className="ml-auto flex items-center gap-1 px-2 py-1.5 text-[11px] text-th-text-muted hover:text-th-text-tertiary transition-colors"
+                    >
+                      <CheckCheck size={10} /> Always allow
+                    </button>
+                  ) : null}
                 </>
               )}
             </div>

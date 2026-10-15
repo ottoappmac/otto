@@ -23,13 +23,12 @@ Four guards live here, all implemented as ``wrap_tool_call`` interceptors:
 
 3. **High-risk command flagging** (:class:`HighRiskExecuteFlaggerMiddleware`)
 
-   Before an ``execute`` call hits the human-in-the-loop interrupt, the
-   command is screened for known-dangerous patterns (``rm -rf /``,
-   ``git push --force``, raw block-device writes, …).  Matches are
-   logged at WARNING and a ``high_risk=True`` marker is added to the
-   tool-call ``args`` so the frontend can render a high-prominence
-   approval badge.  The interrupt continues to gate execution; this
-   middleware only adds visibility.
+   Screens ``execute`` for known-dangerous patterns (``rm -rf /``,
+   ``git push --force``, raw block-device writes, …) and logs matches
+   at WARNING. It does not stamp the tool call and it does not approve
+   or block anything. The chat UI screens the same patterns itself
+   (``app/src/utils/highRiskCommands.ts``). Gating lives in
+   :class:`backend.action_policy.middleware.ActionPolicyMiddleware`.
 
 4. **Live output streaming** (:class:`LiveOutputMiddleware`)
 
@@ -406,10 +405,9 @@ class SubagentAsToolGuardMiddleware(AgentMiddleware):
 # ── 3. High-risk command flagging ────────────────────────────────────────
 
 
-# Patterns that warrant a "high risk" badge in the approval UI.  These
-# are not blocked outright — the human-in-the-loop interrupt
-# (``interrupt_on={"execute": True}``) still gates execution.  We only
-# raise visibility so a user clicking through approvals sees the danger.
+# Patterns the approval card can highlight. They do not block the call.
+# ActionPolicyMiddleware decides whether it runs. The chat UI uses the
+# same idea of a danger badge; this list is the backend copy.
 _HIGH_RISK_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
     # ``rm -rf /`` / ``rm -rf ~`` / ``rm -rf $HOME`` and variants.
     # Trailing target may be followed by whitespace, EOL, ``/``, or the
@@ -435,7 +433,7 @@ def screen_high_risk_command(command: str | None) -> list[str]:
     Exposed at module level so backend routes (e.g. session approve
     endpoints) and tests can re-use the same screen the middleware does.
     The frontend mirrors this list in
-    ``app/src/lib/highRiskCommands.ts`` for rendering the approval
+    ``app/src/utils/highRiskCommands.ts`` for rendering the approval
     badge — keep the two in sync when adding a pattern.
     """
     if not command or not isinstance(command, str):
@@ -577,32 +575,11 @@ class LiveOutputMiddleware(AgentMiddleware):
 
         tc_id: str = request.tool_call.get("id") or ""
 
-        # ── Phase 1: interrupt phase ─────────────────────────────────────
-        # Pass the request through unmodified so the HITL dialog shows
-        # the original command.  Detect the interrupt exception and mark
-        # this tc_id as approved so the next call (execution phase) knows
-        # it's safe to apply the tee wrapper.
-        if tc_id not in self._approved:
-            try:
-                return await handler(request)
-            except BaseException as exc:
-                # Any BaseException (NodeInterrupt, CancelledError, …)
-                # that is NOT a normal return is treated as the interrupt
-                # signal.  Mark this tc_id so the execution phase can
-                # apply tee, then re-raise to let LangGraph handle it.
-                if not isinstance(exc, Exception):
-                    # True BaseException subclasses (CancelledError,
-                    # SystemExit, KeyboardInterrupt) — always re-raise.
-                    raise
-                # For regular Exception subclasses (NodeInterrupt is
-                # typically an Exception) mark as approved and re-raise.
-                self._approved.add(tc_id)
-                raise
-
-        # ── Phase 2: execution phase (post-approval) ─────────────────────
-        # The user approved the command.  Now wrap with tee and stream.
-        self._approved.discard(tc_id)  # clean up for any future reuse
-
+        # Approval happens in ActionPolicyMiddleware, which sits outside
+        # this wrapper, so the card shows the original command. By the
+        # time we run, it is safe to tee. (An older two-phase path waited
+        # for a LangGraph interrupt inside this wrapper; that interrupt
+        # now lives in after_model, so the first call here is the real run.)
         tmp_path: Optional[str] = None
         poll_task: Optional[asyncio.Task] = None
         actual_request = request
