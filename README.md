@@ -78,7 +78,7 @@ The `DeepAgent` (`src/deep_agent/`) is a LangGraph ReAct graph that wires up a c
 | `doc_reader` | LLM-based document summarisation and Q&A |
 | `playwright_mcp` | Browser automation via Playwright MCP (accessibility snapshots, not screenshots) |
 | `view_image` | Let the agent see uploaded images (PNG, JPEG, GIF, WebP) |
-| `execute` | Run shell commands in a per-session sandbox with `SESSION_FILES` anchoring |
+| `execute` | Run shell commands. File tools stay in the session directory. The shell itself runs under a Seatbelt profile (macOS) with a scrubbed environment; see Safety. |
 | `ask_user` | Interrupt execution and ask the user a free-text or multiple-choice question |
 | `jev` | Optional local classifier for when the agent is torn between concrete options. Advisory only; off until Settings → Jev is enabled |
 | `spawn_followup_session` | Hand off to a fresh session after building new tools mid-turn |
@@ -275,7 +275,8 @@ Multiple runtime guards run on every agent turn, independent of the prompt. They
 
 - **Execute path safety** — rewrites bare `/output/...` paths in `execute` calls to `$SESSION_FILES/...`
 - **Subagent-as-tool guard** — rewrites stray direct tool calls to subagent names into the correct `task(...)` shape, catching the most common dispatch error on smaller models
-- **High-risk command flagging** — screens `execute` calls for known-dangerous patterns (`rm -rf /`, `git push --force`, raw block-device writes, etc.) and adds a `high_risk=True` marker so the frontend renders a high-prominence approval badge before the human-in-the-loop interrupt fires
+- **Action policy** — one server-side gate for shell, AppleScript, desktop control, sending mail or messages, deletes, schedules, and changing settings. It covers the orchestrator and every sub-agent, including runs that fire while nobody is at the keyboard. Configure it in Settings → Privacy & Security. Shell commands run inside a Seatbelt sandbox by default (no network, sensitive directories unreadable, Apple Events blocked). The sandbox is the control; pattern matching on command text is only a warning. The high-risk command flagger logs those patterns. It does not stamp `high_risk` on the tool call; the approval card gets its risk label from the action policy.
+- **High-risk command flagging** — screens `execute` for known-dangerous patterns (`rm -rf /`, `git push --force`, raw block-device writes) and logs them. The chat UI applies the same list when drawing the card.
 - **Tool loop guard** — per-tool ring-buffer that detects identical-args failure or no-progress loops and injects a recovery hint; on local MLX models it also requests a one-shot temperature bump to break out of greedy-decoding loops
 
 **Runaway-run guards** (applied at the model-call layer, provider-agnostic):

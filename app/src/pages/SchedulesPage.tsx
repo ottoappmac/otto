@@ -16,6 +16,7 @@ import {
   Search,
   ArrowUpDown,
 } from "lucide-react";
+import { AllowlistField } from "../components/action/AllowlistField";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
 import { useNotification } from "../context/NotificationContext";
@@ -471,6 +472,7 @@ function ScheduleDialog({
   const [agentName, setAgentName] = useState(schedule?.agent_name ?? "");
   const [prompt, setPrompt] = useState(schedule?.prompt ?? "");
   const [cron, setCron] = useState(schedule?.cron_expression ?? "0 9 * * *");
+  const [allowedActions, setAllowedActions] = useState<string[]>(schedule?.allowed_actions ?? []);
   const [selectedPreset, setSelectedPreset] = useState(() => {
     const match = CRON_PRESETS.find((p) => p.cron === (schedule?.cron_expression ?? "0 9 * * *"));
     return match?.id ?? "custom";
@@ -528,6 +530,7 @@ function ScheduleDialog({
           prompt,
           cron_expression: cron,
           agent_name: agentName || null,
+          allowed_actions: allowedActions,
         });
         targetId = schedule.id;
       } else {
@@ -536,6 +539,7 @@ function ScheduleDialog({
           agent_name: agentName || null,
           prompt,
           cron_expression: cron,
+          allowed_actions: allowedActions,
         });
         targetId = id;
       }
@@ -672,6 +676,8 @@ function ScheduleDialog({
               />
             </label>
           </div>
+
+          <AllowlistField value={allowedActions} onChange={setAllowedActions} />
 
           {error && (
             <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">

@@ -162,6 +162,12 @@ _COMMON_ALLOWS = """
 (allow sysctl-read)
 (allow mach-lookup)
 (allow ipc-posix-shm)
+; Apple Events stay denied even with mach-lookup open. Checked on macOS 26:
+; (deny default) already blocks them; this makes the intent explicit and
+; wins over a later allow.
+(deny appleevent-send)
+(deny mach-lookup (global-name "com.apple.coreservices.appleevents"))
+(deny mach-lookup (global-name "com.apple.axserver"))
 (allow file-ioctl)
 
 ; Python needs to read its own interpreter, stdlib, and the venv's
@@ -294,38 +300,77 @@ def write_profile(server_dir: Path, profile: str) -> Path:
     return out
 
 
+class SandboxRequired(RuntimeError):
+    """The sandbox was required and could not be applied. Do not run anyway."""
+
+
 def wrap_command(
     *,
     command: list[str],
     server_dir: Path,
     manifest: PermissionManifest,
 ) -> list[str]:
-    """Return *command* possibly wrapped in ``sandbox-exec``.
+    """Return *command* wrapped in ``sandbox-exec``.
 
-    No wrap is applied when:
-
-    * The host isn't macOS (Linux / Windows -- no support yet).
-    * ``manifest.sandbox_enabled`` is False (debug mode).
-    * The profile file is missing on disk.
-
-    Otherwise the returned list invokes ``sandbox-exec -f <profile> --
-    <command>``.
+    ``manifest.sandbox_enabled`` False is the only opt-out. A missing
+    profile or a host without ``sandbox-exec`` raises
+    :class:`SandboxRequired` instead of running the process unsandboxed.
+    Non-macOS hosts raise too when the sandbox is enabled: generated
+    MCPs are not run without the kernel policy.
     """
     if not manifest.sandbox_enabled:
         return list(command)
     if not is_supported():
-        return list(command)
+        raise SandboxRequired(
+            "sandbox-exec is not available on this system; refusing to spawn "
+            "this MCP unsandboxed. Turn sandbox_enabled off only for debugging."
+        )
     profile = server_dir / "sandbox.sb"
     if not profile.is_file():
-        logger.warning(
-            "mcp_sandbox: profile missing at %s -- subprocess will run without sandbox",
-            profile,
+        raise SandboxRequired(
+            f"sandbox profile missing at {profile}; refusing to spawn unsandboxed"
         )
-        return list(command)
     sbe = resolve_sandbox_exec()
     if not sbe:  # pragma: no cover - covered by is_supported()
-        return list(command)
+        raise SandboxRequired("sandbox-exec disappeared between checks")
     return [sbe, "-f", str(profile), *command]
+
+
+def wrap_builtin_stdio(
+    command: list[str],
+    *,
+    server_id: str,
+    work_dir: Path | None,
+) -> list[str]:
+    """Seatbelt a built-in stdio MCP that does not need Apple Events.
+
+    macOS mail / osascript / desktop servers are not wrapped: a sandbox
+    would make them unable to do their job. On macOS a failure to wrap
+    refuses the spawn. Other platforms run unsandboxed (no Seatbelt).
+    Network stays open because these servers talk to Slack, Jira, and
+    similar. Sensitive home directories stay unreadable.
+    """
+    if sys.platform != "darwin":
+        return list(command)
+    if not is_supported():
+        raise SandboxRequired(
+            f"sandbox-exec is not available; refusing to spawn {server_id} unsandboxed"
+        )
+    from backend.exec_sandbox import render_profile
+
+    folder = work_dir if work_dir is not None else Path("/private/tmp")
+    folder.mkdir(parents=True, exist_ok=True)
+    profile_path = folder / f".{server_id}.sb"
+    writes = [folder]
+    profile_path.write_text(
+        render_profile(write_paths=writes, network=True),
+        encoding="utf-8",
+    )
+    profile_path.chmod(0o600)
+    sbe = resolve_sandbox_exec()
+    if not sbe:
+        raise SandboxRequired(f"sandbox-exec missing while wrapping {server_id}")
+    return [sbe, "-f", str(profile_path), *command]
 
 
 def default_manifest_for_paths(
@@ -357,5 +402,7 @@ __all__ = [
     "render_sandbox_profile",
     "write_profile",
     "wrap_command",
+    "wrap_builtin_stdio",
+    "SandboxRequired",
     "default_manifest_for_paths",
 ]

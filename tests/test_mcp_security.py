@@ -315,20 +315,20 @@ def test_wrap_command_disabled_returns_unchanged(tmp_path):
     assert out == cmd
 
 
-def test_wrap_command_returns_unchanged_when_profile_missing(tmp_path, monkeypatch):
+def test_wrap_command_raises_when_profile_missing(tmp_path, monkeypatch):
+    import pytest
     from backend import mcp_sandbox
-    from backend.mcp_sandbox import PermissionManifest
+    from backend.mcp_sandbox import PermissionManifest, SandboxRequired
 
     monkeypatch.setattr(mcp_sandbox, "is_supported", lambda: True)
     monkeypatch.setattr(mcp_sandbox, "resolve_sandbox_exec", lambda: "/usr/bin/sandbox-exec")
 
-    cmd = ["python", "server.py"]
-    out = mcp_sandbox.wrap_command(
-        command=cmd,
-        server_dir=tmp_path,  # no sandbox.sb present
-        manifest=PermissionManifest(),
-    )
-    assert out == cmd
+    with pytest.raises(SandboxRequired):
+        mcp_sandbox.wrap_command(
+            command=["python", "server.py"],
+            server_dir=tmp_path,  # no sandbox.sb present
+            manifest=PermissionManifest(),
+        )
 
 
 def test_wrap_command_wraps_when_profile_present(tmp_path, monkeypatch):

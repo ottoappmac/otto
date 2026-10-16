@@ -123,6 +123,14 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# ── API token ─────────────────────────────────────────────────────────────────
+# Generated once per launch and handed to both processes. The backend
+# removes it from its own environment after writing the file, so MCP
+# subprocesses do not inherit it. Vite only reads this at startup.
+OTTO_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export OTTO_API_TOKEN
+export VITE_OTTO_API_TOKEN="$OTTO_API_TOKEN"
+
 # ── Launch backend ────────────────────────────────────────────────────────────
 info "Starting backend on port $BACKEND_PORT..."
 VIRTUAL_ENV="$VENV_DIR" \

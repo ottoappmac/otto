@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceState, VoiceWSEvent, VoiceConfig } from "../types";
-import { WS_BASE } from "../config/apiBase";
+import { wsUrl } from "../config/apiBase";
 
 // ---------------------------------------------------------------------------
 // Chime: two ascending tones played via Web Audio API when recording starts
@@ -47,7 +47,6 @@ function playActivationChime() {
   }
 }
 
-const VOICE_WS_URL = `${WS_BASE}/ws/voice`;
 const RECONNECT_DELAY_MS = 3000;
 
 export interface UseVoiceOptions {
@@ -105,7 +104,7 @@ export function useVoice({
     if (!enabledRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket(VOICE_WS_URL);
+    const ws = new WebSocket(wsUrl("/ws/voice"));
     wsRef.current = ws;
 
     ws.onopen = () => {

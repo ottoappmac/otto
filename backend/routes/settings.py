@@ -76,6 +76,10 @@ async def update_settings(payload: dict):
     for path, _account in _SECRET_FIELDS:
         if _dict_get_path(payload, path) == _REDACTED_PLACEHOLDER:
             _dict_set_path(payload, path, _model_get_path(existing, path))
+    # An older client that does not know about action_policy must not
+    # reset it to the defaults by omitting the key.
+    if "action_policy" not in payload:
+        payload["action_policy"] = existing.action_policy.model_dump()
     cfg = AppConfig.model_validate(payload)
 
     claude_hook_changed = existing.claude_hook.enabled != cfg.claude_hook.enabled
@@ -641,6 +645,41 @@ async def install_claude_hooks():
     except Exception as exc:
         logger.exception("Failed to install Claude hooks")
         return {"status": "error", "message": str(exc)}
+
+
+@router.get("/action-policy/audit")
+async def action_policy_audit(limit: int = 50):
+    """Recent high-risk decisions. Args are already redacted on write."""
+    from backend.action_policy.audit import recent
+    capped = max(1, min(int(limit), 200))
+    rows = await asyncio.to_thread(recent, capped)
+    return {"entries": rows}
+
+
+@router.get("/action-policy/meta")
+async def action_policy_meta():
+    """Labels the Settings page needs. Modes live on ``action_policy`` itself."""
+    from backend.action_policy.catalog import (
+        CATEGORIES,
+        CATEGORY_BLURB,
+        CATEGORY_TITLES,
+        INVOCATION_GRANTABLE,
+        PRESETS,
+        SESSION_GRANTABLE,
+    )
+    return {
+        "categories": [
+            {
+                "id": name,
+                "title": CATEGORY_TITLES[name],
+                "blurb": CATEGORY_BLURB[name],
+                "session_grantable": name in SESSION_GRANTABLE,
+                "invocation_grantable": name in INVOCATION_GRANTABLE,
+            }
+            for name in CATEGORIES
+        ],
+        "presets": {name: dict(modes) for name, modes in PRESETS.items()},
+    }
 
 
 @router.post("/shutdown")

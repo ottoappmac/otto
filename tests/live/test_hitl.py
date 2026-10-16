@@ -1,12 +1,15 @@
-"""Live tests: HITL (Human-in-the-Loop) interrupt and resume.
+"""Live tests: HITL (Human-in-the-Loop) approval and resume.
 
-The agent triggers an interrupt when it attempts to call the ``execute`` tool
-(shell execution), because the graph is built with ``interrupt_on={"execute": True}``.
+``execute`` is gated by the action-policy middleware, not by
+``interrupt_on``. The stream yields a ``hitl_request`` and keeps running
+until that request's future is resolved. ``stream_resume`` is only for
+graph interrupts such as ``ask_user``.
+
 These tests verify:
 
-* The stream stops and emits an interrupt event.
-* After ``stream_resume`` with an approval, the agent continues.
-* The checkpoint survives the interrupt so a resumed session is coherent.
+* The stream emits an approval card before the command runs.
+* Approving that card lets the same stream finish.
+* The checkpoint still has the conversation after the card.
 
 Run with::
 
@@ -30,6 +33,23 @@ def _done_events(events: list[dict]) -> list[dict]:
     return [e for e in events if e.get("type") == "done"]
 
 
+async def _drive(session_manager, session_id: str, prompt: str, decision: dict) -> list[dict]:
+    """Collect the stream, resolving the first action-policy card."""
+    from backend.action_policy.runtime import resolve
+
+    events: list[dict] = []
+    answered = False
+    async for event in session_manager.stream_message(session_id, prompt):
+        events.append(event)
+        if answered or event.get("type") != "hitl_request":
+            continue
+        request_id = (event.get("metadata") or {}).get("request_id")
+        if request_id:
+            resolve(session_id, str(request_id), [decision])
+            answered = True
+    return events
+
+
 # ---------------------------------------------------------------------------
 # 1. Execute-triggered HITL pauses the session
 # ---------------------------------------------------------------------------
@@ -40,10 +60,11 @@ async def test_execute_triggers_hitl_interrupt(session_manager, live_session):
     """A prompt that asks the agent to run a shell command should pause with
     a hitl_request event and NOT immediately yield a 'done' event."""
     try:
-        events = await run_session(
+        events = await _drive(
             session_manager,
             live_session.id,
             "Run the shell command: echo hello-from-test",
+            {"type": "reject", "message": "live test"},
         )
     except Exception as exc:
         msg = str(exc)
@@ -65,7 +86,7 @@ async def test_execute_triggers_hitl_interrupt(session_manager, live_session):
             pytest.skip("Agent did not call execute for this prompt; HITL cannot be tested")
         pytest.fail(
             "Agent called execute but no hitl_request was emitted — "
-            "interrupt_on may be broken"
+            "the action policy did not ask"
         )
 
     assert len(hitl) >= 1, f"Expected at least one HITL event; got: {events}"
@@ -79,28 +100,21 @@ async def test_execute_triggers_hitl_interrupt(session_manager, live_session):
 @pytest.mark.asyncio
 async def test_resume_after_approval_completes(session_manager, live_session):
     """After a HITL pause, stream_resume with approval should yield a 'done'."""
-    events = await run_session(
+    events = await _drive(
         session_manager,
         live_session.id,
         "Run the shell command: echo resume-test",
+        {"type": "approve"},
     )
 
     hitl = _hitl_events(events)
     if not hitl:
         pytest.skip("No HITL triggered; cannot test resume")
 
-    # Resume with approval for all pending decisions.
-    resume_events = await collect_stream(
-        session_manager.stream_resume(
-            live_session.id,
-            decisions=[{"type": "approve"}],
-        )
-    )
-
-    done = _done_events(resume_events)
+    done = _done_events(events)
     assert done, (
-        f"Expected 'done' event after resuming with approval.\n"
-        f"Resume events: {resume_events}"
+        f"Expected 'done' on the same stream after approving the card.\n"
+        f"Events: {events}"
     )
 
 
@@ -122,10 +136,11 @@ async def test_checkpoint_preserved_across_interrupt(session_manager, live_app_d
     except Exception as exc:
         pytest.skip(f"Could not create session: {exc}")
 
-    events = await run_session(
+    events = await _drive(
         session_manager,
         session.id,
         "Execute: echo checkpoint-test",
+        {"type": "reject", "message": "live test"},
     )
 
     hitl = _hitl_events(events)

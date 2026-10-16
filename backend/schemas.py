@@ -272,6 +272,9 @@ class ScheduleSpec(BaseModel):
     last_run: Optional[datetime] = None
     last_status: Optional[str] = None
     last_error: Optional[str] = None
+    # High-risk categories this schedule may run with nobody present.
+    # ``persistence`` is never honoured (a run must not create more runs).
+    allowed_actions: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -281,6 +284,7 @@ class ScheduleCreateRequest(BaseModel):
     agent_name: Optional[str] = None
     prompt: str
     cron_expression: str
+    allowed_actions: list[str] = Field(default_factory=list)
 
 
 class ScheduleUpdateRequest(BaseModel):
@@ -289,6 +293,7 @@ class ScheduleUpdateRequest(BaseModel):
     enabled: Optional[bool] = None
     keep_last_n_runs: Optional[int] = None
     agent_name: Optional[str] = None
+    allowed_actions: Optional[list[str]] = None
 
 
 class ScheduleRun(BaseModel):
@@ -396,6 +401,8 @@ class TriggerSpec(BaseModel):
     last_status: Optional[str] = None
     last_error: Optional[str] = None
     last_event: Optional[dict[str, Any]] = None
+    # High-risk categories the fired run may perform with nobody present.
+    allowed_actions: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -431,6 +438,10 @@ class TriggerCreateRequest(BaseModel):
     shell_mode: ShellMode = "stdout_change"
     cwd: Optional[str] = None
     env: dict[str, str] = Field(default_factory=dict)
+    allowed_actions: list[str] = Field(default_factory=list)
+    # Required when type is macostool or shell: the user has seen the
+    # script or command and accepts that it runs on this Mac.
+    acknowledged_host_code: bool = False
 
 
 class TriggerUpdateRequest(BaseModel):
@@ -464,6 +475,8 @@ class TriggerUpdateRequest(BaseModel):
     cwd: Optional[str] = None
     env: Optional[dict[str, str]] = None
     keep_last_n_runs: Optional[int] = None
+    allowed_actions: Optional[list[str]] = None
+    acknowledged_host_code: bool = False
 
 
 class TriggerRun(BaseModel):

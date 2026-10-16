@@ -88,6 +88,13 @@ export const api = {
 
   // Settings
   getSettings: () => request<AppSettings>("/api/settings"),
+  getActionPolicyMeta: () => request<{
+    categories: { id: string; title: string; blurb: string; session_grantable: boolean; invocation_grantable: boolean }[];
+    presets: Record<string, Record<string, "allow" | "ask" | "deny">>;
+  }>("/api/action-policy/meta"),
+  getActionAudit: (limit = 50) => request<{ entries: Array<Record<string, unknown>> }>(
+    `/api/action-policy/audit?limit=${limit}`,
+  ),
   updateSettings: (data: Record<string, unknown>) =>
     request<{ status: string }>("/api/settings", { method: "PUT", body: JSON.stringify(data) }),
   isFirstRun: () =>

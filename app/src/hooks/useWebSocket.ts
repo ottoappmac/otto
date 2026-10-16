@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WSMessage } from "../types";
-import { WS_BASE } from "../config/apiBase";
+import { wsUrl } from "../config/apiBase";
 
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
@@ -22,7 +22,7 @@ export function useWebSocket({ sessionId, onMessage }: UseWebSocketOptions) {
 
   const connect = useCallback(
     (sid: string) => {
-      const ws = new WebSocket(`${WS_BASE}/ws/chat/${sid}`);
+      const ws = new WebSocket(wsUrl(`/ws/chat/${sid}`));
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -135,10 +135,17 @@ export function useWebSocket({ sessionId, onMessage }: UseWebSocketOptions) {
     return false;
   }, []);
 
-  const sendHitlResponse = useCallback((decisions: Array<Record<string, unknown>>): boolean => {
+  const sendHitlResponse = useCallback((
+    decisions: Array<Record<string, unknown>>,
+    requestId?: string,
+  ): boolean => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
-        JSON.stringify({ type: "hitl_response", decisions }),
+        JSON.stringify({
+          type: "hitl_response",
+          decisions,
+          ...(requestId ? { request_id: requestId } : {}),
+        }),
       );
       return true;
     }

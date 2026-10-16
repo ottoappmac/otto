@@ -1367,9 +1367,9 @@ export default function ChatPage() {
   // Hide the hint the moment the user starts typing.
   useEffect(() => { if (input.trim()) setShowContextHint(false); }, [input]);
 
-  const handleHitlDecision = useCallback((messageId: string, decisions: Array<Record<string, unknown>>) => {
+  const handleHitlDecision = useCallback((messageId: string, decisions: Array<Record<string, unknown>>, requestId?: string) => {
     if (hitlSubmittedRef.current.has(messageId)) return;
-    if (!sendHitlResponse(decisions)) {
+    if (!sendHitlResponse(decisions, requestId)) {
       setMessages((prev) => [
         ...prev,
         { id: `msg-${++msgIdRef.current}`, type: "error" as const, content: "Not connected to server — please wait and try again", timestamp: new Date(), sessionId: currentSessionId ?? sessionId ?? undefined },
@@ -1413,10 +1413,15 @@ export default function ChatPage() {
     );
     if (!unresolved) return;
     if (hitlSubmittedRef.current.has(unresolved.id)) return;
+    const risk = unresolved.metadata?.risk as { no_auto_approve?: boolean } | undefined;
+    if (risk?.no_auto_approve) return;
     const actions = (unresolved.metadata?.action_requests as Array<{ name: string; args: Record<string, unknown> }> | undefined) ?? [];
     const hasHighRisk = actions.some((a) => screenHighRiskCommand(a.args?.command).length > 0);
     if (hasHighRisk) return;
-    handleHitlDecision(unresolved.id, actions.map(() => ({ type: "approve" })));
+    const requestId = typeof unresolved.metadata?.request_id === "string"
+      ? unresolved.metadata.request_id
+      : undefined;
+    handleHitlDecision(unresolved.id, actions.map(() => ({ type: "approve" })), requestId);
   }, [shouldAutoApprove, messages, handleHitlDecision]);
 
   const startSession = async (agentOverride?: string) => {
@@ -3248,7 +3253,7 @@ interface MessageListProps {
   currentSessionId: string | null;
   resolveSubagentModel: (name: string) => { label: string; family: string };
   onEditMessage: (idx: number, content: string) => void;
-  onHitlDecision: (id: string, decisions: Array<Record<string, unknown>>) => void;
+  onHitlDecision: (id: string, decisions: Array<Record<string, unknown>>, requestId?: string) => void;
   onApproveAllSession: (id: string, decisions: Array<Record<string, unknown>>) => void;
   onOpenArtifact: (path: string, fileUrl: string, type: ArtifactType) => void;
 }
@@ -3301,7 +3306,11 @@ const MessageList = memo(function MessageList({
             canEdit={msg.type === "user" && !isStreaming}
             sessionId={currentSessionId ?? undefined}
             onEdit={(newContent) => onEditMessage(idx, newContent)}
-            onHitlDecision={(decisions) => onHitlDecision(msg.id, decisions)}
+            onHitlDecision={(decisions) => onHitlDecision(
+              msg.id,
+              decisions,
+              typeof msg.metadata?.request_id === "string" ? msg.metadata.request_id : undefined,
+            )}
             onApproveAllSession={(decisions) => onApproveAllSession(msg.id, decisions)}
             onOpenArtifact={onOpenArtifact}
           />

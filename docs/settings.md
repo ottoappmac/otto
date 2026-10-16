@@ -505,6 +505,25 @@ Things to know:
 
 ![Privacy & Security](screenshots/settings/privacy-security.png)
 
+**Action policy** controls what the agent is allowed to do with high-risk tools. It applies to the main agent and to every sub-agent, and it is enforced on the server, not only in the chat window.
+
+| Control | Description |
+|---|---|
+| Preset | Locked down, Balanced (the default), or Trusting. Editing one category switches the preset to Custom |
+| Per category | Allow, Ask, or Deny. Setting Allow asks you to confirm, because the agent can then do it without a card |
+| macOS automation | Off means Mail, Messages, AppleScript, and desktop control are not attached to new sessions |
+| Shell sandbox | Seatbelt around `execute` and shell triggers. On by default. If it cannot start, the command is refused |
+| Shell network | Off by default. pip, npm, and git fetch need this on |
+| Session limits | Caps on email sends, message sends, and deletes per chat. 0 means no cap |
+| Agent overrides | A named agent can only be stricter than the policy above |
+| Recent actions | The last decisions, with arguments redacted |
+
+Unattended schedules and triggers do not pop an approval card. They may only do the categories you tick on that schedule or trigger. They can never create further schedules or triggers.
+
+Approval cards name the action ("Send email?", "Read email?") and show the real arguments. "Allow this session" exists for shell, reading mail or messages, calendar/notes edits, and work-tool writes. Sending mail, sending a message, deleting, scheduling, and changing settings ask every time. Listing an inbox asks the first time in a chat even if auto-approve is on.
+
+Limits of this control, including what cannot be sandboxed, are in [action-policy.md](action-policy.md).
+
 **Privacy Lock** restricts OTTO to on-device inference only — when engaged, cloud LLMs (Anthropic, OpenAI) are blocked before any network call is made, and only local providers are allowed.
 
 | Control | Description |

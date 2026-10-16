@@ -24,6 +24,8 @@ Excluded from agent write access
 * ``exo.*`` cluster provisioning / remote management — human action.
 * ``claude_hook`` / ``openclaw`` / ``observability`` — no useful
   orchestrator reason to change mid-run; high accidental-damage risk.
+* ``action_policy`` — the user sets this in Settings. The agent must
+  not loosen, tighten, or read it through these tools.
 """
 
 from __future__ import annotations
@@ -572,6 +574,18 @@ def build_settings_tools() -> list:
         if server.enabled == enabled:
             state = "enabled" if enabled else "disabled"
             return f"MCP server '{server_id}' is already {state}."
+
+        if enabled:
+            from backend.action_policy.catalog import MACOS_SERVER_IDS
+            if (
+                server_id in MACOS_SERVER_IDS
+                and not cfg.action_policy.macos_automation_enabled
+            ):
+                return (
+                    f"Error: macOS automation is turned off in Settings, so "
+                    f"'{server_id}' cannot be enabled from here. The user has "
+                    f"to turn it back on in Privacy & Security."
+                )
 
         server.enabled = enabled
         cfg.save()

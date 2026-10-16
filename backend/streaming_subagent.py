@@ -331,6 +331,9 @@ class StreamingSubagentRunnable(Runnable):
         invocation_id = uuid.uuid4().hex
         session_token = set_current_session(thread_id)
         invocation_token = set_current_invocation(invocation_id)
+        # Desktop-control grants last for this sub-agent run only.
+        from backend.action_policy.runtime import begin_invocation, end_invocation
+        grant_token = begin_invocation()
 
         pw_instance = None
         pw_token = None
@@ -348,6 +351,7 @@ class StreamingSubagentRunnable(Runnable):
                 input, config, queue, display_name, thread_id, invocation_id, **kw,
             )
         finally:
+            end_invocation(grant_token)
             reset_current_invocation(invocation_token)
             reset_current_session(session_token)
             active_desktop_owner.reset(owner_token)
