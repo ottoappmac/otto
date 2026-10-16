@@ -1376,6 +1376,7 @@ class ActionPolicyConfig(BaseModel):
         "pim_write": "ask",
         "work_tools_write": "ask",
         "browser_automation": "allow",
+        "workspace_write": "allow",
         "unclassified": "ask",
     })
     agent_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
@@ -1403,6 +1404,7 @@ class ActionPolicyConfig(BaseModel):
             "pim_write": "ask",
             "work_tools_write": "ask",
             "browser_automation": "allow",
+            "workspace_write": "allow",
             "unclassified": "ask",
         }
         merged = dict(defaults)

@@ -42,6 +42,10 @@ import type {
   ScheduleStatusPoll,
   SessionInfo,
   SkillSpec,
+  FolderGrant,
+  FolderGrantPreview,
+  WorkspaceChanges,
+  WorkspaceGitStatus,
   WorkspaceTreeResult,
   TriggerRunsResponse,
   TriggerSpec,
@@ -969,11 +973,54 @@ export const api = {
     return res.json();
   },
 
-  setSessionWorkspace: (id: string, source: string) =>
+  setSessionWorkspace: (id: string, source: string, mode: "read" | "write" = "write") =>
     request<SessionInfo>(`/api/sessions/${id}/workspace`, {
       method: "POST",
-      body: JSON.stringify({ source }),
+      body: JSON.stringify({ source, mode }),
     }),
+  setSessionMode: (id: string, mode: "agent" | "ask" | "plan" | "debug") =>
+    request<SessionInfo>(`/api/sessions/${id}/mode`, {
+      method: "PATCH",
+      body: JSON.stringify({ mode }),
+    }),
+  bindSessionWorkspace: (id: string, grantId: string) =>
+    request<SessionInfo>(`/api/sessions/${id}/workspace`, {
+      method: "PUT",
+      body: JSON.stringify({ grant_id: grantId }),
+    }),
+  previewFolderGrant: (path: string) =>
+    request<FolderGrantPreview>("/api/workspace-grants/preview", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  listFolderGrants: () => request<FolderGrant[]>("/api/workspace-grants"),
+  createFolderGrant: (path: string, mode: "read" | "write") =>
+    request<FolderGrant>("/api/workspace-grants", {
+      method: "POST",
+      body: JSON.stringify({ path, mode }),
+    }),
+  updateFolderGrant: (id: string, mode: "read" | "write") =>
+    request<FolderGrant>(`/api/workspace-grants/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ mode }),
+    }),
+  revokeFolderGrant: (id: string) =>
+    request<{ status: string }>(`/api/workspace-grants/${id}`, { method: "DELETE" }),
+  listSessionsForGrant: (grantId: string) =>
+    request<SessionInfo[]>(`/api/sessions?workspace_grant_id=${encodeURIComponent(grantId)}`),
+  getWorkspaceGit: (id: string) =>
+    request<WorkspaceGitStatus>(`/api/sessions/${id}/workspace/git`),
+  getWorkspaceChanges: (id: string) =>
+    request<WorkspaceChanges>(`/api/sessions/${id}/workspace/changes`),
+  getWorkspaceDiff: (id: string, path: string) =>
+    request<{ path: string; diff: string; truncated?: boolean; message?: string }>(
+      `/api/sessions/${id}/workspace/diff?path=${encodeURIComponent(path)}`,
+    ),
+  revertWorkspace: (id: string, paths?: string[]) =>
+    request<{ restored: string[]; conflicts: { path: string; reason: string }[] }>(
+      `/api/sessions/${id}/workspace/revert`,
+      { method: "POST", body: JSON.stringify({ paths: paths ?? null }) },
+    ),
   clearSessionWorkspace: (id: string) =>
     request<SessionInfo>(`/api/sessions/${id}/workspace`, { method: "DELETE" }),
   getWorkspaceTree: (id: string, path = "") =>

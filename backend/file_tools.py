@@ -103,7 +103,13 @@ def _save_desc_cache(files_dir: Path, cache: dict[str, str]) -> None:
         logger.debug("Could not persist image-description cache: %s", exc)
 
 
-def build_file_tools(files_dir: Path, vision_llm: Optional[BaseChatModel] = None) -> list:
+def build_file_tools(
+    files_dir: Path,
+    vision_llm: Optional[BaseChatModel] = None,
+    *,
+    grant_roots: list[Path] | None = None,
+    linked_files: list[Path] | None = None,
+) -> list:
     """Build tools that let the agent view uploaded images in the session.
 
     Args:
@@ -149,7 +155,11 @@ def build_file_tools(files_dir: Path, vision_llm: Optional[BaseChatModel] = None
         full = files_dir / vpath.lstrip("/")
         # Containment allows user-dropped images under /links/ to resolve
         # outside the session root, while blocking symlink escapes elsewhere.
-        if not is_resolved_path_allowed(full, files_dir, vpath):
+        if not is_resolved_path_allowed(
+            full, files_dir, vpath,
+            grant_roots=grant_roots,
+            linked_files=linked_files,
+        ):
             return [create_text_block(text="Error: path is outside the session directory.")]
 
         resolved = full.resolve()
@@ -309,4 +319,38 @@ def build_file_tools(files_dir: Path, vision_llm: Optional[BaseChatModel] = None
             create_image_block(base64=data, mime_type=content_type),
         ]
 
-    return [view_image, load_image_from_url]
+    @tool
+    def request_folder_access(path: str, reason: str = "") -> str:
+        """Ask the user to allow a project folder.
+
+        Use this when the user wants work done in a folder that is not
+        already allowed. This does not grant access by itself. Tell the
+        user the app will ask them to confirm the real path.
+
+        Args:
+            path: Absolute path or ``~`` path of the folder.
+            reason: Short reason to show the user.
+        """
+        from backend.workspace_grants import find_by_realpath
+        from backend.workspace_policy import GrantRejected, validate_grantable
+
+        try:
+            real = validate_grantable(path)
+        except (GrantRejected, FileNotFoundError, NotADirectoryError, OSError) as exc:
+            return f"That folder cannot be allowed: {exc}"
+        existing = find_by_realpath(str(real))
+        if existing is not None:
+            return (
+                f"Already allowed ({existing.mode}): {existing.realpath}. "
+                "The user can open it from the Code tab."
+            )
+        why = reason.strip()
+        return (
+            "NEEDS_GRANT\n"
+            f"path: {real}\n"
+            + (f"reason: {why}\n" if why else "")
+            + "The user has to confirm this folder in Otto before you can read or edit it. "
+            "Do not claim it is allowed yet."
+        )
+
+    return [view_image, load_image_from_url, request_folder_access]

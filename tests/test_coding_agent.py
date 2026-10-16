@@ -92,11 +92,23 @@ def test_mapped_project_prompt_block_includes_virtual_path():
         host_path="/Users/me/proj",
         virtual_path="/links/proj",
         name="proj",
+        grant_id="grant-1",
     )
     block = _mapped_project_prompt_block(ws)
     assert "/links/proj" in block
     assert "$PROJECT_ROOT" in block
     assert "edit_file" in block
+
+
+def test_mapped_project_without_grant_asks_user_to_allow_folder():
+    legacy = SessionWorkspace(
+        host_path="/Users/me/proj",
+        virtual_path="/links/proj",
+        name="proj",
+    )
+    block = _mapped_project_prompt_block(legacy)
+    assert "/links/proj" not in block
+    assert "allow a project folder" in block
 
 
 def test_mapped_project_prompt_block_unmapped_only_when_requested():

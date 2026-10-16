@@ -51,6 +51,8 @@ When **Stats** is on, a row of cards shows for the current filter: **Total runs*
 
 Clicking a run opens its detail page (`/runs/:id`). The header shows a **Runs** back link, the run title, and actions — **Open chat**, **Evaluate** (disabled when auto-evaluation is on), **Stop** (while running), and delete. A meta row beneath shows status, short id, source (clickable to the parent schedule/trigger run history), agent, model/provider chip, start time, duration, tokens, and cost.
 
+**Open chat** and **Open in Code** jump to the same session. Chat, Code, and this page share one live event stream, so a running turn stays in sync when you switch.
+
 The body is split into six tabs, each deep-linkable with `?tab=`:
 
 | Tab | Contents |

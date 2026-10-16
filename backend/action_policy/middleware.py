@@ -112,6 +112,7 @@ class ActionPolicyMiddleware(AgentMiddleware):
             rate_limit=int(limits.get(category, 0)) if category else 0,
             agent_name=self.agent_name,
             agent_overrides=overrides,
+            session_mode="agent" if scope is None else scope.mode,
         )
         return decision, name, args, server
 

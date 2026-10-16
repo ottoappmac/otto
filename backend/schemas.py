@@ -186,11 +186,30 @@ class MCPServerAddRequest(BaseModel):
 # Session
 # ---------------------------------------------------------------------------
 
+class FolderGrant(BaseModel):
+    """A folder the user has allowed Otto to use, across sessions.
+
+    ``mode`` is ``read`` or ``write``. Write still goes through checkpoints
+    when the folder is a git repo. The real path is what was resolved at
+    grant time (symlinks followed), which is the path the user confirmed.
+    """
+
+    id: str
+    realpath: str
+    label: str
+    mode: str = "write"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_used: Optional[datetime] = None
+    source: str = "user"
+
+
 class SessionWorkspace(BaseModel):
     """A host folder mapped into the session as the coding agent's project root."""
     host_path: str
     virtual_path: str
     name: str
+    grant_id: str = ""
+    mode: str = "write"
 
 
 class SessionInfo(BaseModel):
@@ -244,6 +263,13 @@ class SessionInfo(BaseModel):
     eval_total: Optional[int] = None  # total scored metrics
     # Per-session distilled LoRA (``otto-distill/…``).  Not global Settings.
     distill_catalog_id: Optional[str] = None
+    # Real paths of files the user dropped into this chat. These are
+    # readable through /links/ without a folder grant. The list is written
+    # only by the links API, never inferred from symlinks the agent plants.
+    linked_files: list[str] = Field(default_factory=list)
+    # ``agent`` | ``ask`` | ``plan`` | ``debug``. Ask and Plan cannot write.
+    # That is enforced in the backend, not by the prompt. See backend/session_mode.py.
+    mode: str = "agent"
 
 
 class SessionCreateRequest(BaseModel):

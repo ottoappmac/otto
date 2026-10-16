@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff, FolderPlus } from "lucide-react";
+import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { AgentGraph } from "../components/chat/AgentGraph";
@@ -25,9 +25,12 @@ import { screenHighRiskCommand } from "../utils/highRiskCommands";
 import { useNotification } from "../context/NotificationContext";
 import { useConnection } from "../context/ConnectionContext";
 import { useTheme } from "../context/ThemeContext";
-import { usePolling } from "../hooks/usePolling";
+import { useChatModel, isDistillCatalogId } from "../hooks/useChatModel";
 import { CRON_PRESETS } from "../types";
-import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJob, SessionInfo, SessionWorkspace, WSMessage } from "../types";
+import type { AgentSpec, ChatMessage, FolderGrantPreview, FolderGrant, MlxDownloadJob, SessionInfo, SessionWorkspace, WSMessage } from "../types";
+import { FolderGrantDialog } from "../components/action/FolderGrantDialog";
+import { ProjectFolderMenu } from "../components/action/ProjectFolderMenu";
+import { pickDirectory } from "../utils/pickFolder";
 import { useVoice } from "../hooks/useVoice";
 import { onAskOtto } from "../utils/askOttoBus";
 import { subscribeSessionFiles } from "../utils/sessionFilesBus";
@@ -54,20 +57,16 @@ function dataUrlToFile(img: AskImage): File | null {
   }
 }
 
-function folderFromFileList(files: FileList | File[]): string | null {
-  const arr = Array.from(files);
-  const first = arr[0] as (File & { path?: string }) | undefined;
-  if (!first?.path) return null;
-  const abs = first.path.replace(/\\/g, "/");
-  const rel = first.webkitRelativePath?.replace(/\\/g, "/");
-  if (rel && abs.endsWith(rel)) {
-    return abs.slice(0, abs.length - rel.length).replace(/\/$/, "");
+function workspaceErrorText(error: unknown, fallback: string): string {
+  const text = error instanceof Error ? error.message : fallback;
+  const at = text.indexOf("{");
+  if (at >= 0) {
+    try {
+      const body = JSON.parse(text.slice(at)) as { error?: string };
+      if (body.error) return body.error;
+    } catch { /* raw */ }
   }
-  return abs.split("/").slice(0, -1).join("/") || null;
-}
-
-function isDistillCatalogId(id: string | undefined | null): boolean {
-  return (id || "").trim().startsWith("otto-distill/");
+  return text;
 }
 
 const FILE_WRITE_TOOLS = new Set(["edit_file", "write_file", "edit"]);
@@ -97,37 +96,6 @@ function latestWriteResultId(path: string, messages: ChatMessage[]): string | nu
     if (written && virtualPathsMatch(written, path)) return m.id;
   }
   return null;
-}
-
-type ChatModelOption = { id: string; name: string; adapter_path?: string };
-
-async function distilledChatOptions(engine: "mlx" | "omlx" | "exo" = "mlx"): Promise<ChatModelOption[]> {
-  try {
-    const res = await api.listDistillAdapters();
-    return (res.adapters ?? []).flatMap((a) => {
-      const name = (a.display_name || a.catalog_id).trim();
-      const label = name.toLowerCase().includes("distill") ? name : `${name} (distilled)`;
-      if (engine === "omlx") {
-        const oid = (a.omlx_model_id || "").trim();
-        if (!oid) return [];
-        return [{ id: oid, name: label, adapter_path: a.adapter_path }];
-      }
-      return [{ id: a.catalog_id, name: label, adapter_path: a.adapter_path }];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function mergeModelOptions(primary: ChatModelOption[], extra: ChatModelOption[]): ChatModelOption[] {
-  const seen = new Set<string>();
-  const out: ChatModelOption[] = [];
-  for (const row of [...extra, ...primary]) {
-    if (!row.id || seen.has(row.id)) continue;
-    seen.add(row.id);
-    out.push(row);
-  }
-  return out;
 }
 
 type RenderItem =
@@ -281,6 +249,8 @@ export default function ChatPage() {
   const [showWorkspaceTree, setShowWorkspaceTree] = useState(true);
   const [mappingFolder, setMappingFolder] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [grantPreview, setGrantPreview] = useState<FolderGrantPreview | null>(null);
+  const [grantMode, setGrantMode] = useState<"read" | "write">("write");
   const lastFollowedToolRef = useRef<string | null>(null);
   // What the open side preview has already shown, so a later write or mtime
   // change reloads it and the first observation of a file does not.
@@ -296,26 +266,34 @@ export default function ChatPage() {
   const [pendingFilePaths, setPendingFilePaths] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [currentModel, setCurrentModel] = useState<string>(() => localStorage.getItem("chatModel") ?? "");
   const [runDepth, setRunDepth] = useState<RunDepth>(() => {
     const stored = localStorage.getItem("otto.runDepth");
     return stored === "quick" || stored === "deep" || stored === "auto" ? stored : "auto";
   });
   const runDepthChosen = useRef(localStorage.getItem("otto.runDepth") != null);
-  const [availableModels, setAvailableModels] = useState<ChatModelOption[]>([]);
-  const [modelsFetched, setModelsFetched] = useState(false);
-  // Tracks the live EXO catalog (with downloaded/loaded flags) so that when
-  // the user picks a model from the chat ModelPicker we can fire-and-forget
-  // a preload for any model that's already on disk but not yet resident.
-  const exoCatalogRef = useRef<ExoCatalogModel[]>([]);
-
-  const exoAutoPreloadInFlightRef = useRef(false);
-  const [exoModelLoading, setExoModelLoading] = useState(false);
-  const [omlxModelLoading, setOmlxModelLoading] = useState(false);
-  // Tracks an active MLX download job for the currently-selected model so
-  // we can show progress and block sends while weights are still coming down.
-  const [mlxDownloadJob, setMlxDownloadJob] = useState<MlxDownloadJob | null>(null);
-  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const {
+    currentModel,
+    availableModels,
+    appSettings,
+    debugLlm,
+    mlxDownloadJob,
+    mlxIsDownloading,
+    exoModelLoading,
+    omlxModelLoading,
+    isModelBusy,
+    handleModelChange,
+  } = useChatModel({
+    onSettingsLoaded: (s) => {
+      if (runDepthChosen.current) return;
+      const d = s.orchestrator?.default_run_depth;
+      if (d === "auto" || d === "quick" || d === "deep") setRunDepth(d);
+    },
+    onSessionInvalidated: () => {
+      // The live session graph still has the previous model baked in.
+      setCurrentSessionId(null);
+      navigate("/chat", { replace: true });
+    },
+  });
   const voiceEnabled = !!(appSettings?.voice?.enabled);
   const wakeEnabled = !!(appSettings?.voice?.wake_enabled);
   const pendingVoiceTranscriptRef = useRef<string | null>(null);
@@ -334,7 +312,6 @@ export default function ChatPage() {
   const micMouseDownTimeRef = useRef<number | null>(null);
   const micClickLockRef = useRef(false);
   const MIC_HOLD_THRESHOLD_MS = 300;
-  const [debugLlm, setDebugLlm] = useState<{ provider: string; authMode: string; hasKeys: boolean; region: string } | null>(null);
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
@@ -354,7 +331,6 @@ export default function ChatPage() {
   const isPinnedToBottomRef = useRef(true);
   const inputRef = useRef<InlineUrlInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
   const slashRef = useRef<HTMLDivElement>(null);
   const atRef = useRef<HTMLDivElement>(null);
   const msgIdRef = useRef(0);
@@ -558,187 +534,6 @@ export default function ChatPage() {
 
   useEffect(() => { api.listAgents().then(setAgents).catch((e) => console.warn("Failed to load agents:", e)); }, []);
 
-  // Poll for an active MLX download job matching the currently-selected model.
-  const syncMlxDownload = useCallback(async () => {
-    if (debugLlm?.provider !== "mlx" || !currentModel) {
-      setMlxDownloadJob(null);
-      return;
-    }
-    try {
-      const r = await api.mlxDownloadList();
-      const active = r.jobs.find(
-        (j) => j.repo_id === currentModel && (j.status === "running" || j.status === "pending"),
-      ) ?? null;
-      setMlxDownloadJob(active);
-    } catch {
-      // best-effort — don't surface polling errors
-    }
-  }, [debugLlm?.provider, currentModel]);
-
-  const mlxIsDownloading = mlxDownloadJob !== null;
-  // Fast poll (800ms) while a download is active for live progress;
-  // slow poll (10s) otherwise so we notice when a download starts
-  // without hammering the backend from every open chat window.
-  usePolling(syncMlxDownload, mlxIsDownloading ? 800 : 10_000, debugLlm?.provider === "mlx");
-
-  const isModelBusy = mlxIsDownloading || exoModelLoading || omlxModelLoading;
-
-  useEffect(() => {
-    api.getSettings().then((s) => {
-      setAppSettings(s);
-      if (!runDepthChosen.current) {
-        const d = s.orchestrator?.default_run_depth;
-        if (d === "auto" || d === "quick" || d === "deep") setRunDepth(d);
-      }
-      const mlx = s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" };
-      if (s.llm.provider === "mlx") {
-        const mid = mlx.hf_llm_model_id?.trim() || localStorage.getItem("chatModel") || "";
-        setCurrentModel(mid);
-        if (mid) localStorage.setItem("chatModel", mid);
-        setDebugLlm({
-          provider: "mlx",
-          authMode: mlx.hf_token ? "hub + token" : "hub",
-          hasKeys: !!mid,
-          region: "",
-        });
-        // Populate model picker with every model already in the Hub cache.
-        // Falls back to just the configured id if the scan fails or returns nothing.
-        api.mlxLocalModels()
-          .then(async (r) => {
-            const rows = r.models ?? [];
-            const mapped: ChatModelOption[] = rows.map((m) => ({
-              id: m.repo_id,
-              name: m.source === "distill"
-                ? ((m.name || m.repo_id).toLowerCase().includes("distill") ? (m.name || m.repo_id) : `${m.name || m.repo_id} (distilled)`)
-                : (m.name || m.repo_id),
-              adapter_path: m.adapter_path,
-            }));
-            const extras = mapped.some((m) => isDistillCatalogId(m.id))
-              ? []
-              : await distilledChatOptions("mlx");
-            const merged = mergeModelOptions(
-              mapped.filter((m) => !isDistillCatalogId(m.id)),
-              mapped.filter((m) => isDistillCatalogId(m.id)).concat(extras),
-            );
-            if (merged.length > 0) {
-              setAvailableModels(merged);
-            } else if (mid) {
-              setAvailableModels([{ id: mid, name: mid }]);
-            } else {
-              setAvailableModels([]);
-            }
-          })
-          .catch(() => {
-            setAvailableModels(mid ? [{ id: mid, name: mid }] : []);
-          })
-          .finally(() => setModelsFetched(true));
-        return;
-      }
-      if (s.llm.provider === "exo") {
-        const mid = s.exo.model_name?.trim() || localStorage.getItem("chatModel") || "";
-        setCurrentModel(mid);
-        if (mid) localStorage.setItem("chatModel", mid);
-        setDebugLlm({
-          provider: "exo",
-          authMode: s.exo.base_url || `127.0.0.1:${s.exo.api_port}`,
-          hasKeys: !!mid && s.exo.enabled,
-          region: "",
-        });
-        // Populate the model picker from the live cluster catalog so the
-        // user can switch between any model exo has (downloaded or loaded)
-        // without leaving the chat page.  Falls back to just the currently
-        // configured id if the cluster is unreachable.
-        api.exoModels()
-          .then(async (r) => {
-            const catalog = r.reachable ? r.models : [];
-            exoCatalogRef.current = catalog;
-            const rich: ChatModelOption[] = catalog
-              .filter((m) => m.downloaded || m.loaded)
-              .map((m) => ({ id: m.id, name: m.name }));
-            const distilled = await distilledChatOptions("exo");
-            const merged = mergeModelOptions(rich, distilled);
-            if (merged.length > 0) {
-              setAvailableModels(merged);
-            } else if (mid) {
-              setAvailableModels([{ id: mid, name: mid }]);
-            } else {
-              setAvailableModels([]);
-            }
-          })
-          .catch((e) => {
-            console.warn("Failed to list EXO models:", e);
-            exoCatalogRef.current = [];
-            setAvailableModels(mid ? [{ id: mid, name: mid }] : []);
-          })
-          .finally(() => setModelsFetched(true));
-        return;
-      }
-      if (s.llm.provider === "openai") {
-        const o = s.llm.openai;
-        setCurrentModel(o.model_name);
-        localStorage.setItem("chatModel", o.model_name);
-        const activeKey = o.model_provider === "azure" ? o.azure_api_key : o.api_key;
-        setDebugLlm({
-          provider: o.model_provider === "azure" ? "azure" : "openai",
-          authMode: o.model_provider === "azure" ? o.azure_endpoint || "azure" : "api_key",
-          hasKeys: !!(activeKey),
-          region: o.model_provider === "azure" ? (o.azure_endpoint || "") : "",
-        });
-        if (!modelsFetched) {
-          api.listModels({ provider: "openai", api_key: activeKey, model_name: o.model_name, openai_model_provider: o.model_provider, azure_endpoint: o.azure_endpoint, azure_api_version: o.azure_api_version, azure_deployment: o.azure_deployment })
-            .then((r) => { if (r.models?.length) setAvailableModels(r.models); })
-            .catch((e) => console.warn("Failed to list OpenAI models:", e))
-            .finally(() => setModelsFetched(true));
-        }
-        return;
-      }
-      if (s.llm.provider === "omlx") {
-        const mid = s.omlx?.model_name?.trim() || localStorage.getItem("chatModel") || "";
-        setCurrentModel(mid);
-        if (mid) localStorage.setItem("chatModel", mid);
-        setDebugLlm({
-          provider: "omlx",
-          authMode: `127.0.0.1:${s.omlx?.api_port ?? 8000}`,
-          hasKeys: !!mid && !!(s.omlx?.enabled),
-          region: "",
-        });
-        api.omlxStatus()
-          .then(async (r) => {
-            const models = r.models ?? [];
-            const hub: ChatModelOption[] = models.length > 0
-              ? models.map((m: { id: string }) => ({ id: m.id, name: m.id }))
-              : (mid ? [{ id: mid, name: mid }] : []);
-            const distilled = await distilledChatOptions("omlx");
-            const merged = mergeModelOptions(hub, distilled);
-            if (merged.length > 0) {
-              setAvailableModels(merged);
-            } else {
-              setAvailableModels([]);
-            }
-          })
-          .catch(() => {
-            setAvailableModels(mid ? [{ id: mid, name: mid }] : []);
-          })
-          .finally(() => setModelsFetched(true));
-        return;
-      }
-      const a = s.llm.anthropic;
-      setCurrentModel(a.model_name);
-      localStorage.setItem("chatModel", a.model_name);
-      setDebugLlm({
-        provider: a.model_provider,
-        authMode: a.model_provider === "bedrock" ? a.bedrock_auth_mode : "api_key",
-        hasKeys: !!(a.aws_access_key_id || a.api_key),
-        region: a.bedrock_region,
-      });
-      if (!modelsFetched) {
-        api.listModels({ provider: s.llm.provider, api_key: a.api_key, model_name: a.model_name, model_provider: a.model_provider, bedrock_region: a.bedrock_region, bedrock_auth_mode: a.bedrock_auth_mode, aws_access_key_id: a.aws_access_key_id, aws_secret_access_key: a.aws_secret_access_key })
-          .then((r) => { if (r.models?.length) setAvailableModels(r.models); })
-          .catch((e) => console.warn("Failed to list models:", e))
-          .finally(() => setModelsFetched(true));
-      }
-    }).catch((e) => console.warn("Failed to load settings:", e));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const scrollRaf = useRef(0);
   useEffect(() => {
     // Respect the user's scroll position: only auto-scroll on new/streamed
@@ -1488,7 +1283,7 @@ export default function ChatPage() {
     return api.getSessionFileUrl(currentSessionId, stripped);
   }, [currentSessionId, workspace]);
 
-  const mapWorkspace = useCallback(async (source: string) => {
+  const bindWorkspace = useCallback(async (bind: (sid: string) => Promise<SessionInfo>, forgetPending?: string) => {
     setWorkspaceError(null);
     setMappingFolder(true);
     try {
@@ -1502,16 +1297,55 @@ export default function ChatPage() {
         sid = await startSession(agent);
         await waitForConnection();
       }
-      const info = await api.setSessionWorkspace(sid, source);
+      const info = await bind(sid);
       setSessionInfo(info);
       setShowWorkspaceTree(true);
-      setPendingFolders((prev) => prev.filter((p) => p !== source));
+      if (forgetPending) setPendingFolders((prev) => prev.filter((p) => p !== forgetPending));
     } catch (e) {
-      setWorkspaceError(e instanceof Error ? e.message : "Could not map folder");
+      setWorkspaceError(workspaceErrorText(e, "Could not map folder"));
     } finally {
       setMappingFolder(false);
     }
   }, [currentSessionId, selectedAgent, startSession, waitForConnection]);
+
+  const mapWorkspace = useCallback(
+    (source: string) => bindWorkspace((sid) => api.setSessionWorkspace(sid, source, grantMode), source),
+    [bindWorkspace, grantMode],
+  );
+
+  // A folder you already allowed: no second confirmation.
+  const useGrant = useCallback(
+    (grant: FolderGrant) => bindWorkspace((sid) => api.bindSessionWorkspace(sid, grant.id)),
+    [bindWorkspace],
+  );
+
+  const beginGrant = useCallback(async (source: string) => {
+    setWorkspaceError(null);
+    try {
+      const preview = await api.previewFolderGrant(source);
+      setGrantMode(preview.existing_mode === "read" ? "read" : "write");
+      setGrantPreview(preview);
+    } catch (e) {
+      setWorkspaceError(workspaceErrorText(e, "Could not check that folder"));
+    }
+  }, []);
+
+  // A typed path (browser) or the native dialog (desktop app).
+  const chooseFolder = useCallback(async (path?: string) => {
+    const picked = path || await pickDirectory();
+    if (picked) await beginGrant(picked);
+  }, [beginGrant]);
+
+  const revokeGrant = useCallback(async (grant: FolderGrant) => {
+    if (!currentSessionId || workspaceRef.current?.grant_id !== grant.id) return;
+    try {
+      const info = await api.getSession(currentSessionId);
+      setSessionInfo(info);
+      if (!info.workspace) setOpenArtifact(null);
+    } catch (e) {
+      setWorkspaceError(workspaceErrorText(e, "Could not refresh this chat"));
+    }
+  }, [currentSessionId]);
 
   const unmapWorkspace = useCallback(async () => {
     if (!currentSessionId) return;
@@ -1831,211 +1665,6 @@ export default function ChatPage() {
     if (currentSessionId) watchSession(currentSessionId);
     sendingRef.current = false;
   }, [messages, isStreaming, sendEdit, watchSession, currentSessionId, sessionId, runDepth]);
-
-  const handleModelChange = async (modelId: string) => {
-    setCurrentModel(modelId);
-    localStorage.setItem("chatModel", modelId);
-    try {
-      const s = await api.getSettings() as AppSettings;
-      const picked = availableModels.find((m) => m.id === modelId);
-      if (isDistillCatalogId(modelId)) {
-        if (s.llm.provider === "omlx") {
-          const adapters = await api.listDistillAdapters().catch(() => ({ adapters: [] }));
-          const row = (adapters.adapters ?? []).find((a) => a.catalog_id === modelId);
-          const omlxId = (row?.omlx_model_id || "").trim();
-          if (omlxId) {
-            modelId = omlxId;
-            setCurrentModel(omlxId);
-            localStorage.setItem("chatModel", omlxId);
-          } else {
-            console.warn("Distilled adapter is not fused for Turbo yet:", modelId);
-            return;
-          }
-        } else {
-          const prevProvider = s.llm.provider;
-          const omlxModel = s.omlx?.model_name?.trim() ?? "";
-          const nextMlx = {
-            ...(s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" }),
-            hf_llm_model_id: modelId,
-            adapter_path: picked?.adapter_path || s.llm.mlx.adapter_path || "",
-          };
-          const nextSettings = {
-            ...s,
-            llm: { ...s.llm, provider: "mlx" as const, mlx: nextMlx },
-          } as AppSettings;
-          await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-          setAppSettings(nextSettings);
-          setDebugLlm({
-            provider: "mlx",
-            authMode: nextMlx.hf_token ? "hub + token" : "hub",
-            hasKeys: !!modelId.trim(),
-            region: "",
-          });
-          if (prevProvider === "omlx") {
-            void (async () => {
-              try {
-                if (omlxModel) await api.omlxUnloadModel(omlxModel);
-                await api.omlxStop();
-              } catch {
-                /* Turbo unload is best-effort; Standard chat still uses mlx_lm. */
-              }
-            })();
-          }
-          return;
-        }
-      }
-      if (s.llm.provider === "mlx") {
-        const nextMlx = {
-          ...(s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" }),
-          hf_llm_model_id: modelId,
-          adapter_path: "",
-        };
-        const nextSettings = { ...s, llm: { ...s.llm, mlx: nextMlx } } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        setDebugLlm({
-          provider: "mlx",
-          authMode: nextMlx.hf_token ? "hub + token" : "hub",
-          hasKeys: !!modelId.trim(),
-          region: "",
-        });
-        return;
-      }
-      if (s.llm.provider === "exo") {
-        const nextExo = { ...s.exo, model_name: modelId };
-        const nextSettings = { ...s, exo: nextExo } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        setDebugLlm({
-          provider: "exo",
-          authMode: nextExo.base_url || `127.0.0.1:${nextExo.api_port}`,
-          hasKeys: !!modelId.trim() && nextExo.enabled,
-          region: "",
-        });
-        // Fetch a fresh catalog to get accurate downloaded/loaded state, then
-        // unload any other loaded model and warm-load the selected one.
-        // Uses the async job API (same as the settings page) so we can poll
-        // progress without blocking the UI thread.
-        const trimmedId = modelId.trim();
-        if (trimmedId && nextExo.enabled && !exoAutoPreloadInFlightRef.current) {
-          exoAutoPreloadInFlightRef.current = true;
-          setExoModelLoading(true);
-          void (async () => {
-            try {
-              // Fresh catalog so we don't act on stale downloaded/loaded flags.
-              const fresh = await api.exoModels();
-              if (fresh.reachable) exoCatalogRef.current = fresh.models;
-              const freshCatalog = fresh.reachable ? fresh.models : exoCatalogRef.current;
-              const newModel = freshCatalog.find((c) => c.id === trimmedId);
-              const loadedOthers = freshCatalog.filter((c) => c.loaded && c.id !== trimmedId);
-              for (const prev of loadedOthers) {
-                await api.exoUnload(prev.id);
-              }
-              // Only load if the model is on disk but not yet in cluster memory.
-              if (newModel?.downloaded && !newModel.loaded) {
-                const job = await api.exoPreloadStart(trimmedId, 1);
-                const startedAt = Date.now();
-                while (Date.now() - startedAt < 600_000) {
-                  await new Promise<void>((res) => setTimeout(res, 2000));
-                  const j = await api.exoPreloadStatus(job.job_id);
-                  if (j.status === "done" || j.status === "error" || j.status === "cancelled") break;
-                }
-                const r = await api.exoModels();
-                if (r.reachable) exoCatalogRef.current = r.models;
-              }
-            } catch (e) {
-              console.warn("Auto unload/preload of EXO model failed:", e);
-            } finally {
-              exoAutoPreloadInFlightRef.current = false;
-              setExoModelLoading(false);
-            }
-          })();
-        }
-        return;
-      }
-      if (s.llm.provider === "openai") {
-        const nextOpenAI = { ...s.llm.openai, model_name: modelId };
-        const nextSettings = { ...s, llm: { ...s.llm, openai: nextOpenAI } } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        const o = nextOpenAI;
-        const activeKey = o.model_provider === "azure" ? o.azure_api_key : o.api_key;
-        setDebugLlm({
-          provider: o.model_provider === "azure" ? "azure" : "openai",
-          authMode: o.model_provider === "azure" ? o.azure_endpoint || "azure" : "api_key",
-          hasKeys: !!(activeKey),
-          region: o.model_provider === "azure" ? (o.azure_endpoint || "") : "",
-        });
-        return;
-      }
-      if (s.llm.provider === "omlx") {
-        const adapters = await api.listDistillAdapters().catch(() => ({ adapters: [] }));
-        const fusedIds = new Set(
-          (adapters.adapters ?? []).map((a) => (a.omlx_model_id || "").trim()).filter(Boolean),
-        );
-        const pickingFused = fusedIds.has(modelId);
-        const nextMlx = pickingFused
-          ? s.llm.mlx
-          : {
-              ...s.llm.mlx,
-              hf_llm_model_id: isDistillCatalogId(s.llm.mlx?.hf_llm_model_id) ? "" : (s.llm.mlx?.hf_llm_model_id || ""),
-              adapter_path: "",
-            };
-        const nextOmlx = { ...s.omlx, model_name: modelId };
-        const nextSettings = { ...s, llm: { ...s.llm, mlx: nextMlx }, omlx: nextOmlx } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        setDebugLlm({
-          provider: "omlx",
-          authMode: `127.0.0.1:${nextOmlx.api_port ?? 8000}`,
-          hasKeys: !!modelId.trim() && !!(nextOmlx.enabled),
-          region: "",
-        });
-        // The live session graph still has the previous model baked in.
-        setCurrentSessionId(null);
-        navigate("/chat", { replace: true });
-        const trimmedOmlxId = modelId.trim();
-        if (trimmedOmlxId && nextOmlx.enabled) {
-          setOmlxModelLoading(true);
-          void (async () => {
-            try {
-              const status = await api.omlxStatus();
-              for (const loaded of status.loaded_models ?? []) {
-                if (loaded.id && loaded.id !== trimmedOmlxId) {
-                  await api.omlxUnloadModel(loaded.id).catch(() => undefined);
-                }
-              }
-              const alreadyLoaded = (status.loaded_models ?? []).some((m) => m.id === trimmedOmlxId);
-              if (!alreadyLoaded) {
-                const job = await api.omlxLoadModel(trimmedOmlxId);
-                const startedAt = Date.now();
-                while (Date.now() - startedAt < 600_000) {
-                  await new Promise<void>((res) => setTimeout(res, 2000));
-                  const j = await api.getOmlxJob(job.job_id);
-                  if (j.status === "done" || j.status === "error") break;
-                }
-              }
-            } catch (e) {
-              console.warn("oMLX model load failed:", e);
-            } finally {
-              setOmlxModelLoading(false);
-            }
-          })();
-        }
-        return;
-      }
-      s.llm.anthropic.model_name = modelId;
-      await api.updateSettings(s as unknown as Record<string, unknown>);
-      setAppSettings(s);
-      const a = s.llm.anthropic;
-      setDebugLlm({
-        provider: a.model_provider,
-        authMode: a.model_provider === "bedrock" ? a.bedrock_auth_mode : "api_key",
-        hasKeys: !!(a.aws_access_key_id || a.api_key),
-        region: a.bedrock_region,
-      });
-    } catch (e) { console.warn("Failed to save model settings:", e); }
-  };
 
   // The slash menu only lists named subagents.  The orchestrator (no
   // subagent) is the default already — users get there by simply not
@@ -2484,34 +2113,28 @@ export default function ChatPage() {
               From parent
             </button>
           )}
-          {workspace && (
+          <ProjectFolderMenu
+            workspace={workspace}
+            disabled={isStreaming}
+            busy={mappingFolder}
+            onUseGrant={useGrant}
+            onAllowFolder={chooseFolder}
+            onClear={unmapWorkspace}
+            onRevoked={revokeGrant}
+          />
+          {sessionInfo?.mode && sessionInfo.mode !== "agent" && (
             <span
-              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-sky-500/15 text-sky-400 border border-sky-500/25 max-w-[280px]"
-              title={workspace.host_path}
+              className={`inline-flex items-center text-xs px-2.5 py-1 rounded-full font-medium border ${
+                sessionInfo.mode === "plan"
+                  ? "bg-violet-500/15 text-violet-300 border-violet-500/25"
+                  : sessionInfo.mode === "ask"
+                    ? "bg-sky-500/15 text-sky-300 border-sky-500/25"
+                    : "bg-amber-500/15 text-amber-300 border-amber-500/25"
+              }`}
+              title="Set in the Code tab. Ask and Plan are read-only."
             >
-              <Folder size={11} />
-              <span className="truncate">{workspace.name}</span>
-              <button
-                type="button"
-                onClick={() => unmapWorkspace()}
-                className="hover:text-th-text-primary transition-colors"
-                title="Unmap folder"
-              >
-                <X size={11} />
-              </button>
+              {sessionInfo.mode === "plan" ? "Plan mode" : sessionInfo.mode === "ask" ? "Ask mode" : "Debug mode"}
             </span>
-          )}
-          {!workspace && (
-            <button
-              type="button"
-              onClick={() => folderInputRef.current?.click()}
-              disabled={mappingFolder || isStreaming}
-              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium text-th-text-tertiary hover:text-th-text-primary border border-transparent hover:border-th-border hover:bg-th-surface-hover transition-colors"
-              title="Map a project folder for the coding agent"
-            >
-              <FolderPlus size={11} />
-              {mappingFolder ? "Mapping…" : "Map folder"}
-            </button>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -2535,6 +2158,16 @@ export default function ChatPage() {
             >
               <GitBranch size={13} />
               <span>Graph</span>
+            </button>
+          )}
+          {currentSessionId && (
+            <button
+              onClick={() => navigate(`/code/${currentSessionId}`)}
+              className="flex items-center gap-1.5 text-xs text-th-text-tertiary hover:text-th-text-primary transition-colors px-2.5 py-1.5 rounded-lg hover:bg-th-surface-hover border border-transparent hover:border-th-border"
+              title="Open this session in the Code view"
+            >
+              <GitBranch size={13} />
+              <span>Code</span>
             </button>
           )}
           {currentSessionId && (
@@ -2589,18 +2222,21 @@ export default function ChatPage() {
             <h3 className="text-xl font-semibold text-th-text-primary mb-2">How can I help?</h3>
             <p className="text-sm text-th-text-tertiary max-w-sm text-center leading-relaxed mb-7">
               {codingSelected
-                ? "Map a project folder, then describe the change. Otto will search, edit, and run commands in that tree."
+                ? "Choose a project folder, then describe the change. Otto will search, edit, and run commands in that tree."
                 : "Your AI agent — browse, write, run code, and more."}
             </p>
             {codingSelected && !workspace && (
-              <button
-                type="button"
-                onClick={() => folderInputRef.current?.click()}
-                className="mb-5 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-sky-300 bg-sky-500/10 border border-sky-500/25 rounded-xl hover:bg-sky-500/15 transition-colors"
-              >
-                <FolderPlus size={15} />
-                Map a project folder
-              </button>
+              <div className="mb-5">
+                <ProjectFolderMenu
+                  workspace={workspace}
+                  disabled={isStreaming}
+                  busy={mappingFolder}
+                  onUseGrant={useGrant}
+                  onAllowFolder={chooseFolder}
+                  onClear={unmapWorkspace}
+                  onRevoked={revokeGrant}
+                />
+              </div>
             )}
             <div className="flex flex-wrap gap-2 justify-center max-w-lg">
               {welcomePrompts.map((prompt) => (
@@ -2764,21 +2400,6 @@ export default function ChatPage() {
           className="hidden"
           onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }}
         />
-        <input
-          ref={folderInputRef}
-          type="file"
-          className="hidden"
-          // @ts-expect-error webkitdirectory is a non-standard attribute
-          webkitdirectory=""
-          directory=""
-          onChange={(e) => {
-            if (!e.target.files?.length) return;
-            const dir = folderFromFileList(e.target.files);
-            e.target.value = "";
-            if (dir) mapWorkspace(dir);
-            else setWorkspaceError("Drop a folder onto the window to map it (this picker needs a desktop path).");
-          }}
-        />
         {(pendingFiles.length > 0 || pendingFilePaths.length > 0 || pendingFolders.length > 0) && (
           <div className="flex flex-wrap gap-2 mb-3 max-w-4xl mx-auto">
             {pendingFiles.map((f, i) => (
@@ -2811,7 +2432,7 @@ export default function ChatPage() {
                   <span className="truncate max-w-[150px] font-medium">{basename}</span>
                   <button
                     type="button"
-                    onClick={() => mapWorkspace(name)}
+                    onClick={() => { void beginGrant(name); }}
                     className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 hover:bg-sky-500/30"
                     title="Map as project workspace"
                   >
@@ -2827,6 +2448,20 @@ export default function ChatPage() {
         )}
         {workspaceError && (
           <p className="max-w-4xl mx-auto mb-2 text-xs text-red-400">{workspaceError}</p>
+        )}
+        {grantPreview && (
+          <FolderGrantDialog
+            preview={grantPreview}
+            mode={grantMode}
+            busy={mappingFolder}
+            onMode={setGrantMode}
+            onCancel={() => setGrantPreview(null)}
+            onConfirm={() => {
+              const path = grantPreview.realpath;
+              setGrantPreview(null);
+              void mapWorkspace(path);
+            }}
+          />
         )}
         {/* Context-injection nudge — slides in/out while agent is running */}
         {isStreaming && (

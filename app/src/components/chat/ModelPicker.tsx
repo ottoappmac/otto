@@ -5,9 +5,11 @@ interface ModelPickerProps {
   value: string;
   models: { id: string; name: string }[];
   onChange: (id: string) => void;
+  /** Which edge of the button the list lines up with. Use "right" near the right edge of a clipped column. */
+  align?: "left" | "right";
 }
 
-export function ModelPicker({ value, models, onChange }: ModelPickerProps) {
+export function ModelPicker({ value, models, onChange, align = "left" }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -31,7 +33,7 @@ export function ModelPicker({ value, models, onChange }: ModelPickerProps) {
         {open ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 w-72 max-h-64 overflow-y-auto bg-th-card-bg border border-th-border rounded-lg shadow-xl z-50">
+        <div className={`absolute bottom-full ${align === "right" ? "right-0" : "left-0"} mb-1 w-72 max-w-[calc(100vw-2rem)] max-h-64 overflow-y-auto bg-th-card-bg border border-th-border rounded-lg shadow-xl z-50`}>
           {models.length === 0 ? (
             <div className="px-3 py-2 text-xs text-th-text-muted">No models available. Configure credentials in Settings.</div>
           ) : (

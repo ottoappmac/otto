@@ -522,6 +522,8 @@ Unattended schedules and triggers do not pop an approval card. They may only do 
 
 Approval cards name the action ("Send email?", "Read email?") and show the real arguments. "Allow this session" exists for shell, reading mail or messages, calendar/notes edits, and work-tool writes. Sending mail, sending a message, deleting, scheduling, and changing settings ask every time. Listing an inbox asks the first time in a chat even if auto-approve is on.
 
+**Allowed folders** is the list of project directories Otto may use from Chat and [Code](code.md). Adding one shows the real path after symlinks are resolved. Read only blocks edits. Edit, with checkpoints, lets the agent change files and keeps a git snapshot before each turn when the folder is a repository. Home, system folders, and anything that contains SSH keys or Otto's own data cannot be allowed. Shell commands can still read most of the disk outside the folder.
+
 Limits of this control, including what cannot be sandboxed, are in [action-policy.md](action-policy.md).
 
 **Privacy Lock** restricts OTTO to on-device inference only — when engaged, cloud LLMs (Anthropic, OpenAI) are blocked before any network call is made, and only local providers are allowed.

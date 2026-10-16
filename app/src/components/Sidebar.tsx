@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   MessageSquare,
+  Code2,
   LayoutDashboard,
   Settings,
   Workflow,
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/runs", icon: Activity, label: "Runs" },
   { to: "/chat", icon: MessageSquare, label: "Chat" },
+  { to: "/code", icon: Code2, label: "Code" },
   { to: "/transcribe", icon: Radio, label: "Capture" },
   { to: "/watch", icon: Video, label: "Watch" },
   { to: "/ambient", icon: Sparkles, label: "Suggestions" },

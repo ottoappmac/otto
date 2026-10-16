@@ -101,8 +101,14 @@ def render_profile(
     write_paths: list[Path],
     read_paths: list[Path] | None = None,
     network: bool = False,
+    sensitive_paths: list[Path] | None = None,
 ) -> str:
-    """A deny-default profile. Later rules beat earlier ones (checked on macOS 26)."""
+    """A deny-default profile. Later rules beat earlier ones (checked on macOS 26).
+
+    Sensitive-path denies are emitted *after* the write-path allows. A
+    write grant on ``$HOME`` would otherwise re-allow ``~/.ssh``, because
+    the later ``allow file*`` wins.
+    """
     lines = [
         "(version 1)",
         "(deny default)",
@@ -126,13 +132,13 @@ def render_profile(
         '(allow file-write* (subpath "/private/var/folders"))',
         '(allow file-write* (subpath "/tmp"))',
     ]
-    for path in sensitive_read_denies():
-        lines.append(f'(deny file-read* (subpath "{_escape(str(path))}"))')
-        lines.append(f'(deny file-write* (subpath "{_escape(str(path))}"))')
     for path in write_paths:
         lines.append(f'(allow file* (subpath "{_escape(str(path))}"))')
     for path in read_paths or []:
         lines.append(f'(allow file-read* (subpath "{_escape(str(path))}"))')
+    for path in sensitive_paths if sensitive_paths is not None else sensitive_read_denies():
+        lines.append(f'(deny file-read* (subpath "{_escape(str(path))}"))')
+        lines.append(f'(deny file-write* (subpath "{_escape(str(path))}"))')
     if network:
         lines.append("(allow network*)")
     else:

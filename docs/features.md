@@ -17,7 +17,8 @@ OTTO is a macOS AI agent desktop app that manages itself. Through conversation a
 7. [Capture](#capture)
 8. [Watch](#watch)
 9. [Distill](#distill)
-10. [History](#history)
+10. [Code](#code)
+11. [History](#history)
 
 ---
 
@@ -415,6 +416,10 @@ The **Dataset** tab shows which completed chats are eligible (finished, and at l
 See [`docs/distill.md`](distill.md).
 
 ---
+
+## Code
+
+**Code** (`/code`) is the project view for a folder you have allowed. The same session is Chat and a Run: the header links move between them without starting a new conversation. Code has Agent, Ask, Plan, and Debug modes and a model picker. Ask and Plan cannot write, and that is enforced in code. Details are in [code.md](code.md).
 
 ## History
 

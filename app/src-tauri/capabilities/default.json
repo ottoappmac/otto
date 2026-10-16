@@ -18,6 +18,7 @@
     "core:window:allow-set-position",
     "core:window:allow-start-dragging",
     "core:image:default",
-    "notification:default"
+    "notification:default",
+    "dialog:allow-open"
   ]
 }

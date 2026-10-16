@@ -61,8 +61,39 @@ def _head_tail_preview(text: str) -> tuple[str, int, bool]:
 
 # ---- Shell backend with SESSION_FILES env var ----------------------------
 
+# The Seatbelt profile always lets a command write these.
+_SANDBOX_WRITABLE_TEMP = ("/private/tmp", "/private/var/folders", "/tmp")
 
-def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
+
+def _sandbox_always_writable(path: Path, extra_write: list[str] | None = None) -> bool:
+    """True when the shell sandbox allows writes to *path* whatever the grant says."""
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        return True
+    bases = [Path(p) for p in _SANDBOX_WRITABLE_TEMP]
+    for raw in extra_write or []:
+        if raw:
+            bases.append(Path(raw).expanduser())
+    for base in bases:
+        try:
+            if resolved.is_relative_to(base.resolve()):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def _make_backend(
+    files_dir: Path,
+    project_root: Path | None = None,
+    *,
+    grant_mode: str = "write",
+    grant_roots: list[Path] | None = None,
+    linked_files: list[Path] | None = None,
+    session_id: str | None = None,
+    mode_getter: Callable[[], str] | None = None,
+) -> Any:
     """Create a ``LocalShellBackend`` with ``SESSION_FILES`` injected into
     the shell environment so agents can reference the real session files path.
 
@@ -141,7 +172,11 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
             # Defense-in-depth: after the lexical check, re-resolve symlinks so
             # a link planted inside the session root cannot be used to escape
             # it.  User-dropped escapes are legitimate only under /links/.
-            if not is_resolved_path_allowed(full, self.cwd, vpath):
+            if not is_resolved_path_allowed(
+                full, self.cwd, vpath,
+                grant_roots=grant_roots,
+                linked_files=linked_files,
+            ):
                 raise ValueError(
                     f"Path '{key}' resolves outside the session directory via a "
                     f"symlink and cannot be used with file tools."
@@ -181,21 +216,111 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                 logger.warning("[session_backend] read blocked: %s", exc)
                 return ReadResult(error=str(exc))
 
-        def write(self, file_path: str, content: str) -> Any:
+        def _current_mode(self) -> str:
+            # Read live: the user can flip the mode between turns, or while
+            # one is running, and the guard has to follow.
+            if mode_getter is None:
+                return "agent"
             try:
-                return super().write(file_path, content)
+                return mode_getter()
+            except Exception:
+                # Fail closed. If the mode cannot be read, treat it as Plan.
+                logger.warning("mode lookup failed; treating as plan", exc_info=True)
+                return "plan"
+
+        def _readonly_shell(self) -> bool:
+            return self._current_mode() in ("plan", "ask")
+
+        def _readonly_error(self, file_path: str) -> str | None:
+            mode = self._current_mode()
+            if mode == "ask":
+                return "Ask mode is read-only. Switch to Agent mode to make changes."
+            plan = mode == "plan"
+            if (grant_mode != "read" and not plan) or project_root is None:
+                return None
+            try:
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
             except ValueError as exc:
-                from deepagents.backends.protocol import WriteResult
+                return str(exc)
+            try:
+                if Path(full).resolve().is_relative_to(Path(project_root).resolve()):
+                    if plan:
+                        return (
+                            "Plan mode is read-only. Write the plan to /output/plan.md "
+                            "and ask the user to switch to Agent mode to make changes."
+                        )
+                    return "This folder is shared read-only. Edits are blocked."
+            except (OSError, ValueError):
+                return None
+            return None
+
+        def _track_project_write(self, file_path: str, before: bytes | None) -> None:
+            if not session_id or project_root is None:
+                return
+            try:
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
+                resolved = Path(full).resolve()
+                root = Path(project_root).resolve()
+                if not resolved.is_relative_to(root):
+                    return
+                rel = resolved.relative_to(root).as_posix()
+                after = resolved.read_bytes() if resolved.is_file() else None
+                from backend.workspace_git import capture_preimage, record_write
+                if before is not None:
+                    capture_preimage(session_id, root, resolved)
+                record_write(session_id, rel, before, after)
+            except Exception:
+                logger.debug("workspace write tracking failed", exc_info=True)
+
+        def write(self, file_path: str, content: str) -> Any:
+            from deepagents.backends.protocol import WriteResult
+            blocked = self._readonly_error(file_path)
+            if blocked:
+                return WriteResult(error=blocked)
+            before: bytes | None = None
+            try:
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
+                path = Path(full)
+                if path.is_file():
+                    before = path.read_bytes()
+                    if project_root is not None and session_id:
+                        from backend.workspace_git import capture_preimage
+                        capture_preimage(session_id, Path(project_root), path.resolve())
+            except (OSError, ValueError):
+                before = None
+            try:
+                result = super().write(file_path, content)
+            except ValueError as exc:
                 logger.warning("[session_backend] write blocked: %s", exc)
                 return WriteResult(error=str(exc))
+            if not getattr(result, "error", None):
+                self._track_project_write(file_path, before)
+            return result
 
         def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> Any:
+            from deepagents.backends.protocol import EditResult
+            blocked = self._readonly_error(file_path)
+            if blocked:
+                return EditResult(error=blocked)
+            before: bytes | None = None
             try:
-                return super().edit(file_path, old_string, new_string, replace_all)
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
+                path = Path(full)
+                if path.is_file():
+                    before = path.read_bytes()
+                    if project_root is not None and session_id:
+                        from backend.workspace_git import capture_preimage
+                        capture_preimage(session_id, Path(project_root), path.resolve())
+            except (OSError, ValueError):
+                before = None
+            try:
+                result = super().edit(file_path, old_string, new_string, replace_all)
             except ValueError as exc:
-                from deepagents.backends.protocol import EditResult
                 logger.warning("[session_backend] edit blocked: %s", exc)
                 return EditResult(error=str(exc))
+            if not getattr(result, "error", None):
+                self._track_project_write(file_path, before)
+            return result
 
         def _to_virtual_path(self, path: Path) -> str:
             # Lexical conversion: when iterating a symlinked dir, we want
@@ -228,8 +353,50 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                 from backend.exec_sandbox import passthrough_names, run_shell, sandbox_settings, scrub_env
 
                 enabled, network, extra_read, extra_write = sandbox_settings()
-                write_paths = [Path(self.cwd)]
-                if shell_cwd is not None:
+                if not enabled and self._readonly_shell():
+                    # Without the sandbox, nothing stops a command from
+                    # writing the project. Ask and Plan have no other shell guard.
+                    label = "Ask" if self._current_mode() == "ask" else "Plan"
+                    return ExecuteResponse(
+                        output=(
+                            f"{label} mode runs shell commands only inside the sandbox, and "
+                            "the shell sandbox is turned off in Settings. Read files with "
+                            "read_file, grep, and ls instead."
+                        ),
+                        exit_code=1,
+                        truncated=False,
+                    )
+                if (
+                    shell_cwd is not None
+                    and project_root is not None
+                    and (grant_mode == "read" or self._readonly_shell())
+                    and _sandbox_always_writable(Path(shell_cwd), extra_write)
+                ):
+                    # The profile lets every command write temp folders and any
+                    # extra write path from Settings. A project there cannot be
+                    # made read-only for the shell, so refuse instead of
+                    # pretending it is.
+                    return ExecuteResponse(
+                        output=(
+                            "This folder is read-only for Otto, but it sits where the shell "
+                            "sandbox always allows writes (a temp folder or an extra write "
+                            "path in Settings), so shell commands cannot be held to that. "
+                            "Read files with read_file, grep, and ls, or move the project."
+                        ),
+                        exit_code=1,
+                        truncated=False,
+                    )
+                # Ask gives the shell no write paths at all. Plan still lets
+                # it write the session files (the plan lives there) but not
+                # the project. A read-only grant is not a write path either.
+                # Sensitive denies in the profile are emitted after these
+                # allows, so a broad grant cannot re-open ~/.ssh.
+                write_paths = [] if self._current_mode() == "ask" else [Path(self.cwd)]
+                if (
+                    shell_cwd is not None
+                    and grant_mode != "read"
+                    and not self._readonly_shell()
+                ):
                     write_paths.append(Path(shell_cwd))
                 for raw in extra_write:
                     if raw:
@@ -324,6 +491,43 @@ def _session_files_dir(session_id: str) -> Path:
     return d
 
 
+def _read_linked_files(session_id: str) -> list[str]:
+    """Real paths the user dropped into this session. Empty when unknown."""
+    meta_path = _sessions_dir() / f"{session_id}.json"
+    if not meta_path.exists():
+        return []
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw = data.get("linked_files") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, str) and item]
+
+
+def _migrate_legacy_workspace(workspace: SessionWorkspace) -> SessionWorkspace:
+    """Turn a pre-grant mapped folder into a legacy write grant when it is safe."""
+    if workspace.grant_id:
+        return workspace
+    if not workspace.host_path:
+        return workspace
+    try:
+        from backend.workspace_grants import upsert_grant
+        from backend.workspace_policy import validate_grantable
+        real = validate_grantable(workspace.host_path)
+        grant = upsert_grant(real, mode=workspace.mode or "write", source="legacy")
+    except Exception:
+        logger.info("legacy workspace %s was not migrated to a grant", workspace.host_path)
+        return workspace
+    return workspace.model_copy(update={
+        "host_path": grant.realpath,
+        "grant_id": grant.id,
+        "mode": grant.mode,
+        "name": workspace.name or grant.label,
+    })
+
+
 def _read_workspace_meta(session_id: str) -> SessionWorkspace | None:
     """Load the persisted workspace from session meta, if any."""
     meta_path = _sessions_dir() / f"{session_id}.json"
@@ -337,9 +541,19 @@ def _read_workspace_meta(session_id: str) -> SessionWorkspace | None:
     if not raw:
         return None
     try:
-        return SessionWorkspace.model_validate(raw)
+        workspace = SessionWorkspace.model_validate(raw)
     except Exception:
         return None
+    if workspace.grant_id:
+        return workspace
+    migrated = _migrate_legacy_workspace(workspace)
+    if migrated.grant_id and migrated.grant_id != workspace.grant_id:
+        try:
+            data["workspace"] = migrated.model_dump(mode="json")
+            meta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError:
+            logger.debug("could not persist migrated workspace for %s", session_id, exc_info=True)
+    return migrated
 
 
 def _mapped_project_prompt_block(
@@ -354,20 +568,36 @@ def _mapped_project_prompt_block(
     is None, emit the "ask the user to map a folder" note only if
     *include_unmapped* is True (coding sessions / coding subagent).
     """
+    if workspace is not None and not workspace.grant_id:
+        return (
+            "\n\n## Mapped project\n"
+            "A folder was mapped before allowed-folder grants existed, and it "
+            "could not be migrated (it is too broad or contains protected "
+            "files). Ask the user to allow a project folder in Settings → "
+            "Privacy & Security, or from the Code tab.\n"
+        )
     if workspace is not None:
+        access = "read-only" if workspace.mode == "read" else "editable"
+        edit_line = (
+            "- This folder is read-only. Do not edit files in it or write "
+            "there from the shell. Session output still goes under `/output/`.\n"
+            if workspace.mode == "read"
+            else
+            "- Prefer `edit_file` over `write_file` for existing files. Stay "
+            f"inside `{workspace.virtual_path}` — do not edit paths outside it.\n"
+            "- Session output (reports, scratch files) still goes under `/output/`.\n"
+        )
         return (
             f"\n\n## Mapped project\n"
-            f"The user mapped a project folder into this session.\n"
+            f"The user allowed a project folder for this session ({access}).\n"
             f"- Host path: `{workspace.host_path}` (also `$PROJECT_ROOT`)\n"
             f"- Virtual path for file tools (`read_file`, `write_file`, `edit_file`, "
             f"`ls`, `glob`, `grep`): `{workspace.virtual_path}/…` "
             f"(e.g. `{workspace.virtual_path}/src/main.py`)\n"
             f"- `execute` runs with cwd = the host path. Use relative paths in "
             f"shell commands (e.g. `ls`, `pytest`, `npm test`). HITL approval "
-            f"still applies.\n"
-            f"- Prefer `edit_file` over `write_file` for existing files. Stay "
-            f"inside `{workspace.virtual_path}` — do not edit paths outside it.\n"
-            f"- Session output (reports, scratch files) still goes under `/output/`.\n"
+            f"still applies to the shell.\n"
+            f"{edit_line}"
         )
     if include_unmapped:
         return (
@@ -1024,11 +1254,15 @@ def _enter_action_scope(session: "Session") -> tuple[Any, Any]:
     from backend.action_policy.gate import is_unattended
     from backend.action_policy.runtime import RunScope, begin_invocation, set_scope
 
+    from backend.session_mode import effective_mode
+
+    unattended = is_unattended(session.trigger_source)
     scope = RunScope(
         session_id=session.id,
-        attended=not is_unattended(session.trigger_source),
+        attended=not unattended,
         allowlist=_action_allowlist(session),
         agent_name=session.agent_name,
+        mode=effective_mode(session.mode, unattended=unattended),
     )
     return set_scope(scope), begin_invocation()
 
@@ -2386,6 +2620,9 @@ class Session:
         self.eval_pass_count: Optional[int] = None
         self.eval_total: Optional[int] = None
         self.workspace: Optional[SessionWorkspace] = None
+        self.linked_files: list[str] = []
+        # agent | ask | plan | debug. See backend/session_mode.py.
+        self.mode: str = "agent"
 
     def accumulate_mlx_stats(self, stats: dict) -> None:
         """Fold a single turn's MLX ``response_metadata`` stats into the
@@ -2463,6 +2700,8 @@ class Session:
             eval_pass_count=self.eval_pass_count,
             eval_total=self.eval_total,
             workspace=self.workspace,
+            linked_files=list(self.linked_files),
+            mode=self.mode,
             distill_catalog_id=self.distill_catalog_id or None,
             **self._throughput_fields(),
         )
@@ -2857,8 +3096,19 @@ class SessionManager:
 
         files_dir = _session_files_dir(session_id)
         workspace = _read_workspace_meta(session_id)
-        project_root = Path(workspace.host_path) if workspace else None
-        backend = _make_backend(files_dir, project_root=project_root)
+        granted = workspace is not None and bool(workspace.grant_id)
+        project_root = Path(workspace.host_path) if granted else None
+        from backend.workspace_policy import allowance_for_session
+        grant_roots, linked_paths = allowance_for_session(session_id)
+        backend = _make_backend(
+            files_dir,
+            project_root=project_root,
+            grant_mode=workspace.mode if granted and workspace else "write",
+            grant_roots=grant_roots,
+            linked_files=linked_paths,
+            session_id=session_id,
+            mode_getter=lambda: self._mode_for(session_id),
+        )
 
         # --- Playwright browser isolation pool ---
         # When Playwright MCP is connected, create a pool of ephemeral
@@ -2884,7 +3134,12 @@ class SessionManager:
         mcp_builder_tools = build_mcp_builder_tools()
         schedule_tools = build_schedule_tools()
         trigger_tools = build_trigger_tools(agent_name=agent_name)
-        file_tools = build_file_tools(files_dir, vision_llm=_file_vision_llm)
+        file_tools = build_file_tools(
+            files_dir,
+            vision_llm=_file_vision_llm,
+            grant_roots=grant_roots,
+            linked_files=linked_paths,
+        )
         # watch_video lets the agent watch uploaded/recorded/YouTube videos.
         # The frame-based fallback path needs a vision-capable model: the main
         # model when it natively sees images, else the MLX VLM fallback (None
@@ -3465,6 +3720,12 @@ class SessionManager:
             extra_middleware.append(RunDepthMiddleware())
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("Run depth: could not apply — %s", exc)
+        try:
+            from middleware.session_mode import SessionModeMiddleware
+
+            extra_middleware.append(SessionModeMiddleware(lambda: self._mode_for(session_id)))
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Session mode: could not apply — %s", exc)
         _append_date_context(extra_middleware)
 
         # Cap concurrent ``task`` (subagent) calls so a wide fan-out can't
@@ -3724,6 +3985,9 @@ class SessionManager:
         session.eval_pass_count = info.eval_pass_count
         session.eval_total = info.eval_total
         session.workspace = info.workspace
+        session.linked_files = list(info.linked_files or [])
+        from backend.session_mode import normalize_mode
+        session.mode = normalize_mode(info.mode)
         self._active[session_id] = session
         logger.info("Resumed session %s (%s)", session_id, info.title)
         return session
@@ -3851,6 +4115,49 @@ class SessionManager:
             await start_deferred_if_idle()
         except Exception:
             logger.debug("deferred distill start failed", exc_info=True)
+
+    def _depth_for_mode(self, session: Session, depth: Optional[str]) -> Optional[str]:
+        """Plan and Debug always run Deep. Quick would reject planning tools.
+
+        The stored ``requested_depth`` is left alone, so going back to Agent
+        restores whatever the user had picked.
+        """
+        from backend.session_mode import DEEP_MODES
+
+        if self._mode_for(session.id) in DEEP_MODES:
+            return "deep"
+        return depth
+
+    def _mode_for(self, session_id: str) -> str:
+        """The mode that applies to *session_id* right now.
+
+        Read at every guarded call, not captured when the graph was built.
+        A session that is not registered yet (still being created) is Agent.
+        Scheduled and trigger runs are always Agent.
+        """
+        from backend.action_policy.gate import is_unattended
+        from backend.session_mode import effective_mode
+
+        session = self._active.get(session_id)
+        if session is None:
+            return "agent"
+        return effective_mode(session.mode, unattended=is_unattended(session.trigger_source))
+
+    async def set_mode(self, session_id: str, mode: str) -> Session:
+        """Change a session's mode. Takes effect on the next guarded call."""
+        from backend.session_mode import MODES
+
+        if mode not in MODES:
+            raise ValueError(f"Unknown mode: {mode!r}")
+        session = self._active.get(session_id)
+        if session is None:
+            session = await self.resume_session(session_id, await AppConfig.aload())
+            if session is None:
+                raise FileNotFoundError(f"Session not found: {session_id}")
+        session.mode = mode
+        session.updated_at = datetime.now(timezone.utc)
+        await session.save_meta_async()
+        return session
 
     async def set_workspace(
         self,
@@ -4696,6 +5003,7 @@ class SessionManager:
             session.requested_depth = depth
         elif session.requested_depth:
             depth = session.requested_depth
+        depth = self._depth_for_mode(session, depth)
 
         run_config = {"configurable": {"thread_id": session_id}, "recursion_limit": session.recursion_limit}
 
@@ -4885,6 +5193,7 @@ class SessionManager:
             session.requested_depth = depth
         elif session.requested_depth:
             depth = session.requested_depth
+        depth = self._depth_for_mode(session, depth)
         mode, source, reason = await self._choose_run_depth(
             session, new_content, depth, prior_msgs,
         )

@@ -80,7 +80,7 @@ def test_resolved_in_root_is_allowed(tmp_path):
     assert is_resolved_path_allowed(root / "output" / "new.md", root, "/output/new.md")
 
 
-def test_links_symlink_escape_is_allowed(tmp_path):
+def test_links_symlink_escape_requires_a_grant(tmp_path):
     root = tmp_path / "files"
     (root / "links").mkdir(parents=True)
     external = tmp_path / "external"
@@ -89,13 +89,23 @@ def test_links_symlink_escape_is_allowed(tmp_path):
 
     link = root / "links" / "photo.png"
     link.symlink_to(external / "photo.png")
-    assert is_resolved_path_allowed(link, root, "/links/photo.png")
+    # A symlink under /links/ is not enough. The agent can plant one.
+    assert not is_resolved_path_allowed(link, root, "/links/photo.png")
+    # A file the user dropped is allowed as that exact path.
+    assert is_resolved_path_allowed(
+        link, root, "/links/photo.png", linked_files=[external / "photo.png"],
+    )
 
-    # Sub-path inside a linked directory also allowed.
     dir_link = root / "links" / "userdir"
     dir_link.symlink_to(external)
-    assert is_resolved_path_allowed(
+    assert not is_resolved_path_allowed(
         root / "links" / "userdir" / "photo.png", root, "/links/userdir/photo.png"
+    )
+    assert is_resolved_path_allowed(
+        root / "links" / "userdir" / "photo.png",
+        root,
+        "/links/userdir/photo.png",
+        grant_roots=[external],
     )
 
 

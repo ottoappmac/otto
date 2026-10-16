@@ -70,6 +70,7 @@ from backend.routes.clipboard import router as clipboard_router
 from backend.routes.video import router as video_router
 from backend.routes.video_ws import ws_router as video_ws_router
 from backend.routes.distillation import router as distillation_router
+from backend.routes.workspaces import router as workspaces_router
 from backend.activity_tracker import tracker as activity_tracker
 from backend.scheduler import init_scheduler, shutdown_scheduler
 from backend.trigger_manager import init_trigger_manager
@@ -787,6 +788,7 @@ app.include_router(clipboard_router)
 app.include_router(video_router)
 app.include_router(video_ws_router)
 app.include_router(distillation_router)
+app.include_router(workspaces_router)
 
 
 # =========================================================================

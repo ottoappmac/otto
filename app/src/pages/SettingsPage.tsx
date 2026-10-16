@@ -16,6 +16,7 @@ import VoiceModelChooser from "../components/voice/VoiceModelChooser";
 import DecisionPanel from "../components/decision/DecisionPanel";
 import { DistilledModelsTab } from "../components/distillation/DistilledModelsTab";
 import { ActionPolicyPanel } from "../components/action/ActionPolicyPanel";
+import { AllowedFolders } from "../components/action/AllowedFolders";
 import type { ActionPolicySettings, AppSettings, DistillAdapter, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
 import { getFollowFileEdits, setFollowFileEdits } from "../utils/followFileEdits";
 
@@ -307,6 +308,7 @@ const DEFAULT_SETTINGS: AppSettings = {
       pim_write: "ask",
       work_tools_write: "ask",
       browser_automation: "allow",
+      workspace_write: "allow",
       unclassified: "ask",
     },
     agent_overrides: {},
@@ -5896,6 +5898,8 @@ function PrivacyTab({ settings, setSettings }: {
         policy={settings.action_policy}
         onChange={(action_policy) => setSettings((prev) => ({ ...prev, action_policy }))}
       />
+
+      <AllowedFolders />
 
       {/* ── Main toggle card ─────────────────────────────────────────────── */}
       <Card title="Privacy Lock" dot={engaged ? "bg-emerald-500" : "bg-th-text-muted"}>

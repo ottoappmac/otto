@@ -49,7 +49,8 @@ import { StatCard } from "../components/runs/StatCard";
 import { getSourceIcon, getSourceLabel, getProviderIcon } from "../utils/entityIcons";
 import { familyChipClasses } from "../utils/subagentModelChip";
 import { applyLiveTimelineMessage } from "../utils/liveTimeline";
-import { wsUrl } from "../config/apiBase";
+import { useWebSocket } from "../hooks/useWebSocket";
+import type { WSMessage } from "../types";
 
 const POLL_MS = 4_000;
 
@@ -695,6 +696,12 @@ export default function RunDetailPage() {
   const { notifications, clearSession } = useNotification();
 
   const [run, setRun] = useState<RunInfo | null>(null);
+  const [sessionMode, setSessionMode] = useState<string>("agent");
+  const runSessionId = run ? (run.session_id ?? run.id) : null;
+  useEffect(() => {
+    if (!runSessionId) return;
+    api.getSession(runSessionId).then((info) => setSessionMode(info.mode ?? "agent")).catch(() => setSessionMode("agent"));
+  }, [runSessionId]);
   const [timeline, setTimeline] = useState<SessionTimeline | null>(null);
   const [sessionMessages, setSessionMessages] = useState<Record<string, unknown>[]>([]);
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
@@ -726,7 +733,6 @@ export default function RunDetailPage() {
   const [stopping, setStopping] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
   const timelineEndRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch run info + timeline + session messages (for graph)
@@ -857,38 +863,21 @@ export default function RunDetailPage() {
     api.listSessionFiles(id).then(setSessionFiles).catch(() => {});
   }, [id, run?.status]);
 
-  // WebSocket for live streaming events
-  useEffect(() => {
-    if (!id || run?.status !== "running") return;
-    const ws = new WebSocket(wsUrl(`/ws/chat/${id}`));
-    wsRef.current = ws;
+  const onLiveEvent = useCallback((raw: WSMessage) => {
+    if (!id) return;
+    if (raw.type === "tool_call" || raw.type === "tool_result" || raw.type === "agent") {
+      setSessionMessages((prev) => [...prev, raw as unknown as Record<string, unknown>]);
+    }
+    if (raw.type === "tool_result" || raw.type === "done") {
+      api.listSessionFiles(id).then(setSessionFiles).catch(() => {});
+    }
+    setLiveEvents((prev) => applyLiveTimelineMessage(prev, raw));
+  }, [id]);
 
-    ws.onmessage = (evt) => {
-      try {
-        const raw = JSON.parse(evt.data as string) as {
-          type: string;
-          content?: unknown;
-          metadata?: Record<string, unknown>;
-        };
-        // Feed the raw message (nested metadata shape) into sessionMessages so the
-        // graph updates immediately instead of waiting for the next poll.
-        if (raw.type === "tool_call" || raw.type === "tool_result" || raw.type === "agent") {
-          setSessionMessages((prev) => [...prev, raw as unknown as Record<string, unknown>]);
-        }
-        // A finished tool may have rewritten a file the Files tab is showing.
-        if (raw.type === "tool_result" || raw.type === "done") {
-          api.listSessionFiles(id).then(setSessionFiles).catch(() => {});
-        }
-        // Fold token deltas into one assistant row (same contract as chat).
-        setLiveEvents((prev) => applyLiveTimelineMessage(prev, raw));
-      } catch { /* ignore */ }
-    };
-
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [id, run?.status]);
+  useWebSocket({
+    sessionId: id && run?.status === "running" ? id : null,
+    onMessage: onLiveEvent,
+  });
 
   useEffect(() => {
     setLiveEvents([]);
@@ -1032,6 +1021,14 @@ export default function RunDetailPage() {
               </button>
             )}
             {run && (
+              <button
+                onClick={() => navigate(`/code/${id}`)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-th-border bg-th-inset-bg/70 text-xs font-medium text-th-text-secondary hover:text-th-text-primary hover:border-th-border-strong transition-all duration-200 active:scale-[0.97]"
+              >
+                Open in Code
+              </button>
+            )}
+            {run && (
               // Wrapper span carries the tooltip so it still shows when the
               // button is disabled (disabled elements don't fire hover events).
               <span
@@ -1097,6 +1094,11 @@ export default function RunDetailPage() {
         {run && (
           <div className="flex items-center flex-wrap gap-2 text-xs">
             <RunStatusBadge status={run.status} size="md" />
+            {sessionMode !== "agent" && (
+              <span className={sessionMode === "plan" ? "text-violet-300" : sessionMode === "ask" ? "text-sky-300" : "text-amber-300"}>
+                {sessionMode === "plan" ? "Plan mode" : sessionMode === "ask" ? "Ask mode" : "Debug mode"}
+              </span>
+            )}
             <span className="text-th-text-muted">·</span>
             <span className="font-mono text-[11px] text-th-text-muted/60 select-all" title={run.session_id ?? run.id}>
               #{(run.session_id ?? run.id).slice(0, 8)}

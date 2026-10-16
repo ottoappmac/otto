@@ -19,6 +19,26 @@ from backend.action_policy.catalog import (
 
 _RANK = {"allow": 0, "ask": 1, "deny": 2}
 
+# Ask and Plan are read-only. These categories change something outside the
+# project, or cannot be shown to be read-only, so those modes deny them
+# whatever the user's policy says. ``shell`` stays on its normal rule
+# because the sandbox removes write paths, and ``workspace_write`` is
+# refused by the session backend itself.
+PLAN_MODE_BLOCKED = frozenset({
+    "applescript",
+    "desktop_control",
+    "email_send",
+    "message_send",
+    "destructive",
+    "persistence",
+    "mcp_authoring",
+    "settings_write",
+    "pim_write",
+    "work_tools_write",
+    "browser_automation",
+    "unclassified",
+})
+
 # Nobody is at the keyboard. A prompt here would hang or, worse, be
 # auto-approved by an old driver. Ask becomes deny unless the user
 # pre-authorised that category on the schedule or trigger.
@@ -123,6 +143,7 @@ def decide(
     rate_limit: int,
     agent_name: str | None = None,
     agent_overrides: dict[str, dict[str, str]] | None = None,
+    session_mode: str = "agent",
 ) -> ActionDecision:
     """Return what to do with one tool call.
 
@@ -151,6 +172,14 @@ def decide(
         return ActionDecision("allow", None, labels, False, False, "not gated")
 
     involved = classification.categories or ("unclassified",)
+    if session_mode in ("plan", "ask"):
+        blocked = [name for name in involved if name in PLAN_MODE_BLOCKED]
+        if blocked:
+            label = "Ask" if session_mode == "ask" else "Plan"
+            return ActionDecision(
+                "deny", blocked[0], labels, False, True,
+                f"{label} mode is read-only. Switch to Agent mode to do this",
+            )
     modes = [
         effective_mode(categories, name, agent_name, overrides) for name in involved
     ]
