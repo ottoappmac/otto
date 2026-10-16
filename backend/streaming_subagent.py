@@ -56,6 +56,11 @@ _current_invocation_id: contextvars.ContextVar[str | None] = contextvars.Context
 )
 
 
+def current_session_id() -> str | None:
+    """The session bound for this asyncio context, or ``None``."""
+    return _current_session_id.get()
+
+
 def set_current_session(session_id: str | None) -> contextvars.Token:
     """Bind *session_id* as the session for the current asyncio context.
 
@@ -437,10 +442,16 @@ class StreamingSubagentRunnable(Runnable):
                     if isinstance(msg, AIMessage):
                         text = extract_text_content(msg.content)
                         if text:
+                            agent_meta: dict[str, Any] = {"subagent": display_name}
+                            guard_meta = (
+                                getattr(msg, "additional_kwargs", None) or {}
+                            ).get("safety_guard")
+                            if isinstance(guard_meta, dict) and guard_meta:
+                                agent_meta["safety_guard"] = dict(guard_meta)
                             await queue.put({
                                 "type": "agent",
                                 "content": text,
-                                "metadata": {"subagent": display_name},
+                                "metadata": agent_meta,
                             })
 
                         if msg.tool_calls:

@@ -6,6 +6,7 @@ import type {
   DecisionConfig,
   DecisionModelRow,
   DecisionSnapshot as Snapshot,
+  DecisionStatus,
   MlxDownloadJob,
 } from "../../types";
 
@@ -21,6 +22,25 @@ function providerOf(url: string): "local" | "typesafe" {
     return "local";
   }
   return "typesafe";
+}
+
+const DEFAULT_BLOCK_THRESHOLD = 0.7;
+
+/** Keep the saved value inside the range the backend accepts (0 to 1). */
+function clampBlockThreshold(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_BLOCK_THRESHOLD;
+  return Math.min(1, Math.max(0, value));
+}
+
+/** Why the guardrail cannot work right now, or "" when Jev looks ready. */
+function guardBlocker(status: DecisionStatus, selected?: DecisionModelRow): string {
+  if (!status.local) {
+    return status.remote_key_set ? "" : "no API key is stored for the custom endpoint";
+  }
+  if (!status.installed) return "the Jev runtime is not installed";
+  if (!status.model_cached) return "the selected model is not downloaded";
+  if (selected?.fits === "over") return "the selected model does not fit on this Mac";
+  return "";
 }
 
 function bytesToHuman(n: number): string {
@@ -447,6 +467,9 @@ export default function DecisionPanel({
   const models = snap?.models ?? [];
   const status = snap?.status;
   const selected = models.find((m) => m.repo_id === decision.model_repo);
+  const guardNotReady = decision.safety_guard_enabled && status
+    ? guardBlocker(status, selected)
+    : "";
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -467,6 +490,27 @@ export default function DecisionPanel({
           />
           Enable the jev tool for every agent
         </label>
+        <label className="flex items-center gap-2 text-sm text-th-text-primary mt-3">
+          <input
+            type="checkbox"
+            checked={decision.safety_guard_enabled}
+            onChange={(e) => patch({ safety_guard_enabled: e.target.checked })}
+          />
+          Use jev as a safety guardrail on every agent turn
+        </label>
+        <p className="text-xs text-th-text-tertiary leading-relaxed mt-2 ml-6">
+          Jev checks your message at the start of each turn, then the agent&apos;s reply and
+          tool calls before anything runs. If either is judged unsafe, the run stops.
+          The run also stops when Jev cannot answer, so turn this off if Jev is not set up.
+          This works on its own, without the jev tool above. Chats that are already open pick
+          up a change on their next message.
+        </p>
+        {guardNotReady && (
+          <p className="text-xs text-amber-500 inline-flex items-center gap-1 mt-2 ml-6">
+            <AlertTriangle size={11} />
+            The guardrail is on, but {guardNotReady}. Every turn will stop until that is fixed.
+          </p>
+        )}
       </section>
 
       <div className="flex gap-1 bg-th-inset-bg rounded-xl p-1 w-fit border border-th-border">
@@ -635,6 +679,21 @@ export default function DecisionPanel({
         </div>
         <p className="text-[11px] text-th-text-muted">
           Confidence is how peaked the answer is, not a calibrated probability. Keep these conservative.
+        </p>
+        <label className="block text-xs text-th-text-tertiary">
+          Safety guardrail stops a run at or above
+          <input
+            type="number"
+            min={0.5}
+            max={0.99}
+            step={0.05}
+            value={decision.safety_block_threshold}
+            onChange={(e) => patch({ safety_block_threshold: clampBlockThreshold(Number(e.target.value)) })}
+            className="mt-1 w-full px-3 py-2 bg-th-input-bg border border-th-input-border rounded-lg text-sm text-th-text-primary"
+          />
+        </label>
+        <p className="text-[11px] text-th-text-muted">
+          The chance that something is unsafe, as Jev estimates it. Lower stops more runs, including some that are fine.
         </p>
       </section>
 

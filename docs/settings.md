@@ -402,15 +402,34 @@ Off by default. The model runs locally in a separate process so it does not chan
 | Control | What it does |
 |---|---|
 | Enable | Attaches the `jev` tool to every agent and adds its usage guidance to the prompt. While this is off, neither is there. A chat that is already open picks up a change on its next message. A reply that is still running finishes as it started. |
+| Use jev as a safety guardrail | Judges every turn for safety and stops the run when something is unsafe. See [Safety guardrail](#safety-guardrail) below. Works on its own; it does not need **Enable**. |
 | Model | DiffusionGemma MLX builds. A model marked **over** does not fit beside a chat model on this Mac and cannot be selected. The 4-bit build is about 17 GB to download and about 18 GB in memory while running. |
 | Download | Uses the same Hugging Face download as the MLX model picker, with progress and cancel. |
 | Install runtime | Installs the pinned OpenJev server into its own environment. The installers already do this; use the button to retry. |
 | Start / Stop | The server also starts on the first `jev` call and stops after it has been idle (10 minutes by default). |
-| Thresholds | Confident, moderate, and unsure wording. Confidence is how peaked the answer is, not a calibrated probability. |
+| Thresholds | Confident, moderate, and unsure wording. Confidence is how peaked the answer is, not a calibrated probability. **Safety guardrail stops a run at or above** is the chance of "unsafe" at which the guardrail stops a run (default 0.7). |
 | Provider | Local uses the sidecar on this Mac. TypeSafe sends the situation to `https://api.typesafe.ai` and needs an API key. Refused while the privacy lock is on. |
 | Test | One sample question against the selected endpoint. |
 
 A 16 GB Mac should leave this off. The 4-bit model does not fit beside a chat model there.
+
+### Safety guardrail
+
+When **Use jev as a safety guardrail on every agent turn** is on, Jev checks two things on every turn:
+
+- **Your message**, once, before the model is called.
+- **The agent's reply and tool calls**, after each model step and before any tool runs. This covers the main agent and every subagent.
+
+Every check is written to the session transcript: stage, outcome, the probability of "unsafe", and the threshold. A check judged unsafe also stores the question and the text Jev saw. A check that passes, or one Jev could not answer, does not. A stop is also kept on the assistant line with those details, and the chat shows which check stopped it, as a red **Jev stopped** chip with the reason beside it. If Jev could not answer, the chip is amber and reads **Jev unavailable**. Nothing after that point runs. The result is a probability of "unsafe"; the run stops when it reaches the threshold under **Thresholds**. Lower it to stop more runs, at the cost of stopping some that are fine.
+
+**It fails closed.** If Jev cannot answer, the run stops too. That includes a model that is not downloaded, a runtime that is not installed, a server that times out, a custom endpoint with no API key, and a remote endpoint refused by the privacy lock. The panel shows a warning while the guardrail is on and Jev is not ready. Scheduled and trigger runs stop the same way. Turn the guardrail off if you do not want a Jev outage to stop work.
+
+Things to know:
+
+- It uses the same server and model as the `jev` tool, so it needs the same download and about the same memory. Each turn makes one check at the start and one per model step, about 0.14 seconds each once the model is warm. The server stays loaded while agents are active, so the idle stop applies only after they finish.
+- The first check after Jev has stopped waits for the model to load.
+- The guard is added to or removed from an agent on the next message after you change the setting, like the `jev` tool. A reply that is still running finishes as it started.
+- It judges what the agent wrote and proposed, not what a tool returned. Agents that do not run through the chat graph, such as the ambient agent, are not covered.
 
 ---
 

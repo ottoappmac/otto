@@ -1624,6 +1624,10 @@ export interface DecisionConfig {
   max_calls_per_turn: number;
   /** Empty means the local sidecar. A non-loopback URL sends state off the machine. */
   endpoint_override: string;
+  /** Judge the user's message and every proposed agent action; stop the run when unsafe. */
+  safety_guard_enabled: boolean;
+  /** Minimum probability of "unsafe" that stops a run (0 to 1). */
+  safety_block_threshold: number;
 }
 
 /** One row of the Jev model list (GET /api/decision). */

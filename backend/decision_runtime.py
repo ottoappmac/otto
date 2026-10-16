@@ -87,7 +87,10 @@ def hf_repo_dir(repo_id: str) -> Path:
 
 
 def snapshot_dir(repo_id: str) -> Path | None:
-    """Local HF snapshot for ``repo_id``, or None when it is not complete."""
+    """Local HF snapshot for ``repo_id``, or None when it is not complete.
+
+    Complete means weights, ``config.json``, and ``chat_template.jinja``.
+    """
     root = hf_repo_dir(repo_id)
     candidates: list[Path] = []
     ref = root / "refs" / "main"
@@ -103,7 +106,13 @@ def snapshot_dir(repo_id: str) -> Path | None:
         if snap in seen:
             continue
         seen.add(snap)
-        if (snap / "config.json").is_file() and any(snap.glob("*.safetensors")):
+        # DiffusionGemma keeps its chat template in chat_template.jinja.
+        # Weights alone still 500 on the first /v1/systemone call.
+        if (
+            (snap / "config.json").is_file()
+            and (snap / "chat_template.jinja").is_file()
+            and any(snap.glob("*.safetensors"))
+        ):
             return snap
     return None
 

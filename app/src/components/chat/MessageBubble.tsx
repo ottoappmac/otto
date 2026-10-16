@@ -162,6 +162,80 @@ function thoughtPreview(text: string): string {
   return line.length <= 80 ? line : `${line.slice(0, 79).trimEnd()}…`;
 }
 
+interface SafetyGuardMeta {
+  stage?: string;
+  reason?: "unsafe" | "unavailable";
+  p_unsafe?: number;
+  error?: string;
+}
+
+const SAFETY_STOP_PREFIX = /^Stopped by the Jev safety guardrail:\s*/i;
+
+/**
+ * A run stopped by the Jev safety guardrail: a status chip with the stop
+ * message beside it. Red when Jev judged something unsafe, amber when it
+ * could not be asked (the guardrail fails closed).
+ */
+function SafetyStopChip({
+  guard,
+  content,
+  compact = false,
+}: {
+  guard: SafetyGuardMeta;
+  content: string;
+  compact?: boolean;
+}) {
+  const unsafe = guard.reason !== "unavailable";
+  const stage = guard.stage === "input" ? "request" : "action";
+  const pct =
+    unsafe && typeof guard.p_unsafe === "number"
+      ? `${Math.round(guard.p_unsafe * 100)}%`
+      : null;
+  const stripped = content.replace(SAFETY_STOP_PREFIX, "").trim();
+  const detail = stripped ? stripped.charAt(0).toUpperCase() + stripped.slice(1) : content;
+  const tone = unsafe
+    ? "bg-red-500/10 border-red-500/25 text-red-400"
+    : "bg-amber-500/10 border-amber-500/25 text-amber-400";
+  const Icon = unsafe ? ShieldX : ShieldAlert;
+  const title = unsafe
+    ? `Jev judged the ${stage} unsafe${pct ? ` (${pct})` : ""}`
+    : `Jev could not check the ${stage}${guard.error ? `: ${guard.error}` : ""}`;
+
+  return (
+    <div className={`flex items-start ${compact ? "gap-2 py-1" : "gap-2.5 py-1.5"}`}>
+      <span
+        title={title}
+        className={`inline-flex items-center gap-1.5 shrink-0 rounded-full border font-medium whitespace-nowrap ${tone} ${
+          compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs"
+        }`}
+      >
+        <Icon size={compact ? 10 : 12} className="shrink-0" />
+        <span>{unsafe ? "Jev stopped" : "Jev unavailable"}</span>
+        <span className="opacity-60 font-normal">· {stage}</span>
+        {pct && <span className="font-mono opacity-80">{pct}</span>}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p
+          className={`text-th-text-secondary leading-relaxed break-words ${
+            compact ? "text-[11px]" : "text-sm pt-0.5"
+          }`}
+        >
+          {detail}
+        </p>
+        {!compact && (
+          <Link
+            to="/settings?tab=Jev"
+            className="mt-1 inline-flex items-center gap-1 text-[11px] text-th-text-muted hover:text-th-text-secondary transition-colors"
+          >
+            <ExternalLink size={10} />
+            Settings → Jev
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Collapsed-by-default reasoning, matching ChatGPT / Claude / Cursor. */
 export function ThoughtBlock({ messages }: { messages: ChatMessage[] }) {
   const streaming = messages.some((m) => m.metadata?.streaming);
@@ -373,14 +447,35 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
 
   if (message.type === "agent") {
     const subagentName = message.metadata?.subagent as string | undefined;
+    const safetyGuard = message.metadata?.safety_guard as SafetyGuardMeta | undefined;
 
     if (subagentName) {
+      if (safetyGuard) {
+        return (
+          <div className={inGroup ? "" : "ml-16 pl-3"}>
+            <SafetyStopChip guard={safetyGuard} content={message.content} compact />
+          </div>
+        );
+      }
       return (
         <div className={inGroup ? "" : "ml-16 pl-3"}>
           <div className="py-1">
             <div className="text-xs text-th-text-tertiary prose prose-sm max-w-none leading-relaxed break-words [&_p]:mb-1 [&_p:last-child]:mb-0 [&_pre]:bg-th-code-bg [&_pre]:border [&_pre]:border-th-border [&_pre]:rounded-lg [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_code]:text-th-text-secondary [&_code]:break-words">
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{linkifyContent(message.content)}</ReactMarkdown>
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (safetyGuard) {
+      return (
+        <div className="flex gap-3 justify-start items-start">
+          <div className="w-7 h-7 rounded-full border border-th-border/70 bg-th-inset-bg flex items-center justify-center shrink-0 mt-0.5">
+            <Bot size={13} className="text-th-text-muted" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <SafetyStopChip guard={safetyGuard} content={message.content} />
           </div>
         </div>
       );
