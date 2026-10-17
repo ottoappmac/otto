@@ -63,3 +63,27 @@ export async function loadApiToken() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
+
+/**
+ * Re-read the token file and report whether the token changed.
+ *
+ * The token is regenerated on every backend launch, but the file from the
+ * previous launch is still on disk while the backend warms up. `loadApiToken`
+ * can therefore pick up a stale token at app start; once the backend rewrites
+ * the file, every request is rejected with 401 until the token is re-read.
+ */
+export async function refreshApiToken(): Promise<boolean> {
+  const tauri = (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  if (!tauri) return false;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const token = (await invoke<string>("get_api_token")).trim();
+    if (token && token !== apiToken) {
+      setApiToken(token);
+      return true;
+    }
+  } catch {
+    // The file may be mid-write; the caller retries on its next poll.
+  }
+  return false;
+}
