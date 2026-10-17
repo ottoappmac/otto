@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FolderPlus, Hammer, MessageSquare, Plus, RotateCcw, Send, Square, Undo2, X } from "lucide-react";
+import { FolderPlus, Hammer, MessageSquare, Plus, RotateCcw, Send, Square, Trash2, Undo2, X } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -110,6 +110,7 @@ export default function CodePage() {
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [live, setLive] = useState<TimelineEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [preview, setPreview] = useState<FolderGrantPreview | null>(null);
   const [grantMode, setGrantMode] = useState<"read" | "write">("write");
   const [notice, setNotice] = useState<string | null>(null);
@@ -709,6 +710,22 @@ export default function CodePage() {
     }
   };
 
+  const deleteSession = async (id: string) => {
+    setConfirmDeleteId(null);
+    try {
+      await api.closeSession(id);
+    } catch (e) {
+      setError(apiMessage(e));
+      return;
+    }
+    setSessions((prev) => prev.filter((item) => item.id !== id));
+    if (id === sessionIdRef.current) {
+      setStreaming(false);
+      setAwaitingPoll(false);
+      navigate("/code");
+    }
+  };
+
   const openFile = (rel: string) => {
     if (!sessionId) return;
     const type: ArtifactType = artifactTypeFromPath(rel) ?? "code";
@@ -782,15 +799,47 @@ export default function CodePage() {
         </div>
         <div className="flex-1 overflow-y-auto px-2 space-y-1">
           {sessions.map((item) => (
-            <button
+            <div
               key={item.id}
-              type="button"
-              onClick={() => navigate(`/code/${item.id}`)}
-              className={`w-full text-left px-2 py-1 rounded text-xs truncate ${item.id === sessionId ? "bg-th-surface-hover text-th-text-primary" : "text-th-text-secondary"}`}
+              className={`group flex items-center rounded ${item.id === sessionId ? "bg-th-surface-hover" : ""}`}
             >
-              <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${item.status === "running" ? "bg-emerald-400" : "bg-th-text-muted"}`} />
-              {item.title || "Untitled"}
-            </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/code/${item.id}`)}
+                className={`flex-1 min-w-0 text-left px-2 py-1 text-xs truncate ${item.id === sessionId ? "text-th-text-primary" : "text-th-text-secondary"}`}
+              >
+                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${item.status === "running" ? "bg-emerald-400" : "bg-th-text-muted"}`} />
+                {item.title || "Untitled"}
+              </button>
+              {confirmDeleteId === item.id ? (
+                <div className="shrink-0 flex items-center gap-1 pr-1.5 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => { void deleteSession(item.id); }}
+                    className="text-red-400 hover:text-red-300"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="text-th-text-muted hover:text-th-text-primary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  title="Delete this session"
+                  aria-label={`Delete ${item.title || "Untitled"}`}
+                  onClick={() => setConfirmDeleteId(item.id)}
+                  className="shrink-0 px-1.5 py-1 text-th-text-muted opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-400"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
           ))}
         </div>
         {session?.workspace && sessionId && (
