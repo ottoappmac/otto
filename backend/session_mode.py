@@ -65,6 +65,8 @@ DEBUG_ADDENDUM = (
     "4. Make the smallest fix that explains the evidence.\n"
     f"5. Remove every `{DEBUG_MARKER}` line, then re-run the original "
     "reproduction to prove it is fixed.\n"
+    "6. If the project has tests, add a regression test that fails without "
+    "the fix and passes with it, then run the suite for the code you touched.\n"
     "Say which hypothesis the evidence confirmed. Do not guess when you can "
     "measure.\n"
     "</session_mode>"

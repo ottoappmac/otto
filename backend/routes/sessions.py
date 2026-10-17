@@ -363,6 +363,9 @@ async def api_session_status(session_id: str):
             awaiting_input = meta.get("status") == "awaiting_input"
         except Exception:
             logger.debug("status meta read failed for %s", session_id, exc_info=True)
+    # A resumed run is running even if a stale "awaiting_input" is still on
+    # disk, so a live task always wins.
+    awaiting_input = awaiting_input and not running
     return {"active": active or has_meta, "running": running, "awaiting_input": awaiting_input}
 
 

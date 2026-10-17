@@ -1,12 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavigate, useParams } from "react-router-dom";
 import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { AgentGraph } from "../components/chat/AgentGraph";
-import { MessageBubble, ThoughtBlock } from "../components/chat/MessageBubble";
-import { SubagentGroup } from "../components/chat/SubagentGroup";
+import { MessageBubble } from "../components/chat/MessageBubble";
+import { MessageList } from "../components/chat/MessageList";
 import { ArtifactPanel, artifactTypeFromPath } from "../components/chat/ArtifactPanel";
 import { ThinkingIndicator } from "../components/chat/ThinkingIndicator";
 import type { Artifact, ArtifactType } from "../components/chat/ArtifactPanel";
@@ -37,6 +37,8 @@ import { subscribeSessionFiles } from "../utils/sessionFilesBus";
 import { getFollowFileEdits } from "../utils/followFileEdits";
 import { onAgentContext } from "../utils/agentContextBus";
 import { buildFileTree } from "../utils/fileTree";
+import { buildRenderItems, computeLatestTodoFlags } from "../utils/renderItems";
+import { isActivityFrame } from "../utils/liveMessages";
 import type { AskPayload } from "../utils/askOttoBus";
 import type { AskImage } from "../types";
 import logoDark from "../assets/logo-dark.png";
@@ -97,11 +99,6 @@ function latestWriteResultId(path: string, messages: ChatMessage[]): string | nu
   }
   return null;
 }
-
-type RenderItem =
-  | { kind: "message"; message: ChatMessage; index: number }
-  | { kind: "subagent-group"; name: string; messages: ChatMessage[] }
-  | { kind: "thought-group"; messages: ChatMessage[] };
 
 // When rebuilding messages from the API (which never persists base64 images),
 // carry any images that are already in local state forward into the new array.
@@ -337,6 +334,11 @@ export default function ChatPage() {
   const pendingMemoryTopicsRef = useRef<string[] | null>(null);
   const sendingRef = useRef(false);
   const hitlSubmittedRef = useRef<Set<string>>(new Set());
+  // After the user answers an approval / ask_user card the backend needs a
+  // moment to start the resume. A status poll that lands in that gap still
+  // says "awaiting input / not running". Until this deadline the poll must not
+  // flip the Stop button back to Send.
+  const hitlResumeUntilRef = useRef(0);
   const justCreatedRef = useRef(false);
   const sessionIdRef = useRef(currentSessionId);
   sessionIdRef.current = currentSessionId;
@@ -657,6 +659,14 @@ export default function ChatPage() {
 
   const handleMessage = useCallback((msg: WSMessage) => {
     const sid = sessionIdRef.current ?? "";
+    if (msg.type === "done" || msg.type === "stopped" || msg.type === "hitl_request" || msg.type === "ask_user") {
+      // The resume we were waiting on has ended or paused again.
+      hitlResumeUntilRef.current = 0;
+    } else if (isActivityFrame(msg)) {
+      // Live output proves the agent is working, whatever a status poll that
+      // raced the resume reported.
+      setIsStreaming(true);
+    }
     if (msg.type === "done") {
       setIsStreaming(false);
       setPendingContext([]);
@@ -1090,8 +1100,11 @@ export default function ChatPage() {
         }
 
         const apiHasHitl = pendingInterrupts(apiMerged).length > 0;
+        // The user just answered a card; the resume is starting. Whatever this
+        // poll saw is from before it began, so wait for the next one.
+        if (Date.now() < hitlResumeUntilRef.current) return;
         const awaiting =
-          !!status?.awaiting_input
+          (!!status?.awaiting_input && !status.running)
           || (!!status && !status.running && hasUnmatchedApprovalTool(apiMerged));
         if (apiHasHitl) {
           setPollForInterrupt(false);
@@ -1172,6 +1185,7 @@ export default function ChatPage() {
       return;
     }
     hitlSubmittedRef.current.add(messageId);
+    hitlResumeUntilRef.current = Date.now() + 5000;
     if (currentSessionId) { clearSession(currentSessionId); watchSession(currentSessionId); }
     setMessages((prev) => prev.map((m) =>
       m.id === messageId
@@ -1844,17 +1858,10 @@ export default function ChatPage() {
     [sessionMessages],
   );
 
-  const latestTodoFlags = useMemo(() => {
-    const flags = new Array<boolean>(sessionMessages.length).fill(false);
-    for (let i = sessionMessages.length - 1; i >= 0; i--) {
-      const m = sessionMessages[i];
-      if ((m.type === "tool_call" || m.type === "tool_result") && m.content === "write_todos" && !m.metadata?.subagent) {
-        flags[i] = true;
-        break;
-      }
-    }
-    return flags;
-  }, [sessionMessages]);
+  const latestTodoFlags = useMemo(
+    () => computeLatestTodoFlags(sessionMessages),
+    [sessionMessages],
+  );
 
   const visibleSessionFiles = useMemo(
     () => sessionFiles.filter(f => !f.path.startsWith("large_tool_results/")),
@@ -2014,57 +2021,10 @@ export default function ChatPage() {
     setTimeout(() => navigate(`/chat/${sid}`), 30);
   }, [currentSessionId, navigate]);
 
-  const renderItems = useMemo((): RenderItem[] => {
-    const items: RenderItem[] = [];
-    const groups = new Map<string, RenderItem & { kind: "subagent-group" }>();
-    const subagentPrefixes = new Set<string>();
-    let generation = 0;
-    let prevWasSubagent = false;
-    let thoughtBuf: ChatMessage[] = [];
-    const flushThoughts = () => {
-      if (thoughtBuf.length === 0) return;
-      items.push({ kind: "thought-group", messages: thoughtBuf });
-      thoughtBuf = [];
-    };
-    for (let i = 0; i < sessionMessages.length; i++) {
-      const msg = sessionMessages[i];
-      // Errors are pulled out of the inline flow and pinned to the end of the
-      // chat (see errorMessages) so they're always visible after the latest turn.
-      if (msg.type === "error") continue;
-      const subagent = msg.metadata?.subagent as string | undefined;
-      if (subagent) {
-        flushThoughts();
-        subagentPrefixes.add(subagent.replace(/ #\d+$/, ""));
-        const groupKey = `${subagent}::${generation}`;
-        let group = groups.get(groupKey);
-        if (!group) {
-          group = { kind: "subagent-group", name: subagent, messages: [] };
-          groups.set(groupKey, group);
-          items.push(group);
-        }
-        group.messages.push(msg);
-        prevWasSubagent = true;
-      } else if (msg.type === "agent" && thoughtFlags[i]) {
-        if (prevWasSubagent) generation++;
-        prevWasSubagent = false;
-        thoughtBuf.push(msg);
-      } else {
-        if (prevWasSubagent) generation++;
-        prevWasSubagent = false;
-        flushThoughts();
-        items.push({ kind: "message", message: msg, index: i });
-      }
-    }
-    flushThoughts();
-    if (subagentPrefixes.size === 0) return items;
-    return items.filter((item) => {
-      if (item.kind !== "message") return true;
-      const msg = item.message;
-      if ((msg.type !== "tool_call" && msg.type !== "tool_result") || msg.content !== "task") return true;
-      const agentType = (msg.metadata?.args as Record<string, unknown>)?.subagent_type as string | undefined;
-      return !agentType || !subagentPrefixes.has(agentType);
-    });
-  }, [sessionMessages, thoughtFlags]);
+  const renderItems = useMemo(
+    () => buildRenderItems(sessionMessages, thoughtFlags),
+    [sessionMessages, thoughtFlags],
+  );
 
   // Errors are surfaced at the very end of the chat (after the latest agent
   // turn) rather than inline where they occurred, so they're never buried.
@@ -2873,87 +2833,6 @@ export default function ChatPage() {
   );
 }
 
-
-// ---------------------------------------------------------------------------
-// MessageList — memoized so that typing in the input textarea does NOT
-// trigger re-renders of the (potentially very long) message history.
-// All callback props must be wrapped in useCallback in ChatPage.
-// ---------------------------------------------------------------------------
-
-interface MessageListProps {
-  items: RenderItem[];
-  thoughtFlags: boolean[];
-  latestTodoFlags: boolean[];
-  isStreaming: boolean;
-  currentSessionId: string | null;
-  resolveSubagentModel: (name: string) => { label: string; family: string };
-  onEditMessage: (idx: number, content: string) => void;
-  onHitlDecision: (id: string, decisions: Array<Record<string, unknown>>, requestId?: string) => void;
-  onApproveAllSession: (id: string, decisions: Array<Record<string, unknown>>) => void;
-  onOpenArtifact: (path: string, fileUrl: string, type: ArtifactType) => void;
-}
-
-const MessageList = memo(function MessageList({
-  items,
-  thoughtFlags,
-  latestTodoFlags,
-  isStreaming,
-  currentSessionId,
-  resolveSubagentModel,
-  onEditMessage,
-  onHitlDecision,
-  onApproveAllSession,
-  onOpenArtifact,
-}: MessageListProps) {
-  return (
-    <>
-      {items.map((item) => {
-        if (item.kind === "subagent-group") {
-          const model = resolveSubagentModel(item.name);
-          return (
-            <SubagentGroup
-              key={`group-${item.name}`}
-              name={item.name}
-              messages={item.messages}
-              modelLabel={model.label}
-              modelFamily={model.family}
-              sessionId={currentSessionId ?? undefined}
-              onOpenArtifact={onOpenArtifact}
-            />
-          );
-        }
-        if (item.kind === "thought-group") {
-          const streaming = item.messages.some((m) => m.metadata?.streaming);
-          return (
-            <ThoughtBlock
-              key={`thought-${item.messages.map((m) => m.id).join("-")}-${streaming ? "live" : "done"}`}
-              messages={item.messages}
-            />
-          );
-        }
-        const { message: msg, index: idx } = item;
-        return (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            isThought={thoughtFlags[idx]}
-            isLatestTodo={latestTodoFlags[idx]}
-            canEdit={msg.type === "user" && !isStreaming}
-            sessionId={currentSessionId ?? undefined}
-            onEdit={(newContent) => onEditMessage(idx, newContent)}
-            onHitlDecision={(decisions) => onHitlDecision(
-              msg.id,
-              decisions,
-              typeof msg.metadata?.request_id === "string" ? msg.metadata.request_id : undefined,
-            )}
-            onApproveAllSession={(decisions) => onApproveAllSession(msg.id, decisions)}
-            onOpenArtifact={onOpenArtifact}
-          />
-        );
-      })}
-    </>
-  );
-});
 
 function ChatScheduleDialog({
   agentName,

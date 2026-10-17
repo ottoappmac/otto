@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FolderPlus, Hammer, MessageSquare, Plus, Send, X } from "lucide-react";
+import { FolderPlus, Hammer, MessageSquare, Plus, RotateCcw, Send, Square, Undo2, X } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -8,10 +8,22 @@ import { useChatModel } from "../hooks/useChatModel";
 import { ModelPicker } from "../components/chat/ModelPicker";
 import WorkspaceTree from "../components/chat/WorkspaceTree";
 import { MessageBubble } from "../components/chat/MessageBubble";
+import { MessageList } from "../components/chat/MessageList";
+import { ThinkingIndicator } from "../components/chat/ThinkingIndicator";
 import { ArtifactPanel, artifactTypeFromPath } from "../components/chat/ArtifactPanel";
 import type { Artifact, ArtifactType } from "../components/chat/ArtifactPanel";
 import { RunTimeline } from "../components/runs/RunTimeline";
 import { applyLiveTimelineMessage } from "../utils/liveTimeline";
+import { applyLiveMessage, isActivityFrame, syncFromApi } from "../utils/liveMessages";
+import { buildRenderItems, computeLatestTodoFlags } from "../utils/renderItems";
+import {
+  computeThoughtFlags,
+  hasUnmatchedApprovalTool,
+  mergeToolMessages,
+  pendingInterrupts,
+} from "../utils/mergeToolMessages";
+import { screenHighRiskCommand } from "../utils/highRiskCommands";
+import { useNotification } from "../context/NotificationContext";
 import { pickDirectory } from "../utils/pickFolder";
 import { FolderGrantDialog } from "../components/action/FolderGrantDialog";
 import type {
@@ -106,10 +118,29 @@ export default function CodePage() {
   const [planRev, setPlanRev] = useState(0);
   // Same model selection as Chat: it changes the global model in Settings.
   // A model change does not discard the open coding session; the backend
-  // rebuilds live sessions when the model setting changes.
-  const { currentModel, availableModels, isModelBusy, handleModelChange } = useChatModel();
+  // notices the new model at the start of the next turn and rebuilds the
+  // session's graph with it.
+  const { currentModel, availableModels, appSettings, isModelBusy, handleModelChange } = useChatModel();
   const shellRef = useRef<HTMLDivElement>(null);
   const sessionLoad = useRef(0);
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const msgIdRef = useRef(0);
+  // Cards the user already answered. A second click, or an auto-approve pass
+  // that runs before the answer is stamped, must not send the answer twice.
+  const hitlSubmittedRef = useRef<Set<string>>(new Set());
+  // After an answer is sent the backend needs a moment to start the resume.
+  // A status poll that lands in that gap still says "awaiting input / not
+  // running"; until this deadline it must not flip Stop back to Send.
+  const hitlResumeUntilRef = useRef(0);
+  const [awaitingPoll, setAwaitingPoll] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
+  const pendingSendRef = useRef<{ sid: string; text: string; mode: SessionMode } | null>(null);
+  const [sessionAutoApprove, setSessionAutoApprove] = useState(false);
+  const stickToBottomRef = useRef(true);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { notify, clearSession, watchSession, unwatchSession } = useNotification();
   const [leftWidth, setLeftWidth] = useState(() => storedWidth(LEFT_WIDTH_KEY, LEFT_DEFAULT, LEFT_MIN, LEFT_MAX));
   const [rightWidth, setRightWidth] = useState(() => storedWidth(RIGHT_WIDTH_KEY, RIGHT_DEFAULT, RIGHT_MIN, RIGHT_MAX));
   const widthsRef = useRef({ left: leftWidth, right: rightWidth });
@@ -188,23 +219,47 @@ export default function CodePage() {
     const ticket = ++sessionLoad.current;
     const current = () => sessionLoad.current === ticket;
     api.getSession(sid).then((info) => { if (current()) setSession(info); }).catch(() => { if (current()) setSession(null); });
+    api.getSessionStatus(sid).then((status) => {
+      if (!current()) return;
+      if (status.running) {
+        setStreaming(true);
+        watchSession(sid);
+      }
+      // A paused run has no live task, so the card has to come from the
+      // saved transcript. The poll below keeps looking until it shows up.
+      if (status.awaiting_input && !status.running) setAwaitingPoll(true);
+    }).catch(() => {});
     api.getSessionMessages(sid).then((rows) => {
       if (!current()) return;
-      setMessages(rows.map((row, index) => ({
-        id: `m-${index}`,
+      const saved = mergeToolMessages(rows.map((row, index) => ({
+        id: `${sid}-${index}`,
         type: (row.type as ChatMessage["type"]) || "agent",
         content: String(row.content ?? ""),
         metadata: row.metadata as ChatMessage["metadata"],
         timestamp: new Date(),
         sessionId: sid,
       })));
+      // Disk is authoritative, with one exception: rows of this same session
+      // that are on screen but not saved yet (a first message sent right after
+      // the session was created) must not be wiped by a load that started
+      // before they existed.
+      setMessages((prev) => (
+        saved.length < prev.length && prev.every((m) => m.sessionId === sid)
+          ? syncFromApi(prev, saved)
+          : saved
+      ));
     }).catch(() => { if (current()) setMessages([]); });
     api.getSessionTimeline(sid).then((data) => { if (current()) setTimeline(data.events || []); }).catch(() => { if (current()) setTimeline([]); });
-  }, []);
+  }, [watchSession]);
 
   useEffect(() => {
     setLive([]);
     setStreaming(false);
+    setAwaitingPoll(false);
+    setSessionAutoApprove(false);
+    hitlSubmittedRef.current = new Set();
+    hitlResumeUntilRef.current = 0;
+    stickToBottomRef.current = true;
     setNotice(null);
     if (!sessionId) {
       sessionLoad.current += 1;
@@ -266,7 +321,10 @@ export default function CodePage() {
     api.getWorkspaceGit(sessionId).then(setGit).catch(() => setGit(null));
   }, [sessionId, session?.workspace?.grant_id]);
 
-  useEffect(() => { refreshChanges(); }, [refreshChanges, messages.length]);
+  // A finished tool call is folded into its row, so count them: an edit that
+  // completes does not add a message but should refresh the Changes tab.
+  const finishedTools = useMemo(() => messages.filter((m) => m.type === "tool_result").length, [messages]);
+  useEffect(() => { refreshChanges(); }, [refreshChanges, messages.length, finishedTools]);
 
   useEffect(() => {
     if (!sessionId || !diffPath) {
@@ -277,51 +335,219 @@ export default function CodePage() {
   }, [sessionId, diffPath, changes]);
 
   const onMessage = useCallback((msg: WSMessage) => {
+    const sid = sessionIdRef.current ?? undefined;
     if (msg.type === "workspace_checkpoint" && msg.content) setNotice(msg.content);
     if (msg.type === "workspace_changed") refreshChanges();
-    if (msg.type === "resync" && sessionId) reloadSession(sessionId);
+    if (msg.type === "resync" && sid) reloadSession(sid);
     if (msg.type === "done" || msg.type === "stopped" || msg.type === "error") {
       setStreaming(false);
+      setAwaitingPoll(false);
+      hitlResumeUntilRef.current = 0;
       refreshPlan();
+      if (sid) unwatchSession(sid);
+      if (sid && msg.type === "done") notify("done", sid);
       // The title is written at the end of the turn. Pull the list now
       // instead of waiting for the next poll.
       loadSessions();
+    } else if (msg.type === "hitl_request" || msg.type === "ask_user") {
+      // The run is paused on the user. Show the card and stop "working".
+      setStreaming(false);
+      setAwaitingPoll(false);
+      hitlResumeUntilRef.current = 0;
+      stickToBottomRef.current = true;
+      if (sid) { unwatchSession(sid); notify("hitl", sid); }
+    } else if (isActivityFrame(msg)) {
+      // Live output proves the agent is working, whatever a status poll that
+      // raced the resume reported.
+      setStreaming(true);
     }
-    if (msg.type === "user" || msg.type === "agent" || msg.type === "tool_call" || msg.type === "tool_result" || msg.type === "execute_output" || msg.type === "error" || msg.type === "hitl_request") {
-      setMessages((prev) => [...prev, {
-        id: `live-${msg.seq ?? prev.length}`,
-        type: msg.type,
-        content: msg.content,
-        metadata: msg.metadata,
-        timestamp: new Date(),
-        sessionId: sessionId || undefined,
-      }]);
-    }
+    setMessages((prev) => applyLiveMessage(prev, msg, {
+      nextId: () => `live-${++msgIdRef.current}`,
+      sessionId: sid,
+    }));
     setLive((prev) => applyLiveTimelineMessage(prev, msg));
-  }, [refreshChanges, refreshPlan, reloadSession, loadSessions, sessionId]);
+  }, [refreshChanges, refreshPlan, reloadSession, loadSessions, notify, unwatchSession]);
 
-  const { connected, send, sendHitlResponse } = useWebSocket({
+  const { connected, send, sendHitlResponse, waitForConnection } = useWebSocket({
     sessionId: sessionId || null,
     onMessage,
   });
 
-  const output = useMemo(
-    () => messages.filter((m) => m.type === "execute_output" || (m.type === "tool_result" && (m.metadata?.name === "execute" || m.content === "execute"))),
-    [messages],
+  // Safety net for a dropped frame: while a run is going, or paused with its
+  // card not on screen yet, compare against the saved transcript every 2s.
+  // This is also what recovers the card after a reconnect.
+  const syncWithServer = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const [status, rows] = await Promise.all([
+      api.getSessionStatus(sid).catch(() => null),
+      api.getSessionMessages(sid).catch(() => null),
+    ]);
+    if (sid !== sessionIdRef.current) return;
+    let apiMerged: ChatMessage[] = [];
+    if (rows && rows.length > 0) {
+      apiMerged = mergeToolMessages(rows.map((row, index) => ({
+        id: `${sid}-${index}`,
+        type: (row.type as ChatMessage["type"]) || "agent",
+        content: String(row.content ?? ""),
+        metadata: row.metadata as ChatMessage["metadata"],
+        timestamp: new Date(),
+        sessionId: sid,
+      })));
+      setMessages((prev) => syncFromApi(prev, apiMerged));
+    }
+    // The user just answered a card and the resume is starting. Whatever this
+    // poll saw predates it, so wait for the next one.
+    if (Date.now() < hitlResumeUntilRef.current) return;
+    if (pendingInterrupts(apiMerged).length > 0) {
+      setStreaming(false);
+      setAwaitingPoll(false);
+      return;
+    }
+    if (!status) return;
+    if (status.running) {
+      setStreaming(true);
+      setAwaitingPoll(false);
+      return;
+    }
+    // Not running. A run paused on an approval is "awaiting input", and its
+    // card may not be saved yet, so keep looking for it.
+    const awaiting = status.awaiting_input || hasUnmatchedApprovalTool(apiMerged);
+    setStreaming(false);
+    setAwaitingPoll(awaiting);
+    if (!awaiting) {
+      unwatchSession(sid);
+      refreshPlan();
+      loadSessions();
+    }
+  }, [loadSessions, refreshPlan, unwatchSession]);
+
+  useEffect(() => {
+    if (!sessionId || (!streaming && !awaitingPoll)) return;
+    const timer = setInterval(() => { void syncWithServer(); }, 2000);
+    return () => clearInterval(timer);
+  }, [sessionId, streaming, awaitingPoll, syncWithServer]);
+
+  // After the socket comes back, frames sent while it was down are gone.
+  const wasConnected = useRef(false);
+  useEffect(() => {
+    const reconnected = connected && !wasConnected.current;
+    wasConnected.current = connected;
+    if (reconnected && sessionId) void syncWithServer();
+  }, [connected, sessionId, syncWithServer]);
+
+  const output = useMemo(() => messages.flatMap((m) => {
+    if (m.type !== "tool_call" && m.type !== "tool_result") return [];
+    const isExecute = m.content === "execute" || m.metadata?.name === "execute";
+    if (!isExecute) return [];
+    const args = m.metadata?.args as { command?: unknown } | undefined;
+    const command = typeof args?.command === "string" ? args.command : "";
+    // A call row holds the live lines until its result lands in `result`.
+    // A result with no call row keeps the output as its own content.
+    const live = (m.metadata?.liveOutput as string[] | undefined)?.join("\n") ?? "";
+    const text = typeof m.metadata?.result === "string"
+      ? m.metadata.result
+      : m.content !== "execute" ? m.content : live;
+    return [{ id: m.id, command, text, done: m.type === "tool_result" }];
+  }), [messages]);
+
+  const thoughtFlags = useMemo(() => computeThoughtFlags(messages), [messages]);
+  const latestTodoFlags = useMemo(() => computeLatestTodoFlags(messages), [messages]);
+  const renderItems = useMemo(() => buildRenderItems(messages, thoughtFlags), [messages, thoughtFlags]);
+  const errorMessages = useMemo(() => messages.filter((m) => m.type === "error"), [messages]);
+  const resolveSubagentModel = useCallback(
+    () => ({ label: currentModel || "model", family: "inherit" }),
+    [currentModel],
   );
 
-  const startSession = async () => {
-    if (!grantId) return;
+  const handleHitlDecision = useCallback((
+    messageId: string,
+    decisions: Array<Record<string, unknown>>,
+    requestId?: string,
+  ) => {
+    if (hitlSubmittedRef.current.has(messageId)) return;
+    if (!sendHitlResponse(decisions, requestId)) {
+      setError("Not connected to the server. Wait a moment and try again.");
+      return;
+    }
+    hitlSubmittedRef.current.add(messageId);
+    hitlResumeUntilRef.current = Date.now() + 5000;
+    const sid = sessionIdRef.current;
+    if (sid) { clearSession(sid); watchSession(sid); }
+    stickToBottomRef.current = true;
     setError(null);
+    setMessages((prev) => prev.map((m) => (
+      m.id === messageId ? { ...m, metadata: { ...m.metadata, resolved: true, decisions } } : m
+    )));
+    setStreaming(true);
+    setAwaitingPoll(false);
+    setSessions((prev) => prev.map((item) => (item.id === sid ? { ...item, status: "running" } : item)));
+  }, [sendHitlResponse, clearSession, watchSession]);
+
+  const approveAllThisSession = useCallback((messageId: string, decisions: Array<Record<string, unknown>>) => {
+    handleHitlDecision(messageId, decisions);
+    setSessionAutoApprove(true);
+  }, [handleHitlDecision]);
+
+  // "Always allow" (or the global setting) answers later command approvals
+  // without a click. Cards the server marks as always-ask, and high-risk
+  // commands, still wait for the user.
+  const autoApprove = Boolean(appSettings?.auto_approve_commands) || sessionAutoApprove;
+  useEffect(() => {
+    if (!autoApprove) return;
+    const card = [...messages].reverse().find((m) => m.type === "hitl_request" && !m.metadata?.resolved);
+    if (!card || hitlSubmittedRef.current.has(card.id)) return;
+    const risk = card.metadata?.risk as { no_auto_approve?: boolean } | undefined;
+    if (risk?.no_auto_approve) return;
+    const actions = (card.metadata?.action_requests as Array<{ args?: Record<string, unknown> }> | undefined) ?? [];
+    if (actions.some((a) => screenHighRiskCommand(a.args?.command).length > 0)) return;
+    const requestId = typeof card.metadata?.request_id === "string" ? card.metadata.request_id : undefined;
+    handleHitlDecision(card.id, actions.map(() => ({ type: "approve" })), requestId);
+  }, [autoApprove, messages, handleHitlDecision]);
+
+  const handleOpenArtifact = useCallback((path: string, fileUrl: string, type: ArtifactType) => {
+    setArtifact({ path, fileUrl, type });
+    setInspector("files");
+  }, []);
+
+  const handleStop = async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      await api.stopSession(sid);
+    } catch (e) {
+      setError(apiMessage(e));
+      return;
+    }
+    setStreaming(false);
+  };
+
+  // Follow the newest output unless the user scrolled up to read.
+  useEffect(() => {
+    if (stickToBottomRef.current) messagesEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, streaming]);
+
+  const startSession = async (forGrantId: string = grantId): Promise<string | null> => {
+    if (!forGrantId) return null;
+    setError(null);
+    let createdId = "";
     try {
       const created = await api.createSession({ agent_name: "coding-agent" });
-      let bound = await api.bindSessionWorkspace(created.id, grantId);
+      createdId = created.id;
+      let bound = await api.bindSessionWorkspace(created.id, forGrantId);
       if (mode !== "agent") bound = await api.setSessionMode(created.id, mode);
       setSession(bound);
       setSessions((prev) => [bound, ...prev.filter((item) => item.id !== bound.id)]);
       navigate(`/code/${created.id}`);
+      return created.id;
     } catch (e) {
+      // Do not leave an empty, unbound session behind when binding fails.
+      if (createdId) api.closeSession(createdId).catch(() => {});
+      // The selected folder may have been removed elsewhere. Refresh the list
+      // so the selection falls back to a folder that still exists.
+      loadGrants();
       setError(apiMessage(e));
+      return null;
     }
   };
 
@@ -345,6 +571,8 @@ export default function CodePage() {
       setPreview(null);
       setGrantId(grant.id);
       loadGrants();
+      // The input stays disabled until a session exists, so open one now.
+      await startSession(grant.id);
     } catch (e) {
       setError(apiMessage(e));
     }
@@ -359,9 +587,12 @@ export default function CodePage() {
       return false;
     }
     setStreaming(true);
+    setAwaitingPoll(false);
+    stickToBottomRef.current = true;
+    watchSession(sessionId);
     setSessions((prev) => prev.map((item) => (item.id === sessionId ? { ...item, status: "running" } : item)));
     setMessages((prev) => [...prev, {
-      id: `local-${Date.now()}`,
+      id: `local-${++msgIdRef.current}`,
       type: "user",
       content: text,
       timestamp: new Date(),
@@ -371,8 +602,51 @@ export default function CodePage() {
   };
 
   const submit = () => {
-    if (sendText(input.trim(), mode)) setInput("");
+    const text = input.trim();
+    if (!text) return;
+    if (sessionId) {
+      if (sendText(text, mode)) setInput("");
+      return;
+    }
+    void submitToNewSession(text);
   };
+
+  // Typing with no session open starts one in the selected project and sends
+  // the text as its first message. The socket for the new session opens after
+  // the route changes, so the send waits for it (see the effect below).
+  const submitToNewSession = async (text: string) => {
+    if (!grantId || startingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
+    try {
+      const sid = await startSession();
+      if (!sid) return;
+      pendingSendRef.current = { sid, text, mode };
+      setInput("");
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
+  };
+
+  // First message of a session started from the composer. `sendText` is read
+  // through a ref so the send uses the render that has the new session open.
+  const sendTextRef = useRef(sendText);
+  sendTextRef.current = sendText;
+  useEffect(() => {
+    const pending = pendingSendRef.current;
+    if (!pending || pending.sid !== sessionId) return;
+    pendingSendRef.current = null;
+    waitForConnection()
+      .then(() => {
+        if (sessionIdRef.current !== pending.sid) return;
+        if (!sendTextRef.current(pending.text, pending.mode)) setInput(pending.text);
+      })
+      .catch(() => {
+        setInput(pending.text);
+        setError("Not connected to the server. Your message is back in the box; try again.");
+      });
+  }, [sessionId, waitForConnection]);
 
   const buildPlan = async () => {
     if (!sessionId) return;
@@ -589,7 +863,13 @@ export default function CodePage() {
             {changes?.debug_markers} otto-debug log marker{changes?.debug_markers === 1 ? "" : "s"} still in your files. Remove them before you commit.
           </p>
         )}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        <div
+          className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+        >
           {messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-center">
               <MessageSquare className="text-th-text-muted mb-3" size={28} />
@@ -600,18 +880,26 @@ export default function CodePage() {
               </p>
             </div>
           )}
-          {messages.map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              sessionId={sessionId}
-              onHitlDecision={(decisions) => {
-                const requestId = typeof message.metadata?.request_id === "string" ? message.metadata.request_id : undefined;
-                sendHitlResponse(decisions, requestId);
-              }}
-            />
-          ))}
-          {streaming && <p className="text-xs text-th-text-muted">Working…</p>}
+          <MessageList
+            items={renderItems}
+            thoughtFlags={thoughtFlags}
+            latestTodoFlags={latestTodoFlags}
+            isStreaming={streaming}
+            currentSessionId={sessionId ?? null}
+            resolveSubagentModel={resolveSubagentModel}
+            onHitlDecision={handleHitlDecision}
+            onApproveAllSession={approveAllThisSession}
+            onOpenArtifact={handleOpenArtifact}
+          />
+          {streaming && <ThinkingIndicator phase="thinking" withAvatar />}
+          {errorMessages.length > 0 && (
+            <div className="space-y-3">
+              {errorMessages.map((message) => (
+                <MessageBubble key={message.id} message={message} sessionId={sessionId} />
+              ))}
+            </div>
+          )}
+          <div ref={messagesEndRef} />
         </div>
         {planReady && sessionId && (
           <div className="px-4 py-2 border-t border-th-border flex items-center gap-3 text-xs bg-violet-500/5">
@@ -627,29 +915,53 @@ export default function CodePage() {
           onSubmit={(e) => { e.preventDefault(); submit(); }}
         >
           <div className="flex gap-2">
-            <input
+            <textarea
+              rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              ref={(el) => {
+                if (!el) return;
+                el.style.height = "auto";
+                el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Tab" && e.shiftKey) {
                   e.preventDefault();
                   cycleMode();
+                  return;
+                }
+                // Enter sends; Shift+Enter inserts a newline.
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  submit();
                 }
               }}
               placeholder={
-                !sessionId ? "Start a session in an allowed folder"
+                !sessionId ? (grantId ? `Describe a change to start a session in ${selected?.label ?? "this project"}` : "Allow a project folder to start")
                   : !session?.workspace ? "No project folder on this session"
                     : mode === "ask" ? "Ask about the code…"
                       : mode === "plan" ? "Describe what to plan…"
                         : mode === "debug" ? "Describe the bug…"
                           : "Ask for a change…"
               }
-              disabled={!sessionId}
-              className="flex-1 bg-th-inset-bg border border-th-border rounded-xl px-3 py-2 text-sm text-th-text-primary"
+              disabled={!sessionId && (!grantId || starting)}
+              className="flex-1 bg-th-inset-bg border border-th-border rounded-xl px-3 py-2 text-sm text-th-text-primary resize-none overflow-y-auto"
             />
-            <button type="submit" disabled={!sessionId || !input.trim() || streaming} className="px-3 rounded-xl border border-th-border text-th-text-secondary disabled:opacity-40">
-              <Send size={14} />
-            </button>
+            {streaming ? (
+              <button
+                type="button"
+                title="Stop agent"
+                aria-label="Stop agent"
+                onClick={() => { void handleStop(); }}
+                className="px-3 rounded-xl border border-th-border text-red-400 hover:bg-red-500/15"
+              >
+                <Square size={14} />
+              </button>
+            ) : (
+              <button type="submit" title="Send" aria-label="Send" disabled={(!sessionId && (!grantId || starting)) || !input.trim()} className="px-3 rounded-xl border border-th-border text-th-text-secondary disabled:opacity-40">
+                <Send size={14} />
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             <div className="flex rounded-lg border border-th-border overflow-hidden shrink-0" role="radiogroup" aria-label="Mode">
@@ -718,13 +1030,15 @@ export default function CodePage() {
                   </button>
                   <button
                     type="button"
-                    className="text-th-text-muted hover:text-th-text-primary"
+                    title={`Revert ${file.path}`}
+                    aria-label={`Revert ${file.path}`}
+                    className="shrink-0 p-1 rounded text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
                     onClick={() => {
                       if (!sessionId) return;
                       api.revertWorkspace(sessionId, [file.path]).then(() => refreshChanges()).catch((e) => setError(apiMessage(e)));
                     }}
                   >
-                    Revert
+                    <Undo2 size={13} />
                   </button>
                 </div>
               ))}
@@ -734,10 +1048,12 @@ export default function CodePage() {
               {sessionId && (changes?.files?.length || 0) > 0 && (
                 <button
                   type="button"
-                  className="text-th-text-muted hover:text-th-text-primary"
+                  title="Revert all changes from this turn"
+                  aria-label="Revert all changes from this turn"
+                  className="p-1 rounded text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
                   onClick={() => api.revertWorkspace(sessionId).then(() => refreshChanges()).catch((e) => setError(apiMessage(e)))}
                 >
-                  Revert this turn
+                  <RotateCcw size={13} />
                 </button>
               )}
             </div>
@@ -745,12 +1061,27 @@ export default function CodePage() {
           {inspector === "files" && artifact && (
             <ArtifactPanel artifact={artifact} onClose={() => setArtifact(null)} />
           )}
-          {inspector === "files" && !artifact && <p className="text-th-text-muted">Open a file from the tree.</p>}
+          {inspector === "files" && !artifact && (
+            sessionId && session?.workspace ? (
+              <WorkspaceTree
+                sessionId={sessionId}
+                fileUrl={(rel) => api.getWorkspaceFileUrl(sessionId, rel)}
+                onOpenFile={(rel) => openFile(rel)}
+              />
+            ) : (
+              <p className="text-th-text-muted">
+                {sessionId ? "This session has no project folder." : "Start a session to browse the project files."}
+              </p>
+            )
+          )}
           {inspector === "output" && (
             <div className="space-y-3">
               {output.length === 0 && <p className="text-th-text-muted">Command output shows up here.</p>}
               {output.map((item) => (
-                <pre key={item.id} className="whitespace-pre-wrap font-mono text-[11px] text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.content}</pre>
+                <div key={item.id} className="space-y-1">
+                  {item.command && <p className="font-mono text-[11px] text-th-text-muted break-all">$ {item.command}</p>}
+                  <pre className="whitespace-pre-wrap font-mono text-[11px] text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.text || (item.done ? "(no output)" : "Running…")}</pre>
+                </div>
               ))}
             </div>
           )}

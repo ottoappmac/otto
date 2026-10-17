@@ -158,3 +158,52 @@ def test_lite_prompt_lists_coding_agent_trigger():
     assert "coding-agent" in block
     assert "edit_file" in block
     assert "general-purpose" in block
+
+
+def test_coding_prompt_and_skill_require_tests_and_a_verified_result(isolated_app_data: Path):
+    from backend import agent_library
+
+    agent_library.seed_defaults()
+
+    spec = agent_library.get_agent("coding-agent")
+    skill = agent_library.get_skill("coding")
+    assert spec is not None and skill is not None
+
+    for text in (spec.system_prompt, skill.content):
+        lowered = text.lower()
+        # Tests are written, not just suggested.
+        assert "test that fails" in lowered or "test that reproduces" in lowered
+        assert "edge case" in lowered
+        # The project's own commands are used, and a failing check is fixed
+        # rather than weakened.
+        assert "do not invent" in lowered
+        assert "never weaken, skip, or delete a test" in lowered
+        # No success claim without a run.
+        assert "unrun" in lowered or "never say it works unless" in lowered
+        # The old "one execute, then stop" cap is gone.
+        assert "then stop" not in lowered
+        assert "1. `write_todos`" not in text
+
+
+def test_coding_prompt_stays_short_enough_for_small_models():
+    from backend.agent_library import _CODING_AGENT_PROMPT, _CODING_SKILL_CONTENT
+
+    assert len(_CODING_AGENT_PROMPT.splitlines()) <= 50
+    assert len(_CODING_SKILL_CONTENT.splitlines()) <= 60
+
+
+def test_coding_builtin_versions_are_bumped_so_installs_pick_up_the_new_text(isolated_app_data: Path):
+    from backend import agent_library
+
+    agent_library.seed_defaults()
+    spec = agent_library.get_agent("coding-agent")
+    assert spec is not None
+    assert agent_library._BUILTIN_AGENT_VERSIONS["coding-agent"] >= 4
+    assert agent_library._BUILTIN_SKILL_VERSIONS["coding"] >= 3
+    assert "Verify before you say done" in spec.system_prompt
+
+
+def test_debug_mode_asks_for_a_regression_test():
+    from backend.session_mode import DEBUG_ADDENDUM
+
+    assert "regression test" in DEBUG_ADDENDUM

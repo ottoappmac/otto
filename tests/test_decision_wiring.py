@@ -146,6 +146,19 @@ async def test_enabling_rebuilds_an_open_chat_once(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_changing_the_model_rebuilds_an_open_chat_once(monkeypatch) -> None:
+    mgr, rebuilt = _manager(monkeypatch, enabled=False)
+    session = _session(bound=False)
+    session.model_bound = ("omlx", "old-model")
+    await mgr._reconcile_decide(session)
+    assert rebuilt == [session]
+    # The rebuild re-stamps the signature, so the next turn leaves it alone.
+    assert session.model_bound != ("omlx", "old-model")
+    await mgr._reconcile_decide(session)
+    assert rebuilt == [session]
+
+
+@pytest.mark.asyncio
 async def test_disabling_rebuilds_an_open_chat_once(monkeypatch) -> None:
     mgr, rebuilt = _manager(monkeypatch, enabled=False)
     session = _session(bound=True)

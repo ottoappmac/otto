@@ -1139,6 +1139,27 @@ def _apply_universal_loop_guard(
         return None
 
 
+def _insert_stale_reply_guard(middleware: list[Any], *, scope: str) -> None:
+    """Add the guard against re-sending an earlier turn's answer.
+
+    Orchestrator only: it compares against earlier user turns, which only the
+    chat-facing agent has. Without it a long session can answer "still broken"
+    with its last "fixed" summary word for word and never touch the code.
+    """
+    try:
+        from middleware.react_middleware import MLXReActMiddleware
+        from middleware.stale_reply_guard import StaleReplyGuardMiddleware
+
+        idx = 0
+        for i, mw in enumerate(middleware):
+            if isinstance(mw, MLXReActMiddleware):
+                idx = i + 1
+                break
+        middleware.insert(idx, StaleReplyGuardMiddleware())
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Stale-reply guard (%s): could not apply — %s", scope, exc)
+
+
 def _insert_repeated_thought_guard(middleware: list[Any], *, scope: str) -> None:
     """Insert the repeated-thought guard just inside any leading ReAct shim.
 
@@ -1321,6 +1342,23 @@ def _bind_decision_flags(session: Any, config: AppConfig) -> None:
     """
     session.decide_bound = bool(config.decision.enabled)
     session.safety_bound = bool(config.decision.safety_guard_enabled)
+    session.model_bound = _model_signature(
+        config, getattr(session, "distill_catalog_id", None)
+    )
+
+
+def _model_signature(config: Any, distill_catalog_id: str | None) -> tuple[str, str]:
+    """``(provider, model_id)`` a graph built from *config* would chat with.
+
+    Stamped on each session when its graph is built and compared at the start
+    of every turn, so picking another model in the UI reaches chats that are
+    already open (the old model is otherwise baked into the live graph).
+    """
+    cid = _effective_distill_catalog_id(distill_catalog_id, config)
+    provider = _distill_session_provider(cid, config)
+    if cid:
+        return provider, cid
+    return provider, _provider_model_for_main(config)[1]
 
 
 def _append_date_context(middleware: list[Any]) -> None:
@@ -2584,6 +2622,8 @@ class Session:
         # graph (see ``_reconcile_decide``).
         self.decide_bound: bool = False
         self.safety_bound: bool = False
+        # (provider, model id) the graph was built with; see ``_model_signature``.
+        self.model_bound: Optional[tuple[str, str]] = None
         # Chat model for this session. Used by the Auto run-depth judge,
         # which must run before the graph so Quick limits are already on.
         self.llm: Any = None
@@ -3705,6 +3745,16 @@ class SessionManager:
                 f"schedule when continuity with previous runs is useful.\n"
             )
 
+        system_prompt += (
+            "\n## When the user says a fix did not work\n"
+            "- If the user reports an error or says a problem is still there, your "
+            "earlier fix failed. Do not repeat or restate your earlier summary. "
+            "Re-read the files and re-run the failing command in THIS turn, quote "
+            "what you see, then change something different.\n"
+            "- Say a problem is fixed only after a check you ran this turn "
+            "passed. If a build or test still fails, say so.\n"
+        )
+
         system_prompt += "\n" + build_distilled_adapters_prompt_block(distill_catalog_id)
 
         _insert_safety_guard(
@@ -3714,6 +3764,7 @@ class SessionManager:
             check_input=True,
         )
         _insert_repeated_thought_guard(extra_middleware, scope="orchestrator")
+        _insert_stale_reply_guard(extra_middleware, scope="orchestrator")
         try:
             from middleware.run_depth import RunDepthMiddleware
 
@@ -4009,6 +4060,7 @@ class SessionManager:
                     is_scheduled_run=session.trigger_source == "schedule",
                     schedule_id=session.schedule_id,
                     live_output_queue=session.live_output_queue,
+                    distill_catalog_id=session.distill_catalog_id,
                 )
             except Exception as exc:
                 logger.warning(
@@ -4041,17 +4093,33 @@ class SessionManager:
     async def _rebuild_one_session(self, session: Session, config: AppConfig) -> None:
         """Swap *session*'s graph for a freshly built one (workspace, tools)."""
         old_tool_set = session.tool_set
+        old_model = getattr(session, "model_bound", None)
+        # A distilled bind is dropped when Turbo now points at another model.
+        cid = _effective_distill_catalog_id(session.distill_catalog_id, config)
         graph, mcp_mgr, _, llm = await self._build_graph(
             config, session.agent_name, session.id, session._checkpointer,
             is_scheduled_run=session.trigger_source == "schedule",
             schedule_id=session.schedule_id,
             live_output_queue=session.live_output_queue,
-            distill_catalog_id=session.distill_catalog_id,
+            distill_catalog_id=cid,
         )
         session.graph = graph
         session.tool_set = mcp_mgr
         session.llm = llm
+        session.distill_catalog_id = cid
+        session.llm_provider = _distill_session_provider(cid, config)
         _bind_decision_flags(session, config)
+        if old_model is not None and old_model != session.model_bound:
+            # Cost and run metrics follow the model the chat now uses.
+            session.model = cid
+            logger.info(
+                "Session %s switched model %s -> %s",
+                session.id, old_model, session.model_bound,
+            )
+            try:
+                await session.save_meta_async()
+            except Exception:
+                logger.debug("Could not save meta after model switch", exc_info=True)
         if old_tool_set is not None:
             try:
                 await old_tool_set.close()
@@ -4059,9 +4127,11 @@ class SessionManager:
                 logger.debug("Error closing old tool set for session %s", session.id, exc_info=True)
 
     async def _reconcile_decide(self, session: Session) -> dict[str, Any] | None:
-        """Rebuild an idle session whose graph disagrees with the Jev settings.
+        """Rebuild an idle session whose graph disagrees with the saved settings.
 
-        Covers both the ``jev`` tool and the safety guardrail. Runs at the
+        Covers the ``jev`` tool, the safety guardrail, and the chat model
+        (provider + model id), so picking another model in the UI applies to
+        chats that are already open. Runs at the
         start of each new user turn, like the privacy-lock check, so flipping
         a setting reaches chats that are already open. A running session is
         left alone: swapping its graph would close the tool set the current
@@ -4081,21 +4151,40 @@ class SessionManager:
         guard_wanted = bool(config.decision.safety_guard_enabled)
         if session.status == "running":
             return None
-        if session.decide_bound == tool_wanted and session.safety_bound == guard_wanted:
+        bound_model = getattr(session, "model_bound", None)
+        model_changed = bound_model is not None and bound_model != _model_signature(
+            config, getattr(session, "distill_catalog_id", None)
+        )
+        if (
+            session.decide_bound == tool_wanted
+            and session.safety_bound == guard_wanted
+            and not model_changed
+        ):
             return None
         try:
             await self._rebuild_one_session(session, config)
             logger.info(
-                "Session %s rebuilt: jev tool %s, safety guardrail %s",
+                "Session %s rebuilt: jev tool %s, safety guardrail %s, model changed %s",
                 session.id,
                 "on" if tool_wanted else "off",
                 "on" if guard_wanted else "off",
+                model_changed,
             )
         except Exception as exc:
             logger.warning(
                 "jev reconcile failed for session %s — keeping existing graph: %s",
                 session.id, exc,
             )
+            if model_changed:
+                return {
+                    "type": "error",
+                    "content": (
+                        "The model was changed, but this chat could not switch to it "
+                        f"({exc}). Nothing was run. Check the model in the picker, "
+                        "or start a new chat."
+                    ),
+                    "metadata": {"error_code": "model_switch_failed"},
+                }
             if guard_wanted and not session.safety_bound:
                 return {
                     "type": "error",
@@ -5078,6 +5167,15 @@ class SessionManager:
         finally:
             _exit_action_scope(scope_token, invocation_token)
 
+    @staticmethod
+    async def _mark_running(session: "Session") -> None:
+        """Flip a session that was waiting on the user (or idle) back to running."""
+        if session.status == "running":
+            return
+        session.status = "running"
+        session.updated_at = datetime.now(timezone.utc)
+        await session.save_meta_async()
+
     async def stream_resume(
         self,
         session_id: str,
@@ -5094,6 +5192,10 @@ class SessionManager:
             yield privacy_err
             return
 
+        # The pause persisted "awaiting_input". The user has answered, so the
+        # run is executing again. Without this the Runs page (and the chat
+        # poll) keep reporting a blocked run until the whole resume ends.
+        await self._mark_running(session)
         scope_token, invocation_token = _enter_action_scope(session)
         try:
             run_config = {"configurable": {"thread_id": session_id}, "recursion_limit": session.recursion_limit}
@@ -5226,6 +5328,7 @@ class SessionManager:
             yield {"type": "memory_search", "content": "Searching memory…"}
 
         session.updated_at = datetime.now(timezone.utc)
+        session.status = "running"
 
         forked_state = await session.graph.aget_state(new_config)
         existing_count = len(forked_state.values.get("messages", []))
