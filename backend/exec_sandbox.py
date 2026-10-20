@@ -76,6 +76,14 @@ def _escape(path: str) -> str:
     return path.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _sb_path(path: Path) -> str:
+    """The path Seatbelt will see. ``/var`` is a symlink to ``/private/var``."""
+    try:
+        return str(path.expanduser().resolve())
+    except OSError:
+        return str(path)
+
+
 def sensitive_read_denies(home: Path | None = None) -> list[Path]:
     home = home or Path.home()
     library = home / "Library"
@@ -101,8 +109,19 @@ def render_profile(
     write_paths: list[Path],
     read_paths: list[Path] | None = None,
     network: bool = False,
+    sensitive_paths: list[Path] | None = None,
+    session_paths: list[Path] | None = None,
+    session_write: bool = True,
 ) -> str:
-    """A deny-default profile. Later rules beat earlier ones (checked on macOS 26)."""
+    """A deny-default profile. Later rules beat earlier ones (checked on macOS 26).
+
+    ``session_paths`` are emitted after the sensitive-path denies. The
+    session files directory lives under ``Application Support/Otto``, so
+    that deny would otherwise hide uploads and the output folder. Only
+    that directory is re-opened. The rest of Otto stays denied.
+    ``allow file*`` does not override an earlier ``deny file-read*``, so
+    the session rules spell read and write out separately.
+    """
     lines = [
         "(version 1)",
         "(deny default)",
@@ -126,13 +145,21 @@ def render_profile(
         '(allow file-write* (subpath "/private/var/folders"))',
         '(allow file-write* (subpath "/tmp"))',
     ]
-    for path in sensitive_read_denies():
-        lines.append(f'(deny file-read* (subpath "{_escape(str(path))}"))')
-        lines.append(f'(deny file-write* (subpath "{_escape(str(path))}"))')
+    sensitive = list(sensitive_paths if sensitive_paths is not None else sensitive_read_denies())
+    for path in sensitive:
+        lines.append(f'(deny file-read* (subpath "{_escape(_sb_path(path))}"))')
+        lines.append(f'(deny file-write* (subpath "{_escape(_sb_path(path))}"))')
     for path in write_paths:
-        lines.append(f'(allow file* (subpath "{_escape(str(path))}"))')
+        lines.append(f'(allow file* (subpath "{_escape(_sb_path(path))}"))')
     for path in read_paths or []:
-        lines.append(f'(allow file-read* (subpath "{_escape(str(path))}"))')
+        lines.append(f'(allow file-read* (subpath "{_escape(_sb_path(path))}"))')
+    # ``file*`` does not override an earlier ``deny file-read*``. Spell the
+    # read and write filters out, or getcwd and cat of an upload still fail.
+    for path in session_paths or []:
+        escaped = _escape(_sb_path(path))
+        lines.append(f'(allow file-read* (subpath "{escaped}"))')
+        if session_write:
+            lines.append(f'(allow file-write* (subpath "{escaped}"))')
     if network:
         lines.append("(allow network*)")
     else:
@@ -155,6 +182,8 @@ def run_shell(
     network: bool = False,
     write_paths: list[Path] | None = None,
     read_paths: list[Path] | None = None,
+    session_paths: list[Path] | None = None,
+    session_write: bool = True,
     profile_dir: Path | None = None,
 ) -> ShellResult:
     """Run ``command`` via ``/bin/sh -c``. Sandboxed when ``sandbox`` is set."""
@@ -190,6 +219,8 @@ def run_shell(
                     write_paths=list(write_paths or [cwd]),
                     read_paths=list(read_paths or []),
                     network=network,
+                    session_paths=list(session_paths or []),
+                    session_write=session_write,
                 ),
                 encoding="utf-8",
             )

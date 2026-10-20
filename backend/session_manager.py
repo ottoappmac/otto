@@ -235,7 +235,15 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                     if raw:
                         write_paths.append(Path(raw).expanduser())
                 read_paths = [Path(raw).expanduser() for raw in extra_read if raw]
-                env = scrub_env(self._env, passthrough=passthrough_names())
+                # scrub_env keeps a fixed name list. SESSION_FILES and
+                # PROJECT_ROOT are session paths, not process environment,
+                # so they have to be passed again or the shell sees them empty.
+                session_env = {
+                    key: self._env[key]
+                    for key in ("SESSION_FILES", "PROJECT_ROOT")
+                    if self._env.get(key)
+                }
+                env = scrub_env(self._env, extra=session_env, passthrough=passthrough_names())
                 result = run_shell(
                     command,
                     cwd=Path(shell_cwd),
@@ -245,6 +253,8 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                     network=network,
                     write_paths=write_paths,
                     read_paths=read_paths,
+                    session_paths=[Path(self.cwd)],
+                    session_write=True,
                     profile_dir=Path(self.cwd),
                 )
                 if result.error:
