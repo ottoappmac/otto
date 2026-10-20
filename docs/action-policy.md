@@ -20,7 +20,11 @@ the orchestrator and to every sub-agent. Settings live on
   that were set to allow drop back to ask, and a session grant does not
   cover them.
 - `execute` and shell triggers run under Seatbelt on macOS when the
-  sandbox is on. The environment is scrubbed of API keys either way.
+  sandbox is on. Sensitive locations such as `~/.ssh` stay denied. The
+  current session's files directory is re-opened after that deny, so
+  the shell can read uploads and write the output folder. The rest of
+  Otto's app-data directory stays denied. The environment is scrubbed
+  of API keys either way.
   If the sandbox is on and cannot be applied, the command does not run.
 - Every gated decision is appended to `action_audit.jsonl` in the Otto
   app-data directory.

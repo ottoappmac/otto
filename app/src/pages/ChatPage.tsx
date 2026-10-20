@@ -474,11 +474,11 @@ export default function ChatPage() {
   }, [clearSession]);
 
   // Classify absolute OS filesystem paths into files vs. folders and queue
-  // them for symlinking into the session (see `createSessionLink` in the
-  // send flow). Shared by Tauri drag-drop below and by pasting a
-  // Finder-copied file/folder (`onPastePaths` on `InlineUrlInput`) — both
-  // hand us real paths rather than Blob content, which is the only way to
-  // represent a pasted/dropped *folder* at all.
+  // them for the send flow. A file is copied into the session (`uploads/`).
+  // A folder is symlinked (`createSessionLink`). Shared by Tauri drag-drop
+  // below and by pasting a Finder-copied file/folder (`onPastePaths` on
+  // `InlineUrlInput`) — both hand us real paths rather than Blob content,
+  // which is the only way to represent a pasted/dropped *folder* at all.
   const queueOsPaths = (entries: { path: string; isDir?: boolean }[]) => {
     const folders: string[] = [];
     const filePaths: string[] = [];
@@ -1689,24 +1689,20 @@ export default function ChatPage() {
         }
       }
 
-      // Symlink dropped files/folders into the session so the agent can
-      // reach them via standard virtual-path tools (ls, read_file, etc.).
-      // We do this instead of sending absolute paths because the deepagents
-      // tools are scoped to the session files dir; absolute paths get
-      // mangled to <session>/<absolute path> and silently fail.
+      // Attach dropped paths inside the session so the agent can reach them
+      // via the virtual-path tools. A file is copied into uploads/; a folder
+      // is symlinked under links/. Absolute host paths are not sent: the
+      // file tools are scoped to the session dir and would mangle them.
       let linkedFiles: string[] = [];
       let linkedFolders: string[] = [];
-      const dropped = [
-        ...filePathsToSend.map((p) => ({ source: p, isFolder: false })),
-        ...foldersToSend.map((p) => ({ source: p, isFolder: true })),
-      ];
+      const dropped = [...filePathsToSend, ...foldersToSend];
       if (dropped.length > 0) {
         try {
           const linkResults = await Promise.all(
-            dropped.map((d) => api.createSessionLink(sid!, d.source)),
+            dropped.map((source) => api.createSessionLink(sid!, source)),
           );
-          linkResults.forEach((r, i) => {
-            if (dropped[i].isFolder || r.is_dir) linkedFolders.push(r.path);
+          linkResults.forEach((r) => {
+            if (r.is_dir) linkedFolders.push(r.path);
             else linkedFiles.push(r.path);
           });
           setPendingFilePaths([]);

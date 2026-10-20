@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import traceback
 from pathlib import Path
 from typing import Any
@@ -628,22 +629,31 @@ async def api_upload_session_file(
     return {"status": "uploaded", "path": file_path, "size": len(content)}
 
 
+def _unique_child(directory: Path, src: Path) -> Path:
+    """A path under *directory* that does not already exist."""
+    base = src.name or "file"
+    target = directory / base
+    n = 1
+    while target.exists():
+        stem, suffix = src.stem or "file", src.suffix
+        target = directory / f"{stem}-{n}{suffix}"
+        n += 1
+    return target
+
+
 @router.post("/{session_id}/links")
 async def api_create_session_link(
     session_id: str,
     body: dict = Body(...),
 ):
-    """Create a symlink inside the session's files dir pointing at an
-    absolute OS path on the host filesystem.
+    """Attach a dropped host path to the session.
 
-    This lets the user drag-and-drop a local file or folder into the chat
-    without copying bytes — the agent sees it via the standard virtual
-    path tools (ls, read_file, view_image, grep, glob).  Read-only by
-    convention; writes through the link follow the symlink to the real
-    file, which is usually undesirable but allowed for now.
+    A file is copied into ``uploads/`` so the session owns the bytes. A
+    later edit does not change the original. A directory is still a
+    symlink under ``links/`` — copying a folder would duplicate the tree.
 
-    Returns the session-relative virtual path (e.g. "/links/photo.png")
-    that can be embedded in the next user message.
+    Returns the session-relative virtual path (``/uploads/photo.png`` or
+    ``/links/notes``) to embed in the next user message.
     """
     src_raw = body.get("source", "")
     if not isinstance(src_raw, str) or not src_raw:
@@ -654,23 +664,26 @@ async def api_create_session_link(
         return JSONResponse(status_code=404, content={"error": f"source not found: {src_raw}"})
 
     files_dir = _session_files_dir(session_id)
+    if src.is_file():
+        uploads_dir = files_dir / "uploads"
+        await asyncio.to_thread(uploads_dir.mkdir, parents=True, exist_ok=True)
+        target = await asyncio.to_thread(_unique_child, uploads_dir, src)
+        # copy2 follows a symlink and writes a regular file.
+        await asyncio.to_thread(shutil.copy2, src, target)
+        asyncio.create_task(_maybe_index_file(target))
+        return {
+            "path": f"/uploads/{target.name}",
+            "is_dir": False,
+            "source": str(src),
+        }
+
     links_dir = files_dir / "links"
     await asyncio.to_thread(links_dir.mkdir, parents=True, exist_ok=True)
-
-    base = src.name or "link"
-    target = links_dir / base
-    n = 1
-    while await asyncio.to_thread(target.exists):
-        stem, suffix = src.stem or "link", src.suffix
-        target = links_dir / f"{stem}-{n}{suffix}"
-        n += 1
-
-    await asyncio.to_thread(target.symlink_to, src)
-    if src.is_file():
-        asyncio.create_task(_maybe_index_file(src))
+    target = await asyncio.to_thread(_unique_child, links_dir, src)
+    await asyncio.to_thread(target.symlink_to, src, True)
     return {
         "path": f"/links/{target.name}",
-        "is_dir": src.is_dir(),
+        "is_dir": True,
         "source": str(src),
     }
 
