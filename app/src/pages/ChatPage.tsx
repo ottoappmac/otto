@@ -452,11 +452,11 @@ export default function ChatPage() {
   }, [clearSession]);
 
   // Classify absolute OS filesystem paths into files vs. folders and queue
-  // them for symlinking into the session (see `createSessionLink` in the
-  // send flow). Shared by Tauri drag-drop below and by pasting a
-  // Finder-copied file/folder (`onPastePaths` on `InlineUrlInput`) — both
-  // hand us real paths rather than Blob content, which is the only way to
-  // represent a pasted/dropped *folder* at all.
+  // them for the send flow. A file is copied into the session (`uploads/`).
+  // A folder is symlinked (`createSessionLink`). Shared by Tauri drag-drop
+  // below and by pasting a Finder-copied file/folder (`onPastePaths` on
+  // `InlineUrlInput`) — both hand us real paths rather than Blob content,
+  // which is the only way to represent a pasted/dropped *folder* at all.
   const queueOsPaths = (entries: { path: string; isDir?: boolean }[]) => {
     const folders: string[] = [];
     const filePaths: string[] = [];
@@ -1537,24 +1537,20 @@ export default function ChatPage() {
         }
       }
 
-      // Symlink dropped files/folders into the session so the agent can
-      // reach them via standard virtual-path tools (ls, read_file, etc.).
-      // We do this instead of sending absolute paths because the deepagents
-      // tools are scoped to the session files dir; absolute paths get
-      // mangled to <session>/<absolute path> and silently fail.
+      // Attach dropped paths inside the session so the agent can reach them
+      // via the virtual-path tools. A file is copied into uploads/; a folder
+      // is symlinked under links/. Absolute host paths are not sent: the
+      // file tools are scoped to the session dir and would mangle them.
       let linkedFiles: string[] = [];
       let linkedFolders: string[] = [];
-      const dropped = [
-        ...filePathsToSend.map((p) => ({ source: p, isFolder: false })),
-        ...foldersToSend.map((p) => ({ source: p, isFolder: true })),
-      ];
+      const dropped = [...filePathsToSend, ...foldersToSend];
       if (dropped.length > 0) {
         try {
           const linkResults = await Promise.all(
-            dropped.map((d) => api.createSessionLink(sid!, d.source)),
+            dropped.map((source) => api.createSessionLink(sid!, source)),
           );
-          linkResults.forEach((r, i) => {
-            if (dropped[i].isFolder || r.is_dir) linkedFolders.push(r.path);
+          linkResults.forEach((r) => {
+            if (r.is_dir) linkedFolders.push(r.path);
             else linkedFiles.push(r.path);
           });
           setPendingFilePaths([]);
@@ -2055,8 +2051,8 @@ export default function ChatPage() {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex flex-col flex-1 min-w-0 h-full">
-      <header data-chat-region="header" className="border-b border-th-border px-6 py-3.5 flex items-center justify-between shrink-0 bg-th-bg-secondary">
-        <div className="flex items-center gap-3">
+      <header data-chat-region="header" className="border-b border-th-border px-6 py-3.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 shrink-0 bg-th-bg-secondary">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
           {currentSessionId && (
             <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium ${connected ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25" : "bg-amber-500/15 text-amber-400 border border-amber-500/25"}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400 animate-pulse"}`} />
@@ -2097,7 +2093,7 @@ export default function ChatPage() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3 ml-auto min-w-0">
           {!currentSessionId && !selectedAgent && (
             <span
               className="text-xs text-th-text-tertiary"
@@ -2814,7 +2810,9 @@ export default function ChatPage() {
 
     {/* All viewable artifacts — side split panel */}
     {openArtifact && (
-      <div className="h-full shrink-0 flex" style={{ width: artifactWidth }}>
+      // The cap keeps the chat column (and its header actions) usable when
+      // the window is narrow; the panel gives up width instead of covering it.
+      <div className="h-full shrink-0 flex" style={{ width: artifactWidth, maxWidth: "calc(100% - 360px)", minWidth: 240 }}>
         {/* Drag handle */}
         <div
           onMouseDown={onArtifactResizeStart}

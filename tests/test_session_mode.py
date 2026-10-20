@@ -329,11 +329,125 @@ def test_plan_prompt_addendum_is_added_once():
     mw = SessionModeMiddleware(lambda: "plan")
     once = mw._with_addendum(_Req("base"))
     assert "PLAN mode" in once.system_message.content
+    assert "creates the file the first time and replaces it" in once.system_message.content
     twice = mw._with_addendum(once)
     assert twice.system_message.content.count("<session_mode>") == 1
 
     agent = SessionModeMiddleware(lambda: "agent")._with_addendum(_Req("base"))
     assert agent.system_message.content == "base"
+
+
+_PLAN = """# Goal
+
+Add a logout button.
+
+## Files
+
+- `app/src/pages/CodePage.tsx`
+
+## Steps
+
+1. Add the button.
+2. Wire it to sign-out.
+
+## Verify
+
+Click logout and confirm the session ends.
+"""
+
+_REVISED = _PLAN + "\n## Risks\n\nThe button can be clicked twice.\n"
+
+
+def test_plan_file_is_created_then_replaced(tmp_path: Path):
+    from backend.session_mode import plan_markdown_path, store_plan_markdown
+
+    files = tmp_path / "files"
+    path = plan_markdown_path(files)
+    assert store_plan_markdown(files, _PLAN) is True
+    assert path.read_text(encoding="utf-8") == _PLAN
+    assert store_plan_markdown(files, _PLAN) is False
+    assert store_plan_markdown(files, f"```markdown\n{_REVISED}```") is True
+    assert "clicked twice" in path.read_text(encoding="utf-8")
+    assert not path.read_text(encoding="utf-8").lstrip().startswith("```")
+
+
+def test_plan_file_ignores_questions_and_short_notes(tmp_path: Path):
+    from backend.session_mode import plan_markdown_path, store_plan_markdown
+
+    files = tmp_path / "files"
+    path = plan_markdown_path(files)
+    assert store_plan_markdown(files, "Which page should the button go on?") is False
+    assert not path.exists()
+
+    store_plan_markdown(files, _PLAN)
+    before = path.read_text(encoding="utf-8")
+    assert store_plan_markdown(files, "Saved the plan.") is False
+    assert store_plan_markdown(files, "Should the button live in the header?") is False
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_finished_plan_turn_writes_the_file(tmp_path: Path, monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from backend.session_manager import SessionManager
+
+    files = tmp_path / "files"
+    files.mkdir()
+    monkeypatch.setattr("backend.session_manager._session_files_dir", lambda _sid: files)
+
+    class _Session:
+        mode = "plan"
+        trigger_source = None
+
+    class _State:
+        values = {
+            "messages": [
+                HumanMessage(content="plan a logout button"),
+                AIMessage(content="Reading the page.", tool_calls=[{"name": "read_file", "args": {}, "id": "1"}]),
+                AIMessage(content=_PLAN),
+            ]
+        }
+
+    manager = SessionManager.__new__(SessionManager)
+    manager._active = {"s1": _Session()}
+    manager._persist_plan("s1", _State())
+    assert (files / "output" / "plan.md").read_text(encoding="utf-8").startswith("# Goal")
+
+    manager._active["s1"].mode = "agent"
+    (files / "output" / "plan.md").write_text("keep\n", encoding="utf-8")
+    manager._persist_plan("s1", _State())
+    assert (files / "output" / "plan.md").read_text(encoding="utf-8") == "keep\n"
+
+
+def test_plan_file_keeps_this_turn_when_the_reply_is_not_a_plan(tmp_path: Path, monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from backend.session_manager import SessionManager
+
+    files = tmp_path / "files"
+    (files / "output").mkdir(parents=True)
+    revised = "# Goal\n\nRevised this turn.\n"
+    (files / "output" / "plan.md").write_text(revised, encoding="utf-8")
+    monkeypatch.setattr("backend.session_manager._session_files_dir", lambda _sid: files)
+
+    class _Session:
+        mode = "plan"
+        trigger_source = None
+
+    class _State:
+        values = {
+            "messages": [
+                HumanMessage(content="plan a logout button"),
+                AIMessage(content=_PLAN),
+                HumanMessage(content="add a risk"),
+                AIMessage(content="Updating the file.", tool_calls=[{"name": "read_file", "args": {}, "id": "2"}]),
+            ]
+        }
+
+    manager = SessionManager.__new__(SessionManager)
+    manager._active = {"s1": _Session()}
+    manager._persist_plan("s1", _State())
+    assert (files / "output" / "plan.md").read_text(encoding="utf-8") == revised
 
 
 def test_list_changes_counts_leftover_debug_markers(tmp_path: Path, monkeypatch):

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FolderPlus, Hammer, MessageSquare, Plus, RotateCcw, Send, Square, Trash2, Undo2, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Copy, FileText, Folder, FolderPlus, Hammer, MessageSquare, PanelRight, Plus, RotateCcw, Send, Square, Trash2, Undo2, X } from "lucide-react";
+import { formatFileSize } from "../utils/formatFileSize";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -26,6 +28,8 @@ import { screenHighRiskCommand } from "../utils/highRiskCommands";
 import { useNotification } from "../context/NotificationContext";
 import { pickDirectory } from "../utils/pickFolder";
 import { FolderGrantDialog } from "../components/action/FolderGrantDialog";
+import { PatchView } from "../components/code/PatchView";
+import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
 import type {
   ChatMessage,
   FolderGrant,
@@ -63,7 +67,7 @@ function storedWidth(key: string, fallback: number, min: number, max: number): n
 const MODES: { id: SessionMode; label: string; hint: string }[] = [
   { id: "agent", label: "Agent", hint: "Reads and edits the project, runs commands." },
   { id: "ask", label: "Ask", hint: "Read-only. Answers questions about the code and cannot change anything." },
-  { id: "plan", label: "Plan", hint: "Read-only in the project. Writes a plan to review, then you build it." },
+  { id: "plan", label: "Plan", hint: "Read-only in the project. Saves the plan to a markdown file, then you build it." },
   { id: "debug", label: "Debug", hint: "Investigates first: reproduce, hypothesize, log, fix, clean up." },
 ];
 
@@ -76,6 +80,62 @@ function modeBadge(mode: SessionMode): { label: string; className: string } | nu
   if (mode === "plan") return { label: "Plan mode", className: "text-violet-300" };
   if (mode === "debug") return { label: "Debug mode", className: "text-amber-300" };
   return null;
+}
+
+const STARTERS: Record<SessionMode, string[]> = {
+  agent: ["Add a small improvement and test it", "Find a bug and fix it with a regression test"],
+  ask: ["Explain how this project is structured", "Where is the main entry point?"],
+  plan: ["Plan how to add a feature", "Plan a refactor of the busiest module"],
+  debug: ["Reproduce and fix a failing test", "Investigate an error I will paste"],
+};
+
+function relTime(iso: string | undefined): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+function describeRevert(result: { restored?: string[]; conflicts?: { path: string; reason: string }[] }): string {
+  const restored = result.restored?.length ?? 0;
+  const conflicts = result.conflicts ?? [];
+  if (conflicts.length === 0) {
+    return restored ? `Restored ${restored} file${restored === 1 ? "" : "s"}.` : "Nothing to restore.";
+  }
+  const first = conflicts[0];
+  return `Restored ${restored}, kept ${conflicts.length}: ${first.path} — ${first.reason}`;
+}
+
+function revertFailure(error: unknown): string {
+  const text = error instanceof Error ? error.message : "";
+  const at = text.indexOf("{");
+  if (at >= 0) {
+    try {
+      const body = JSON.parse(text.slice(at)) as { restored?: string[]; conflicts?: { path: string; reason: string }[]; error?: string };
+      if (body.conflicts || body.restored) return describeRevert(body);
+      if (body.error) return body.error;
+    } catch { /* raw */ }
+  }
+  return apiMessage(error);
+}
+
+function userOrdinal(messages: ChatMessage[], index: number): number {
+  let count = 0;
+  for (let i = 0; i < index && i < messages.length; i += 1) {
+    const item = messages[i];
+    if (item.type === "user" && !item.metadata?.isContext) count += 1;
+  }
+  return count;
+}
+
+function commandExit(text: string): number | null {
+  const match = text.match(/Exit code:\s*(-?\d+)\s*$/);
+  return match ? Number(match[1]) : null;
 }
 
 function apiMessage(error: unknown): string {
@@ -92,7 +152,7 @@ function apiMessage(error: unknown): string {
 
 export default function CodePage() {
   const { sessionId } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [grants, setGrants] = useState<FolderGrant[]>([]);
   const [grantId, setGrantId] = useState<string>(() => localStorage.getItem(LAST_GRANT) || "");
@@ -117,6 +177,28 @@ export default function CodePage() {
   const [mode, setMode] = useState<SessionMode>(() => asMode(localStorage.getItem(LAST_MODE)));
   const [hasPlan, setHasPlan] = useState(false);
   const [planRev, setPlanRev] = useState(0);
+  const [changeTurn, setChangeTurn] = useState<number | null>(null);
+  const [diffTruncated, setDiffTruncated] = useState(false);
+  const [revertNote, setRevertNote] = useState<string | null>(null);
+  const [confirmRevert, setConfirmRevert] = useState(false);
+  const [confirmGrantId, setConfirmGrantId] = useState<string | null>(null);
+  const [keptKey, setKeptKey] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [mentions, setMentions] = useState<{ path: string; is_dir: boolean }[]>([]);
+  const [atOpen, setAtOpen] = useState(false);
+  const [atFilter, setAtFilter] = useState("");
+  const [atIndex, setAtIndex] = useState(0);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingFilePaths, setPendingFilePaths] = useState<string[]>([]);
+  const [pendingFolders, setPendingFolders] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const composerRef = useRef<InlineUrlInputHandle>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const hasAttachments = pendingFiles.length > 0 || pendingFilePaths.length > 0 || pendingFolders.length > 0;
   // Same model selection as Chat: it changes the global model in Settings.
   // A model change does not discard the open coding session; the backend
   // notices the new model at the start of the next turn and rebuilds the
@@ -262,6 +344,11 @@ export default function CodePage() {
     hitlResumeUntilRef.current = 0;
     stickToBottomRef.current = true;
     setNotice(null);
+    setError(null);
+    setChangeTurn(null);
+    setKeptKey(null);
+    setRevertNote(null);
+    setConfirmRevert(false);
     if (!sessionId) {
       sessionLoad.current += 1;
       setSession(null);
@@ -318,22 +405,36 @@ export default function CodePage() {
 
   const refreshChanges = useCallback(() => {
     if (!sessionId || !session?.workspace?.grant_id) return;
-    api.getWorkspaceChanges(sessionId).then(setChanges).catch(() => setChanges(null));
+    const turn = changeTurn ?? undefined;
+    api.getWorkspaceChanges(sessionId, turn).then(setChanges).catch(() => setChanges(null));
     api.getWorkspaceGit(sessionId).then(setGit).catch(() => setGit(null));
-  }, [sessionId, session?.workspace?.grant_id]);
+  }, [sessionId, session?.workspace?.grant_id, changeTurn]);
 
   // A finished tool call is folded into its row, so count them: an edit that
   // completes does not add a message but should refresh the Changes tab.
+  // During a run this waits briefly so a large repo is not diffed on every line.
   const finishedTools = useMemo(() => messages.filter((m) => m.type === "tool_result").length, [messages]);
-  useEffect(() => { refreshChanges(); }, [refreshChanges, messages.length, finishedTools]);
+  useEffect(() => {
+    const delay = streaming ? 750 : 0;
+    const timer = window.setTimeout(() => refreshChanges(), delay);
+    return () => window.clearTimeout(timer);
+  }, [refreshChanges, messages.length, finishedTools, streaming]);
 
+  const changeSig = useMemo(
+    () => (changes?.files || []).map((file) => `${file.status}:${file.path}:${file.added}:${file.deleted}`).join("|"),
+    [changes],
+  );
   useEffect(() => {
     if (!sessionId || !diffPath) {
       setDiff("");
+      setDiffTruncated(false);
       return;
     }
-    api.getWorkspaceDiff(sessionId, diffPath).then((row) => setDiff(row.diff || row.message || "")).catch(() => setDiff(""));
-  }, [sessionId, diffPath, changes]);
+    api.getWorkspaceDiff(sessionId, diffPath, changeTurn ?? undefined).then((row) => {
+      setDiff(row.diff || row.message || "");
+      setDiffTruncated(Boolean(row.truncated));
+    }).catch(() => { setDiff(""); setDiffTruncated(false); });
+  }, [sessionId, diffPath, changeSig, changeTurn]);
 
   const onMessage = useCallback((msg: WSMessage) => {
     const sid = sessionIdRef.current ?? undefined;
@@ -369,7 +470,7 @@ export default function CodePage() {
     setLive((prev) => applyLiveTimelineMessage(prev, msg));
   }, [refreshChanges, refreshPlan, reloadSession, loadSessions, notify, unwatchSession]);
 
-  const { connected, send, sendHitlResponse, waitForConnection } = useWebSocket({
+  const { connected, send, sendEdit, sendContext, sendHitlResponse, waitForConnection } = useWebSocket({
     sessionId: sessionId || null,
     onMessage,
   });
@@ -424,6 +525,48 @@ export default function CodePage() {
   }, [loadSessions, refreshPlan, unwatchSession]);
 
   useEffect(() => {
+    const query = window.matchMedia("(max-width: 1100px)");
+    const apply = () => {
+      setNarrow(query.matches);
+      setProjectsOpen(!query.matches);
+      setInspectorOpen(!query.matches);
+    };
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!atOpen || !sessionId) {
+      setMentions([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      api.searchWorkspace(sessionId, atFilter).then((row) => setMentions(row.paths || [])).catch(() => setMentions([]));
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [atOpen, atFilter, sessionId]);
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (inspector !== "changes") next.set("tab", inspector);
+    else next.delete("tab");
+    if (diffPath) next.set("file", diffPath);
+    else next.delete("file");
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [inspector, diffPath, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    composerRef.current?.focus();
+  }, [sessionId]);
+
+  useEffect(() => {
     if (!sessionId || (!streaming && !awaitingPoll)) return;
     const timer = setInterval(() => { void syncWithServer(); }, 2000);
     return () => clearInterval(timer);
@@ -437,24 +580,53 @@ export default function CodePage() {
     if (reconnected && sessionId) void syncWithServer();
   }, [connected, sessionId, syncWithServer]);
 
-  const output = useMemo(() => messages.flatMap((m) => {
-    if (m.type !== "tool_call" && m.type !== "tool_result") return [];
-    const isExecute = m.content === "execute" || m.metadata?.name === "execute";
-    if (!isExecute) return [];
-    const args = m.metadata?.args as { command?: unknown } | undefined;
-    const command = typeof args?.command === "string" ? args.command : "";
-    // A call row holds the live lines until its result lands in `result`.
-    // A result with no call row keeps the output as its own content.
-    const live = (m.metadata?.liveOutput as string[] | undefined)?.join("\n") ?? "";
-    const text = typeof m.metadata?.result === "string"
-      ? m.metadata.result
-      : m.content !== "execute" ? m.content : live;
-    return [{ id: m.id, command, text, done: m.type === "tool_result" }];
-  }), [messages]);
+  const output = useMemo(() => {
+    const rows: { id: string; command: string; text: string; done: boolean; turn: number }[] = [];
+    let turn = 0;
+    for (const m of messages) {
+      if (m.type === "user" && !m.metadata?.isContext) {
+        turn += 1;
+        continue;
+      }
+      if (m.type !== "tool_call" && m.type !== "tool_result") continue;
+      const isExecute = m.content === "execute" || m.metadata?.name === "execute";
+      if (!isExecute) continue;
+      const args = m.metadata?.args as { command?: unknown } | undefined;
+      const command = typeof args?.command === "string" ? args.command : "";
+      // A call row holds the live lines until its result lands in `result`.
+      // A result with no call row keeps the output as its own content.
+      const live = (m.metadata?.liveOutput as string[] | undefined)?.join("\n") ?? "";
+      const text = typeof m.metadata?.result === "string"
+        ? m.metadata.result
+        : m.content !== "execute" ? m.content : live;
+      rows.push({ id: m.id, command, text, done: m.type === "tool_result", turn });
+    }
+    return rows;
+  }, [messages]);
 
   const thoughtFlags = useMemo(() => computeThoughtFlags(messages), [messages]);
   const latestTodoFlags = useMemo(() => computeLatestTodoFlags(messages), [messages]);
   const renderItems = useMemo(() => buildRenderItems(messages, thoughtFlags), [messages, thoughtFlags]);
+  const restorable = useMemo(() => {
+    const turns = new Set((changes?.checkpoints || []).map((item) => item.user_index).filter((value) => value != null));
+    const indexes = new Set<number>();
+    messages.forEach((message, index) => {
+      if (message.type === "user" && !message.metadata?.isContext && turns.has(userOrdinal(messages, index))) {
+        indexes.add(index);
+      }
+    });
+    return indexes;
+  }, [messages, changes]);
+  const reviewStats = useMemo(() => {
+    const files = changes?.files || [];
+    return {
+      count: files.length,
+      added: files.reduce((sum, file) => sum + (file.added || 0), 0),
+      deleted: files.reduce((sum, file) => sum + (file.deleted || 0), 0),
+    };
+  }, [changes]);
+  const reviewKey = changes?.checkpoint?.turn != null ? String(changes.checkpoint.turn) : null;
+  const showReview = Boolean(sessionId && !streaming && reviewKey && keptKey !== reviewKey && reviewStats.count > 0);
   const errorMessages = useMemo(() => messages.filter((m) => m.type === "error"), [messages]);
   const resolveSubagentModel = useCallback(
     () => ({ label: currentModel || "model", family: "inherit" }),
@@ -507,9 +679,18 @@ export default function CodePage() {
   }, [autoApprove, messages, handleHitlDecision]);
 
   const handleOpenArtifact = useCallback((path: string, fileUrl: string, type: ArtifactType) => {
+    const norm = path.replace(/\\/g, "/").replace(/^\//, "");
+    const hit = (changes?.files || []).find((file) => norm === file.path || norm.endsWith(`/${file.path}`));
+    if (hit) {
+      setDiffPath(hit.path);
+      setInspector("changes");
+      setInspectorOpen(true);
+      return;
+    }
     setArtifact({ path, fileUrl, type });
     setInspector("files");
-  }, []);
+    setInspectorOpen(true);
+  }, [changes]);
 
   const handleStop = async () => {
     const sid = sessionIdRef.current;
@@ -604,30 +785,279 @@ export default function CodePage() {
 
   const submit = () => {
     const text = input.trim();
-    if (!text) return;
-    if (sessionId) {
-      if (sendText(text, mode)) setInput("");
-      return;
-    }
-    void submitToNewSession(text);
+    if (!text && !hasAttachments) return;
+    if (uploading || starting) return;
+    void submitPrepared(text);
   };
 
-  // Typing with no session open starts one in the selected project and sends
-  // the text as its first message. The socket for the new session opens after
-  // the route changes, so the send waits for it (see the effect below).
-  const submitToNewSession = async (text: string) => {
-    if (!grantId || startingRef.current) return;
-    startingRef.current = true;
-    setStarting(true);
-    try {
-      const sid = await startSession();
-      if (!sid) return;
-      pendingSendRef.current = { sid, text, mode };
+  const submitPrepared = async (text: string) => {
+    const deliver = async (sid: string, full: string) => {
+      if (streaming) {
+        if (!sendContext(full)) {
+          setError("Not connected yet.");
+          setInput(full);
+          return;
+        }
+        setMessages((prev) => [...prev, {
+          id: `local-${++msgIdRef.current}`,
+          type: "user",
+          content: full,
+          metadata: { isContext: true, pending: true },
+          timestamp: new Date(),
+          sessionId: sid,
+        }]);
+        setInput("");
+        stickToBottomRef.current = true;
+        return;
+      }
+      if (sid === sessionId) {
+        if (sendText(full, mode)) setInput("");
+        else setInput(full);
+        return;
+      }
+      pendingSendRef.current = { sid, text: full, mode };
       setInput("");
+    };
+    try {
+      if (!sessionId) {
+        if (!grantId || startingRef.current) return;
+        startingRef.current = true;
+        setStarting(true);
+        const sid = await startSession();
+        if (!sid) return;
+        const full = await materializeAttachments(sid, text);
+        // The route effect sends this once the new session is on screen. If
+        // that render already happened during the upload, send from here.
+        pendingSendRef.current = { sid, text: full, mode };
+        setInput("");
+        if (sessionIdRef.current === sid) {
+          pendingSendRef.current = null;
+          await waitForConnection();
+          if (sessionIdRef.current === sid && !sendTextRef.current(full, mode)) setInput(full);
+        }
+        return;
+      }
+      await deliver(sessionId, await materializeAttachments(sessionId, text));
+    } catch (e) {
+      setError(apiMessage(e));
     } finally {
       startingRef.current = false;
       setStarting(false);
     }
+  };
+
+  const runRevert = async (paths?: string[], turn?: number, hunk?: number) => {
+    if (!sessionId) return;
+    setConfirmRevert(false);
+    try {
+      const result = await api.revertWorkspace(sessionId, paths, turn, hunk);
+      const note = describeRevert(result);
+      setRevertNote(note);
+      setToast(note);
+      refreshChanges();
+    } catch (e) {
+      const note = revertFailure(e);
+      setRevertNote(note);
+      setError(note);
+    }
+  };
+
+  const restoreToMessage = useCallback(async (messageIndex: number) => {
+    if (!sessionId || streaming) return;
+    const ordinal = userOrdinal(messages, messageIndex);
+    const checkpoint = (changes?.checkpoints || []).find((item) => item.user_index === ordinal);
+    if (checkpoint?.turn == null) {
+      setError("No checkpoint was taken before that message.");
+      return;
+    }
+    await runRevert(undefined, checkpoint.turn);
+  }, [sessionId, streaming, messages, changes, refreshChanges]);
+
+  const handleEditMessage = useCallback((messageIndex: number, newContent: string, restore?: boolean) => {
+    if (streaming || !sessionId) return;
+    const ordinal = userOrdinal(messages, messageIndex);
+    const go = async () => {
+      if (restore) {
+        const checkpoint = (changes?.checkpoints || []).find((item) => item.user_index === ordinal);
+        if (checkpoint?.turn != null) {
+          try {
+            const result = await api.revertWorkspace(sessionId, undefined, checkpoint.turn);
+            setToast(describeRevert(result));
+          } catch (e) {
+            setError(revertFailure(e));
+            return;
+          }
+        }
+      }
+      const edited: ChatMessage = {
+        id: `local-${++msgIdRef.current}`,
+        type: "user",
+        content: newContent,
+        timestamp: new Date(),
+        sessionId,
+      };
+      setMessages((prev) => prev.slice(0, messageIndex).concat(edited));
+      if (!sendEdit(ordinal, newContent, undefined, mode)) {
+        setError("Not connected to the server. Wait a moment and try again.");
+        return;
+      }
+      setStreaming(true);
+      watchSession(sessionId);
+    };
+    void go();
+  }, [streaming, sessionId, messages, changes, sendEdit, mode, watchSession]);
+
+  const pendingCard = useMemo(
+    () => [...messages].reverse().find((m) => m.type === "hitl_request" && !m.metadata?.resolved),
+    [messages],
+  );
+
+  const decidePending = (kind: "approve" | "reject") => {
+    const card = pendingCard;
+    if (!card || hitlSubmittedRef.current.has(card.id)) return;
+    const risk = card.metadata?.risk as { no_auto_approve?: boolean } | undefined;
+    if (risk?.no_auto_approve) return;
+    const actions = (card.metadata?.action_requests as Array<{ args?: Record<string, unknown> }> | undefined) ?? [];
+    if (actions.some((action) => screenHighRiskCommand(action.args?.command).length > 0)) return;
+    const requestId = typeof card.metadata?.request_id === "string" ? card.metadata.request_id : undefined;
+    handleHitlDecision(card.id, actions.map(() => ({ type: kind })), requestId);
+    composerRef.current?.focus();
+  };
+
+  const insertMention = (path: string) => {
+    composerRef.current?.replaceMention(`@${path} `);
+    setAtOpen(false);
+  };
+
+  // Same queues as Chat: picked or pasted blobs, and dropped files, are
+  // copied into the session on send. Dropped folders are linked.
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const blobs: File[] = [];
+    const nativePaths: string[] = [];
+    for (const file of Array.from(files)) {
+      const native = (file as File & { path?: string }).path;
+      if (typeof native === "string" && (native.startsWith("/") || /^[A-Za-z]:[\\/]/.test(native))) {
+        nativePaths.push(native);
+        continue;
+      }
+      if (file.size === 0) continue;
+      blobs.push(file);
+    }
+    if (nativePaths.length) {
+      const folders: string[] = [];
+      const filePaths: string[] = [];
+      for (const path of nativePaths) {
+        const base = path.replace(/\\/g, "/").split("/").pop() ?? path;
+        if (base.includes(".")) filePaths.push(path);
+        else folders.push(path);
+      }
+      if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
+      if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+    }
+    if (blobs.length) setPendingFiles((prev) => [...prev, ...blobs]);
+  }, []);
+
+  const addDroppedPaths = useCallback((paths: string[]) => {
+    const folders: string[] = [];
+    const filePaths: string[] = [];
+    for (const path of paths) {
+      const base = path.replace(/\\/g, "/").split("/").pop() ?? path;
+      if (base.includes(".")) filePaths.push(path);
+      else folders.push(path);
+    }
+    if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
+    if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+  }, []);
+
+  const tryNativeClipboardPaste = useCallback(async (fallbackFiles: File[] = []) => {
+    try {
+      const data = await api.clipboardFile();
+      const items = data.items?.length
+        ? data.items
+        : data.path
+          ? [{ path: data.path, is_dir: data.is_dir }]
+          : [];
+      if (items.length) {
+        const folders = items.filter((item) => item.is_dir).map((item) => item.path);
+        const filePaths = items.filter((item) => !item.is_dir).map((item) => item.path);
+        if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
+        if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+        return;
+      }
+    } catch {
+      // Backend unreachable — fall through to real blobs.
+    }
+    const blobs = fallbackFiles.filter((file) => file.size > 0);
+    if (blobs.length) addFiles(blobs);
+  }, [addFiles]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    let win: ReturnType<typeof getCurrentWindow>;
+    try {
+      win = getCurrentWindow();
+    } catch {
+      return;
+    }
+    win.onDragDropEvent((event) => {
+      const payload = event.payload as { type: string; paths?: string[] };
+      if (payload.type === "hover") setIsDragging(true);
+      else if (payload.type === "leave" || payload.type === "cancel") setIsDragging(false);
+      else if (payload.type === "drop" && payload.paths) {
+        setIsDragging(false);
+        addDroppedPaths(payload.paths);
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [addDroppedPaths]);
+
+  const materializeAttachments = async (sid: string, text: string): Promise<string> => {
+    const files = [...pendingFiles];
+    const filePaths = [...pendingFilePaths];
+    const folders = [...pendingFolders];
+    let uploaded: string[] = [];
+    if (files.length > 0) {
+      setUploading(true);
+      try {
+        const results = await Promise.all(
+          files.map((file) => api.uploadSessionFile(sid, `uploads/${file.name}`, file)),
+        );
+        uploaded = results.map((row) => `/uploads/${row.path.split("/").pop()}`);
+        setPendingFiles((prev) => prev.filter((file) => !files.includes(file)));
+      } catch (e) {
+        throw new Error(`File upload failed (${e instanceof Error ? e.message : "unknown error"}) — your message was not sent.`);
+      } finally {
+        setUploading(false);
+      }
+    }
+    let linkedFiles: string[] = [];
+    let linkedFolders: string[] = [];
+    const dropped = [...filePaths, ...folders];
+    if (dropped.length > 0) {
+      try {
+        const linkResults = await Promise.all(dropped.map((source) => api.createSessionLink(sid, source)));
+        linkResults.forEach((row) => {
+          if (row.is_dir) linkedFolders.push(row.path);
+          else linkedFiles.push(row.path);
+        });
+        setPendingFilePaths((prev) => prev.filter((path) => !filePaths.includes(path)));
+        setPendingFolders((prev) => prev.filter((path) => !folders.includes(path)));
+      } catch (e) {
+        throw new Error(`Could not attach the dropped files (${e instanceof Error ? e.message : "unknown error"}) — your message was not sent.`);
+      }
+    }
+    const parts: string[] = [];
+    const allFiles = [...uploaded, ...linkedFiles];
+    if (allFiles.length > 0) parts.push(`[Uploaded files: ${allFiles.join(", ")}]`);
+    if (linkedFolders.length > 0) parts.push(`[Context folders: ${linkedFolders.join(", ")}]`);
+    return parts.length > 0 ? `${parts.join("\n")}\n\n${text}` : text;
   };
 
   // First message of a session started from the composer. `sendText` is read
@@ -737,8 +1167,7 @@ export default function CodePage() {
     setInspector("files");
   };
 
-  // When the model answers with a plan in chat instead of saving
-  // /output/plan.md, the final answer of the turn is the plan.
+  // Until Otto has saved /output/plan.md, the final answer of the turn is the plan.
   const planFromChat = useMemo(() => {
     if (mode !== "plan") return "";
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -754,7 +1183,7 @@ export default function CodePage() {
 
   return (
     <div ref={shellRef} className="flex h-full min-h-0 min-w-0 overflow-hidden">
-      <aside style={{ width: leftWidth }} className="shrink-0 border-r border-th-border flex flex-col min-h-0 min-w-0 overflow-hidden bg-th-bg-secondary">
+      {projectsOpen && <aside style={{ width: narrow ? 200 : leftWidth }} className="shrink-0 border-r border-th-border flex flex-col min-h-0 min-w-0 overflow-hidden bg-th-bg-secondary">
         <div className="px-3 py-2 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-wider text-th-text-muted">Projects</span>
           <button type="button" title="Allow a folder" onClick={() => { void allowFolder(); }} className="text-th-text-muted hover:text-th-text-primary">
@@ -776,12 +1205,20 @@ export default function CodePage() {
                 {grant.label}
                 <span className="text-th-text-muted"> {grant.mode === "read" ? "· read" : ""}</span>
               </button>
-              {grant.id === grantId && (
+              {grant.id === grantId && confirmGrantId === grant.id && (
+                <span className="shrink-0 flex items-center gap-1 pr-1 text-[10px]">
+                  <button type="button" className="text-red-400" onClick={() => { setConfirmGrantId(null); void removeProject(grant); }}>
+                    Remove
+                  </button>
+                  <button type="button" className="text-th-text-muted" onClick={() => setConfirmGrantId(null)}>Keep</button>
+                </span>
+              )}
+              {grant.id === grantId && confirmGrantId !== grant.id && (
                 <button
                   type="button"
-                  title="Remove this project"
+                  title="Remove this project. Sessions using it lose the folder. Files on disk stay."
                   aria-label={`Remove ${grant.label}`}
-                  onClick={() => { void removeProject(grant); }}
+                  onClick={() => setConfirmGrantId(grant.id)}
                   className="shrink-0 px-1.5 py-1 text-th-text-muted hover:text-red-400"
                 >
                   <X size={12} />
@@ -808,8 +1245,13 @@ export default function CodePage() {
                 onClick={() => navigate(`/code/${item.id}`)}
                 className={`flex-1 min-w-0 text-left px-2 py-1 text-xs truncate ${item.id === sessionId ? "text-th-text-primary" : "text-th-text-secondary"}`}
               >
-                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${item.status === "running" ? "bg-emerald-400" : "bg-th-text-muted"}`} />
+                <span
+                  className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${item.status === "running" ? "bg-emerald-400" : "bg-th-text-muted"}`}
+                  title={item.status === "running" ? "Running" : "Idle"}
+                />
+                <span className="sr-only">{item.status === "running" ? "Running. " : ""}</span>
                 {item.title || "Untitled"}
+                <span className="text-th-text-muted"> {item.mode && item.mode !== "agent" ? item.mode : ""} {relTime(item.updated_at)}</span>
               </button>
               {confirmDeleteId === item.id ? (
                 <div className="shrink-0 flex items-center gap-1 pr-1.5 text-[11px]">
@@ -842,17 +1284,14 @@ export default function CodePage() {
             </div>
           ))}
         </div>
-        {session?.workspace && sessionId && (
-          <div className="border-t border-th-border max-h-64 overflow-y-auto py-1">
-            <WorkspaceTree
-              sessionId={sessionId}
-              fileUrl={(rel) => api.getWorkspaceFileUrl(sessionId, rel)}
-              onOpenFile={(rel) => openFile(rel)}
-            />
-          </div>
+        {confirmGrantId && (
+          <p className="px-2 py-1 text-[10px] text-th-text-muted border-t border-th-border">
+            {sessions.length} session{sessions.length === 1 ? "" : "s"} will lose this folder.
+            {sessions.some((item) => item.status === "running") ? " A running session will be stopped." : " Files on disk stay."}
+          </p>
         )}
-      </aside>
-      <div
+      </aside>}
+      {projectsOpen && <div
         role="separator"
         aria-orientation="vertical"
         aria-label="Projects width"
@@ -869,7 +1308,7 @@ export default function CodePage() {
           if (event.key === "Home") resizePanel("left", LEFT_DEFAULT);
         }}
         className="w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-sky-400/50 active:bg-sky-400/70 focus:outline-none focus:bg-sky-400/40"
-      />
+      />}
 
       <section className="flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
         <header className="px-4 py-2 border-b border-th-border flex items-center gap-3 text-xs min-w-0 overflow-hidden">
@@ -892,6 +1331,12 @@ export default function CodePage() {
           {session?.workspace?.mode === "read" && <span className="text-sky-300 shrink-0">Read only</span>}
           {session?.workspace?.mode === "write" && mode === "agent" && <span className="text-th-text-muted shrink-0" title="Edits are checkpointed and can be reverted">Editable</span>}
           <span className="ml-auto flex items-center gap-2 shrink-0">
+            <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => setProjectsOpen((open) => !open)} title="Show or hide projects">
+              Projects
+            </button>
+            <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => setInspectorOpen((open) => !open)} title="Show or hide the inspector">
+              <PanelRight size={13} />
+            </button>
             <span className={connected ? "text-emerald-400" : "text-amber-400"}>{connected ? "Live" : "Connecting"}</span>
             {sessionId && (
               <>
@@ -906,7 +1351,17 @@ export default function CodePage() {
             No checkpoint for this turn: {notice}
           </p>
         )}
-        {error && <p className="px-4 py-1 text-xs text-red-400">{error}</p>}
+        {error && (
+          <p className="px-4 py-1 text-xs text-red-400 flex items-center gap-2">
+            <span className="flex-1 min-w-0">{error}</span>
+            <button type="button" className="text-th-text-muted hover:text-th-text-primary" onClick={() => setError(null)} aria-label="Dismiss error">
+              <X size={12} />
+            </button>
+          </p>
+        )}
+        <div className="sr-only" aria-live="polite">
+          {streaming ? "Working" : awaitingPoll ? "Awaiting approval" : toast || revertNote || ""}
+        </div>
         {(changes?.debug_markers ?? 0) > 0 && (
           <p className="px-4 py-1.5 text-[11px] bg-amber-500/10 text-amber-300 border-b border-amber-500/20">
             {changes?.debug_markers} otto-debug log marker{changes?.debug_markers === 1 ? "" : "s"} still in your files. Remove them before you commit.
@@ -920,13 +1375,30 @@ export default function CodePage() {
           }}
         >
           {messages.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-center">
-              <MessageSquare className="text-th-text-muted mb-3" size={28} />
+            <div className="h-full flex flex-col items-center justify-center text-center gap-3">
+              <MessageSquare className="text-th-text-muted" size={28} />
               <p className="text-sm text-th-text-secondary">
                 {sessionId && !session?.workspace
                   ? "This session has no project folder."
-                  : "Describe a change in the allowed folder."}
+                  : mode === "ask" ? "Ask about the code in this folder."
+                    : mode === "plan" ? "Describe what to plan."
+                      : mode === "debug" ? "Describe the bug to reproduce."
+                        : "Describe a change in the allowed folder."}
               </p>
+              {session?.workspace && (
+                <div className="flex flex-col gap-1.5">
+                  {STARTERS[mode].map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      className="text-xs text-th-text-tertiary hover:text-th-text-primary px-3 py-1 rounded-lg border border-th-border"
+                      onClick={() => { setInput(prompt); composerRef.current?.focus(); }}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <MessageList
@@ -936,6 +1408,9 @@ export default function CodePage() {
             isStreaming={streaming}
             currentSessionId={sessionId ?? null}
             resolveSubagentModel={resolveSubagentModel}
+            onEditMessage={handleEditMessage}
+            restorable={restorable}
+            onRestoreMessage={(index) => { void restoreToMessage(index); }}
             onHitlDecision={handleHitlDecision}
             onApproveAllSession={approveAllThisSession}
             onOpenArtifact={handleOpenArtifact}
@@ -950,6 +1425,18 @@ export default function CodePage() {
           )}
           <div ref={messagesEndRef} />
         </div>
+        {showReview && sessionId && (
+          <div className="px-4 py-2 border-t border-th-border flex items-center gap-3 text-xs bg-th-bg-secondary">
+            <span className="text-th-text-secondary flex-1 min-w-0 truncate">
+              {reviewStats.count} file{reviewStats.count === 1 ? "" : "s"} changed
+              <span className="text-emerald-400"> +{reviewStats.added}</span>
+              <span className="text-red-300"> -{reviewStats.deleted}</span>
+            </span>
+            <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => { setInspector("changes"); setInspectorOpen(true); }}>Review</button>
+            <button type="button" className="text-th-text-tertiary hover:text-red-300" onClick={() => { setInspector("changes"); setInspectorOpen(true); setConfirmRevert(true); }}>Undo all</button>
+            <button type="button" className="text-th-text-primary" onClick={() => setKeptKey(reviewKey)}>Keep</button>
+          </div>
+        )}
         {planReady && sessionId && (
           <div className="px-4 py-2 border-t border-th-border flex items-center gap-3 text-xs bg-violet-500/5">
             <span className="text-th-text-secondary flex-1 min-w-0 truncate">Plan ready. Review it, then build.</span>
@@ -960,20 +1447,120 @@ export default function CodePage() {
           </div>
         )}
         <form
-          className="p-3 border-t border-th-border space-y-2"
+          className={`p-3 border-t space-y-2 ${isDragging ? "border-t-2 border-blue-500/60 bg-blue-500/5" : "border-th-border"}`}
           onSubmit={(e) => { e.preventDefault(); submit(); }}
+          onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            if (event.dataTransfer.files?.length) addFiles(event.dataTransfer.files);
+          }}
         >
-          <div className="flex gap-2">
-            <textarea
-              rows={1}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              if (event.target.files) addFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          {hasAttachments && (
+            <div className="flex flex-wrap gap-2">
+              {pendingFiles.map((file, index) => (
+                <div key={`file-${file.name}-${index}`} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-th-inset-bg border border-th-border rounded-lg text-xs text-th-text-secondary">
+                  <FileText size={12} className="text-th-text-muted shrink-0" />
+                  <span className="truncate max-w-[150px] text-th-text-primary">{file.name}</span>
+                  <span className="text-th-text-muted">{formatFileSize(file.size)}</span>
+                  <button type="button" onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== index))} className="text-th-text-muted hover:text-th-text-primary" aria-label={`Remove ${file.name}`}>
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+              {pendingFilePaths.map((path, index) => {
+                const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
+                return (
+                  <div key={`path-${path}-${index}`} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-th-inset-bg border border-th-border rounded-lg text-xs text-th-text-secondary" title={path}>
+                    <FileText size={12} className="text-th-text-muted shrink-0" />
+                    <span className="truncate max-w-[150px] text-th-text-primary">{name}</span>
+                    <button type="button" onClick={() => setPendingFilePaths((prev) => prev.filter((_, i) => i !== index))} className="text-th-text-muted hover:text-th-text-primary" aria-label={`Remove ${name}`}>
+                      <X size={11} />
+                    </button>
+                  </div>
+                );
+              })}
+              {pendingFolders.map((path, index) => {
+                const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
+                return (
+                  <div key={`folder-${path}-${index}`} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-400" title={path}>
+                    <Folder size={12} className="shrink-0" />
+                    <span className="truncate max-w-[150px] font-medium">{name}</span>
+                    <button type="button" onClick={() => setPendingFolders((prev) => prev.filter((_, i) => i !== index))} className="text-blue-400/60 hover:text-blue-300" aria-label={`Remove ${name}`}>
+                      <X size={11} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {isDragging && (
+            <div className="flex items-center justify-center py-3 border-2 border-dashed border-blue-500/40 rounded-xl">
+              <span className="text-sm text-blue-400">Drop files or folders here</span>
+            </div>
+          )}
+          <div className="flex gap-2 relative">
+            {atOpen && mentions.length > 0 && (
+              <div className="absolute bottom-full left-0 mb-1 z-20 w-full max-w-md rounded-lg border border-th-border bg-th-bg-secondary shadow-lg overflow-hidden">
+                {mentions.slice(0, 8).map((item, index) => (
+                  <button
+                    key={item.path}
+                    type="button"
+                    className={`w-full text-left px-3 py-1.5 text-xs font-mono truncate ${index === atIndex ? "bg-th-surface-hover text-th-text-primary" : "text-th-text-secondary"}`}
+                    onMouseDown={(event) => { event.preventDefault(); insertMention(item.path); }}
+                  >
+                    {item.is_dir ? "dir  " : "file "}{item.path}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="relative flex-1 min-w-0">
+            <InlineUrlInput
+              ref={composerRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              ref={(el) => {
-                if (!el) return;
-                el.style.height = "auto";
-                el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+              onChange={setInput}
+              onMentionChange={(query) => {
+                if (query === null) { setAtOpen(false); return; }
+                setAtOpen(true);
+                setAtFilter(query);
+                setAtIndex(0);
               }}
+              onPasteFiles={(files) => { addFiles(files); return true; }}
+              onPastePaths={(paths) => { addDroppedPaths(paths); return true; }}
+              onPasteMaybeFolder={(files) => { void tryNativeClipboardPaste(files); }}
               onKeyDown={(e) => {
+                if (atOpen && mentions.length > 0) {
+                  if (e.key === "ArrowDown") { e.preventDefault(); setAtIndex((index) => Math.min(index + 1, Math.min(mentions.length, 8) - 1)); return; }
+                  if (e.key === "ArrowUp") { e.preventDefault(); setAtIndex((index) => Math.max(index - 1, 0)); return; }
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); insertMention(mentions[Math.min(atIndex, mentions.length - 1)].path); return; }
+                  if (e.key === "Escape") { e.preventDefault(); setAtOpen(false); return; }
+                }
+                if (e.key === "Escape" && streaming) {
+                  e.preventDefault();
+                  void handleStop();
+                  return;
+                }
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && pendingCard) {
+                  e.preventDefault();
+                  decidePending("approve");
+                  return;
+                }
+                if ((e.metaKey || e.ctrlKey) && e.key === "Backspace" && pendingCard) {
+                  e.preventDefault();
+                  decidePending("reject");
+                  return;
+                }
                 if (e.key === "Tab" && e.shiftKey) {
                   e.preventDefault();
                   cycleMode();
@@ -986,16 +1573,29 @@ export default function CodePage() {
                 }
               }}
               placeholder={
-                !sessionId ? (grantId ? `Describe a change to start a session in ${selected?.label ?? "this project"}` : "Allow a project folder to start")
+                streaming ? "Add context for the running turn…"
+                  : hasAttachments ? "Add a message about your files…"
+                  : !sessionId ? (grantId ? `Describe a change to start a session in ${selected?.label ?? "this project"}` : "Allow a project folder to start")
                   : !session?.workspace ? "No project folder on this session"
                     : mode === "ask" ? "Ask about the code…"
                       : mode === "plan" ? "Describe what to plan…"
                         : mode === "debug" ? "Describe the bug…"
-                          : "Ask for a change…"
+                          : "Ask for a change…  @ to mention a file"
               }
               disabled={!sessionId && (!grantId || starting)}
-              className="flex-1 bg-th-inset-bg border border-th-border rounded-xl px-3 py-2 text-sm text-th-text-primary resize-none overflow-y-auto"
+              className="w-full bg-th-inset-bg border border-th-border rounded-xl pl-9 pr-3 py-2 text-sm text-th-text-primary overflow-y-auto max-h-[200px]"
             />
+            <button
+              type="button"
+              title="Attach files"
+              aria-label="Attach files"
+              disabled={uploading || (!sessionId && !grantId)}
+              onClick={() => fileInputRef.current?.click()}
+              className="absolute left-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg flex items-center justify-center text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover disabled:opacity-40"
+            >
+              <Plus size={16} />
+            </button>
+            </div>
             {streaming ? (
               <button
                 type="button"
@@ -1007,7 +1607,7 @@ export default function CodePage() {
                 <Square size={14} />
               </button>
             ) : (
-              <button type="submit" title="Send" aria-label="Send" disabled={(!sessionId && (!grantId || starting)) || !input.trim()} className="px-3 rounded-xl border border-th-border text-th-text-secondary disabled:opacity-40">
+              <button type="submit" title="Send" aria-label="Send" disabled={uploading || (!sessionId && (!grantId || starting)) || (!input.trim() && !hasAttachments)} className="px-3 rounded-xl border border-th-border text-th-text-secondary disabled:opacity-40">
                 <Send size={14} />
               </button>
             )}
@@ -1030,6 +1630,7 @@ export default function CodePage() {
               ))}
             </div>
             {(mode === "plan" || mode === "debug") && <span className="text-[11px] text-th-text-muted shrink-0">Deep</span>}
+            {pendingCard && <span className="text-[11px] text-th-text-muted shrink-0" title="High-risk cards still wait for a click">⌘⏎ allow · ⌘⌫ reject</span>}
             <div className="ml-auto max-w-full" title={isModelBusy ? "Model is loading" : "Changes the model for all chats"}>
               <ModelPicker align="right" value={currentModel} models={availableModels} onChange={(id) => { void handleModelChange(id); }} />
             </div>
@@ -1037,7 +1638,7 @@ export default function CodePage() {
         </form>
       </section>
 
-      <div
+      {inspectorOpen && <div
         role="separator"
         aria-orientation="vertical"
         aria-label="Inspector width"
@@ -1054,13 +1655,15 @@ export default function CodePage() {
           if (event.key === "Home") resizePanel("right", RIGHT_DEFAULT);
         }}
         className="w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-sky-400/50 active:bg-sky-400/70 focus:outline-none focus:bg-sky-400/40"
-      />
-      <aside style={{ width: rightWidth }} className="shrink-0 border-l border-th-border flex flex-col min-h-0 overflow-hidden">
-        <div className="flex border-b border-th-border text-[11px]">
+      />}
+      {inspectorOpen && <aside style={{ width: narrow ? 280 : rightWidth }} className="shrink-0 border-l border-th-border flex flex-col min-h-0 overflow-hidden">
+        <div className="flex border-b border-th-border text-[11px]" role="tablist" aria-label="Inspector">
           {(["changes", "files", "output", "timeline", ...(hasPlan || mode === "plan" ? ["plan"] : [])] as Inspector[]).map((tab) => (
             <button
               key={tab}
               type="button"
+              role="tab"
+              aria-selected={inspector === tab}
               onClick={() => setInspector(tab)}
               className={`flex-1 py-2 capitalize ${inspector === tab ? "text-th-text-primary border-b border-sky-400" : "text-th-text-muted"}`}
             >
@@ -1071,39 +1674,79 @@ export default function CodePage() {
         <div className="flex-1 overflow-y-auto p-3 text-xs">
           {inspector === "changes" && (
             <div className="space-y-2">
+              {(changes?.checkpoints?.length || 0) > 1 && (
+                <label className="flex items-center gap-2 text-th-text-muted">
+                  Turn
+                  <select
+                    className="bg-th-inset-bg border border-th-border rounded px-1 py-0.5 text-th-text-primary"
+                    value={changeTurn ?? changes?.checkpoint?.turn ?? ""}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      const latest = changes?.checkpoints?.[changes.checkpoints.length - 1]?.turn;
+                      setChangeTurn(next === latest ? null : next);
+                      setDiffPath(null);
+                    }}
+                  >
+                    {(changes?.checkpoints || []).map((item) => (
+                      <option key={item.turn} value={item.turn}>Turn {item.turn}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {changes?.message && <p className="text-th-text-muted">{changes.message}</p>}
+              {sessionId && (changes?.files?.length || 0) > 0 && (
+                confirmRevert ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-th-text-secondary">Revert this turn?</span>
+                    <button type="button" className="text-red-400" onClick={() => { void runRevert(undefined, changeTurn ?? undefined); }}>Revert</button>
+                    <button type="button" className="text-th-text-muted" onClick={() => setConfirmRevert(false)}>Cancel</button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-th-text-muted hover:text-th-text-primary"
+                    onClick={() => setConfirmRevert(true)}
+                  >
+                    <RotateCcw size={12} /> Revert turn
+                  </button>
+                )
+              )}
+              {revertNote && <p className="text-th-text-secondary">{revertNote}</p>}
+              {(changes?.files || []).length === 0 && !changes?.message && (
+                <p className="text-th-text-muted">No changes since this checkpoint.</p>
+              )}
               {(changes?.files || []).map((file) => (
                 <div key={file.path} className="flex items-center gap-2">
-                  <button type="button" className="truncate text-left flex-1 font-mono hover:text-th-text-primary text-th-text-secondary" onClick={() => setDiffPath(file.path)}>
+                  <span className={`shrink-0 uppercase text-[10px] ${file.status === "added" ? "text-emerald-400" : file.status === "deleted" ? "text-red-300" : "text-amber-300"}`}>
+                    {file.status === "added" ? "A" : file.status === "deleted" ? "D" : "M"}
+                  </span>
+                  <button type="button" className="truncate text-left flex-1 font-mono hover:text-th-text-primary text-th-text-secondary" onClick={() => setDiffPath(diffPath === file.path ? null : file.path)}>
                     {file.path}
                   </button>
+                  {file.added != null && <span className="shrink-0 text-emerald-400">+{file.added}</span>}
+                  {file.deleted != null && <span className="shrink-0 text-red-300">-{file.deleted}</span>}
+                  {file.status !== "deleted" && (
+                    <button type="button" className="shrink-0 text-th-text-muted hover:text-th-text-primary" title="Open file" onClick={() => openFile(file.path)}>
+                      Open
+                    </button>
+                  )}
                   <button
                     type="button"
                     title={`Revert ${file.path}`}
                     aria-label={`Revert ${file.path}`}
                     className="shrink-0 p-1 rounded text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
-                    onClick={() => {
-                      if (!sessionId) return;
-                      api.revertWorkspace(sessionId, [file.path]).then(() => refreshChanges()).catch((e) => setError(apiMessage(e)));
-                    }}
+                    onClick={() => { void runRevert([file.path], changeTurn ?? undefined); }}
                   >
                     <Undo2 size={13} />
                   </button>
                 </div>
               ))}
               {diff && (
-                <pre className="whitespace-pre-wrap font-mono text-[11px] bg-th-inset-bg rounded-lg p-2 text-th-text-secondary">{diff}</pre>
-              )}
-              {sessionId && (changes?.files?.length || 0) > 0 && (
-                <button
-                  type="button"
-                  title="Revert all changes from this turn"
-                  aria-label="Revert all changes from this turn"
-                  className="p-1 rounded text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
-                  onClick={() => api.revertWorkspace(sessionId).then(() => refreshChanges()).catch((e) => setError(apiMessage(e)))}
-                >
-                  <RotateCcw size={13} />
-                </button>
+                <PatchView
+                  diff={diff}
+                  truncated={diffTruncated}
+                  onUndoHunk={sessionId && diffPath && changes?.git ? (hunk) => { void runRevert([diffPath], changeTurn ?? undefined, hunk); } : undefined}
+                />
               )}
             </div>
           )}
@@ -1126,12 +1769,32 @@ export default function CodePage() {
           {inspector === "output" && (
             <div className="space-y-3">
               {output.length === 0 && <p className="text-th-text-muted">Command output shows up here.</p>}
-              {output.map((item) => (
-                <div key={item.id} className="space-y-1">
-                  {item.command && <p className="font-mono text-[11px] text-th-text-muted break-all">$ {item.command}</p>}
-                  <pre className="whitespace-pre-wrap font-mono text-[11px] text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.text || (item.done ? "(no output)" : "Running…")}</pre>
-                </div>
-              ))}
+              {output.map((item, index) => {
+                const exit = item.done ? commandExit(item.text) : null;
+                const showTurn = item.turn > 0 && (index === 0 || output[index - 1].turn !== item.turn);
+                return (
+                  <div key={item.id} className="space-y-1">
+                    {showTurn && <p className="text-[10px] uppercase tracking-wider text-th-text-muted pt-1">Turn {item.turn}</p>}
+                    <div className="flex items-center gap-2">
+                      {item.command && <p className="font-mono text-[11px] text-th-text-muted break-all flex-1">$ {item.command}</p>}
+                      {item.done && exit != null && (
+                        <span className={exit === 0 ? "text-emerald-400" : "text-red-300"}>
+                          {exit === 0 ? "passed" : `exit ${exit}`}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="text-th-text-muted hover:text-th-text-primary"
+                        title="Copy output"
+                        onClick={() => { void navigator.clipboard.writeText(item.text || ""); }}
+                      >
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                    <pre className="whitespace-pre-wrap font-mono text-[11px] text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.text || (item.done ? "(no output)" : "Running…")}</pre>
+                  </div>
+                );
+              })}
             </div>
           )}
           {inspector === "timeline" && <RunTimeline events={events} />}
@@ -1155,7 +1818,12 @@ export default function CodePage() {
             )
           )}
         </div>
-      </aside>
+      </aside>}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-30 max-w-sm rounded-lg border border-th-border bg-th-bg-secondary px-3 py-2 text-xs text-th-text-primary shadow-lg" role="status">
+          {toast}
+        </div>
+      )}
       {preview && (
         <FolderGrantDialog
           preview={preview}

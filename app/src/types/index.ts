@@ -237,10 +237,20 @@ export interface WorkspaceChange {
   debug_markers?: number;
 }
 
+export interface WorkspaceCheckpoint {
+  id: string;
+  turn: number;
+  ref?: string;
+  commit?: string;
+  kind?: string;
+  /** User-message ordinal this snapshot was taken before. */
+  user_index?: number | null;
+}
+
 export interface WorkspaceChanges {
   git: boolean;
-  checkpoint: { id: string; turn: number; ref: string; commit: string } | null;
-  checkpoints?: { id: string; turn: number }[];
+  checkpoint: WorkspaceCheckpoint | null;
+  checkpoints?: WorkspaceCheckpoint[];
   files: WorkspaceChange[];
   message?: string;
   /** Total leftover otto-debug lines across the changed files. */

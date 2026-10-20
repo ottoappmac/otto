@@ -26,7 +26,10 @@ the orchestrator and to every sub-agent. Settings live on
   shell's write paths.
 - `execute` and shell triggers run under Seatbelt on macOS when the
   sandbox is on. Sensitive locations such as `~/.ssh` stay denied even
-  when a write grant covers a parent directory. The environment is
+  when a write grant covers a parent directory. The current session's
+  files directory is re-opened after that deny, so the shell can read
+  uploads there. Ask still does not get write access to it. The rest of
+  Otto's app-data directory stays denied. The environment is
   scrubbed of API keys either way. Shell reads are not limited to the
   allowed folder.
   If the sandbox is on and cannot be applied, the command does not run.

@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ChevronUp, ChevronRight, ChevronDown, Bot,
-  Pencil, Check, CheckCheck, X, ShieldAlert, ShieldCheck, ShieldX, Terminal, Image,
+  Pencil, Check, CheckCheck, X, ShieldAlert, ShieldCheck, ShieldX, Terminal, Image, RotateCcw,
   MessageCircleQuestion, Send, Circle, Loader2, CheckCircle2, XCircle,
   AlertTriangle, KeyRound, ExternalLink, Globe, FileText, MessageSquarePlus,
   ScrollText, Folder, Link2,
@@ -29,9 +29,12 @@ interface MessageBubbleProps {
   isThought?: boolean;
   isLatestTodo?: boolean;
   canEdit?: boolean;
+  /** This user message has a file checkpoint that can be restored. */
+  canRestore?: boolean;
   inGroup?: boolean;
   sessionId?: string;
-  onEdit?: (content: string) => void;
+  onEdit?: (content: string, restore?: boolean) => void;
+  onRestore?: () => void;
   onHitlDecision?: (decisions: Array<Record<string, unknown>>) => void;
   onApproveAllSession?: (decisions: Array<Record<string, unknown>>) => void;
   onOpenArtifact?: (path: string, fileUrl: string, type: ArtifactType) => void;
@@ -266,9 +269,10 @@ export function ThoughtBlock({ messages }: { messages: ChatMessage[] }) {
   );
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, isThought, isLatestTodo, canEdit, inGroup, sessionId, onEdit, onHitlDecision, onApproveAllSession, onOpenArtifact }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, isThought, isLatestTodo, canEdit, canRestore, inGroup, sessionId, onEdit, onRestore, onHitlDecision, onApproveAllSession, onOpenArtifact }: MessageBubbleProps) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [restoreFiles, setRestoreFiles] = useState(false);
   const [editText, setEditText] = useState("");
   const editRef = useRef<HTMLTextAreaElement>(null);
   const [hitlEditing, setHitlEditing] = useState(false);
@@ -325,13 +329,25 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
             </div>
           )}
           {canEdit && !editing && (
-            <button
-              onClick={() => { setEditText(message.content); setEditing(true); setTimeout(() => editRef.current?.focus(), 50); }}
-              className="absolute -left-8 top-2.5 opacity-0 group-hover/msg:opacity-100 transition-opacity text-th-text-muted hover:text-th-text-primary"
-              title="Edit & resend"
-            >
-              <Pencil size={13} />
-            </button>
+            <div className="absolute -left-8 top-2.5 flex flex-col gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+              <button
+                onClick={() => { setEditText(message.content); setRestoreFiles(false); setEditing(true); setTimeout(() => editRef.current?.focus(), 50); }}
+                className="text-th-text-muted hover:text-th-text-primary"
+                title="Edit & resend"
+              >
+                <Pencil size={13} />
+              </button>
+              {canRestore && onRestore && (
+                <button
+                  type="button"
+                  onClick={onRestore}
+                  className="text-th-text-muted hover:text-th-text-primary"
+                  title="Restore files to before this message"
+                >
+                  <RotateCcw size={13} />
+                </button>
+              )}
+            </div>
           )}
           <div className="bg-th-surface-hover border border-th-border rounded-2xl rounded-br-sm px-4 py-3">
             {editing ? (
@@ -342,11 +358,21 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (editText.trim()) { onEdit?.(editText.trim()); setEditing(false); } }
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (editText.trim()) { onEdit?.(editText.trim(), restoreFiles); setEditing(false); } }
                     if (e.key === "Escape") setEditing(false);
                   }}
                 />
-                <div className="flex gap-2 justify-end">
+                <div className="flex gap-2 justify-end items-center">
+                  {canRestore && (
+                    <label className="mr-auto flex items-center gap-1.5 text-[11px] text-th-text-tertiary">
+                      <input
+                        type="checkbox"
+                        checked={restoreFiles}
+                        onChange={(e) => setRestoreFiles(e.target.checked)}
+                      />
+                      Also restore files
+                    </label>
+                  )}
                   <button
                     onClick={() => setEditing(false)}
                     className="px-2.5 py-1 text-xs text-th-text-tertiary hover:text-th-text-primary rounded-md hover:bg-th-surface-hover transition-colors"
@@ -354,7 +380,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                     Cancel
                   </button>
                   <button
-                    onClick={() => { if (editText.trim()) { onEdit?.(editText.trim()); setEditing(false); } }}
+                    onClick={() => { if (editText.trim()) { onEdit?.(editText.trim(), restoreFiles); setEditing(false); } }}
                     disabled={!editText.trim()}
                     className="px-2.5 py-1 text-xs text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-colors flex items-center gap-1 disabled:opacity-40"
                   >

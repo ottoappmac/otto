@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -163,6 +164,37 @@ def list_tree(
         "truncated": truncated,
         "skipped": skipped,
     }
+
+
+_MAX_SEARCH = 20
+_MAX_SEARCH_VISITS = 8000
+
+
+def search_paths(workspace: SessionWorkspace, query: str, limit: int = _MAX_SEARCH) -> list[dict[str, Any]]:
+    """Find files and folders whose path contains *query*. Skips heavy directories."""
+    root = Path(workspace.host_path).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"Mapped folder not found: {workspace.host_path}")
+    needle = query.replace("\\", "/").strip().lower()
+    if not needle:
+        return []
+    cap = max(1, min(limit, _MAX_SEARCH))
+    found: list[dict[str, Any]] = []
+    visits = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        visits += 1
+        if visits > _MAX_SEARCH_VISITS:
+            break
+        dirnames[:] = sorted(name for name in dirnames if not skip_dir_name(name))
+        base = Path(dirpath)
+        for name in dirnames + sorted(filenames):
+            rel = (base / name).relative_to(root).as_posix()
+            if needle not in rel.lower():
+                continue
+            found.append({"path": rel, "is_dir": name in dirnames})
+            if len(found) >= cap:
+                return found
+    return found
 
 
 def read_file(workspace: SessionWorkspace, rel: str) -> dict[str, Any]:

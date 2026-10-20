@@ -80,6 +80,24 @@ def test_view_image_question_uses_prompt_and_is_not_cached(tmp_path: Path):
     assert _load_desc_cache(tmp_path) == {}
 
 
+def test_view_image_transcodes_heic_to_jpeg(tmp_path: Path, monkeypatch):
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "photo.heic").write_bytes(b"not-a-real-heic")
+    jpeg = _png_bytes()
+
+    def _fake_convert(source: Path, files_dir: Path) -> bytes:
+        assert source.name == "photo.heic"
+        assert files_dir == tmp_path
+        return jpeg
+
+    monkeypatch.setattr("backend.file_tools._heic_to_jpeg", _fake_convert)
+    view_image = _get_view_image(tmp_path, _FakeVLM())
+    out = view_image.invoke({"file_path": "/uploads/photo.heic"})
+    assert "image/jpeg" in out[0]["text"]
+    assert "not a supported image type" not in out[0]["text"]
+
+
 def test_view_image_question_not_cached_even_after_generic(tmp_path: Path):
     rel = _write_upload(tmp_path)
     vlm = _FakeVLM()

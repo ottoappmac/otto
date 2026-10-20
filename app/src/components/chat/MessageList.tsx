@@ -18,7 +18,10 @@ interface MessageListProps {
   currentSessionId: string | null;
   resolveSubagentModel: (name: string) => { label: string; family: string };
   /** Omit to render user messages without the edit control. */
-  onEditMessage?: (idx: number, content: string) => void;
+  onEditMessage?: (idx: number, content: string, restore?: boolean) => void;
+  /** Message indexes whose turn has a file checkpoint. */
+  restorable?: Set<number>;
+  onRestoreMessage?: (idx: number) => void;
   onHitlDecision: (id: string, decisions: Array<Record<string, unknown>>, requestId?: string) => void;
   onApproveAllSession?: (id: string, decisions: Array<Record<string, unknown>>) => void;
   onOpenArtifact: (path: string, fileUrl: string, type: ArtifactType) => void;
@@ -32,6 +35,8 @@ export const MessageList = memo(function MessageList({
   currentSessionId,
   resolveSubagentModel,
   onEditMessage,
+  restorable,
+  onRestoreMessage,
   onHitlDecision,
   onApproveAllSession,
   onOpenArtifact,
@@ -70,8 +75,10 @@ export const MessageList = memo(function MessageList({
             isThought={thoughtFlags[idx]}
             isLatestTodo={latestTodoFlags[idx]}
             canEdit={Boolean(onEditMessage) && msg.type === "user" && !isStreaming}
+            canRestore={Boolean(onRestoreMessage) && restorable?.has(idx)}
             sessionId={currentSessionId ?? undefined}
-            onEdit={onEditMessage ? (newContent) => onEditMessage(idx, newContent) : undefined}
+            onEdit={onEditMessage ? (newContent, restore) => onEditMessage(idx, newContent, restore) : undefined}
+            onRestore={onRestoreMessage ? () => onRestoreMessage(idx) : undefined}
             onHitlDecision={(decisions) => onHitlDecision(
               msg.id,
               decisions,

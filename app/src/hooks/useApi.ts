@@ -1010,16 +1010,29 @@ export const api = {
     request<SessionInfo[]>(`/api/sessions?workspace_grant_id=${encodeURIComponent(grantId)}`),
   getWorkspaceGit: (id: string) =>
     request<WorkspaceGitStatus>(`/api/sessions/${id}/workspace/git`),
-  getWorkspaceChanges: (id: string) =>
-    request<WorkspaceChanges>(`/api/sessions/${id}/workspace/changes`),
-  getWorkspaceDiff: (id: string, path: string) =>
-    request<{ path: string; diff: string; truncated?: boolean; message?: string }>(
-      `/api/sessions/${id}/workspace/diff?path=${encodeURIComponent(path)}`,
+  getWorkspaceChanges: (id: string, turn?: number) =>
+    request<WorkspaceChanges>(
+      `/api/sessions/${id}/workspace/changes${turn != null ? `?turn=${turn}` : ""}`,
     ),
-  revertWorkspace: (id: string, paths?: string[]) =>
+  getWorkspaceDiff: (id: string, path: string, turn?: number) =>
+    request<{ path: string; diff: string; truncated?: boolean; message?: string; hunks?: number }>(
+      `/api/sessions/${id}/workspace/diff?path=${encodeURIComponent(path)}${turn != null ? `&turn=${turn}` : ""}`,
+    ),
+  searchWorkspace: (id: string, query: string) =>
+    request<{ paths: { path: string; is_dir: boolean }[] }>(
+      `/api/sessions/${id}/workspace/search?q=${encodeURIComponent(query)}`,
+    ),
+  revertWorkspace: (id: string, paths?: string[], turn?: number, hunk?: number) =>
     request<{ restored: string[]; conflicts: { path: string; reason: string }[] }>(
       `/api/sessions/${id}/workspace/revert`,
-      { method: "POST", body: JSON.stringify({ paths: paths ?? null }) },
+      {
+        method: "POST",
+        body: JSON.stringify({
+          paths: paths ?? null,
+          turn: turn ?? null,
+          ...(hunk != null ? { hunk } : {}),
+        }),
+      },
     ),
   clearSessionWorkspace: (id: string) =>
     request<SessionInfo>(`/api/sessions/${id}/workspace`, { method: "DELETE" }),

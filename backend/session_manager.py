@@ -246,8 +246,8 @@ def _make_backend(
                 if Path(full).resolve().is_relative_to(Path(project_root).resolve()):
                     if plan:
                         return (
-                            "Plan mode is read-only. Write the plan to /output/plan.md "
-                            "and ask the user to switch to Agent mode to make changes."
+                            "Plan mode is read-only. The plan is saved to /output/plan.md. "
+                            "Switch to Agent mode to make changes."
                         )
                     return "This folder is shared read-only. Edits are blocked."
             except (OSError, ValueError):
@@ -402,7 +402,15 @@ def _make_backend(
                     if raw:
                         write_paths.append(Path(raw).expanduser())
                 read_paths = [Path(raw).expanduser() for raw in extra_read if raw]
-                env = scrub_env(self._env, passthrough=passthrough_names())
+                # scrub_env keeps a fixed name list. SESSION_FILES and
+                # PROJECT_ROOT are session paths, not process environment,
+                # so they have to be passed again or the shell sees them empty.
+                session_env = {
+                    key: self._env[key]
+                    for key in ("SESSION_FILES", "PROJECT_ROOT")
+                    if self._env.get(key)
+                }
+                env = scrub_env(self._env, extra=session_env, passthrough=passthrough_names())
                 result = run_shell(
                     command,
                     cwd=Path(shell_cwd),
@@ -412,6 +420,8 @@ def _make_backend(
                     network=network,
                     write_paths=write_paths,
                     read_paths=read_paths,
+                    session_paths=[Path(self.cwd)],
+                    session_write=self._current_mode() != "ask",
                     profile_dir=Path(self.cwd),
                 )
                 if result.error:
@@ -4298,8 +4308,21 @@ class SessionManager:
         from backend.session_transcript import delete_transcript
 
         session = self._active.pop(session_id, None)
-        if session:
+        host: str | None = None
+        if session is not None:
+            if session.workspace is not None:
+                host = session.workspace.host_path
             await session.close()
+        else:
+            meta_path = _sessions_dir() / f"{session_id}.json"
+            if meta_path.is_file():
+                try:
+                    data = json.loads(meta_path.read_text(encoding="utf-8"))
+                    raw = data.get("workspace") if isinstance(data, dict) else None
+                    if isinstance(raw, dict) and isinstance(raw.get("host_path"), str):
+                        host = raw["host_path"]
+                except (OSError, json.JSONDecodeError):
+                    host = None
 
         def _remove_session_files() -> None:
             meta_path = _sessions_dir() / f"{session_id}.json"
@@ -4312,6 +4335,8 @@ class SessionManager:
             delete_transcript(session_id)
             if session_dir.exists():
                 shutil.rmtree(session_dir, ignore_errors=True)
+            from backend.workspace_git import forget_session
+            forget_session(session_id, Path(host) if host else None)
 
         await asyncio.to_thread(_remove_session_files)
         try:
@@ -4953,6 +4978,7 @@ class SessionManager:
         # Mark run complete and compute cost
         now = datetime.now(timezone.utc)
         session.status = "completed"
+        self._persist_plan(session_id, state)
         session.finished_at = now
         session.duration_ms = int((now - session.created_at).total_seconds() * 1000)
         try:
@@ -4981,6 +5007,21 @@ class SessionManager:
         await self._maybe_start_deferred_distill()
         await self._maybe_evaluate_run(session)
         yield {"type": "done", "content": ""}
+
+    def _persist_plan(self, session_id: str, state: Any) -> None:
+        """Create or replace ``output/plan.md`` from a finished Plan turn."""
+        from backend.session_mode import final_assistant_text, store_plan_markdown
+
+        try:
+            if self._mode_for(session_id) != "plan":
+                return
+            values = getattr(state, "values", None) or {}
+            messages = values.get("messages") if isinstance(values, dict) else None
+            reply = final_assistant_text(messages or [])
+            if store_plan_markdown(_session_files_dir(session_id), reply):
+                logger.info("plan file updated session=%s", session_id)
+        except Exception:
+            logger.debug("plan file save failed", exc_info=True)
 
     async def _maybe_evaluate_run(self, session: "Session") -> None:
         """Kick off a background end-of-run evaluation when enabled.

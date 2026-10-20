@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import traceback
 from pathlib import Path
 from typing import Any
@@ -642,22 +643,31 @@ async def api_upload_session_file(
     return {"status": "uploaded", "path": file_path, "size": len(content)}
 
 
+def _unique_child(directory: Path, src: Path) -> Path:
+    """A path under *directory* that does not already exist."""
+    base = src.name or "file"
+    target = directory / base
+    n = 1
+    while target.exists():
+        stem, suffix = src.stem or "file", src.suffix
+        target = directory / f"{stem}-{n}{suffix}"
+        n += 1
+    return target
+
+
 @router.post("/{session_id}/links")
 async def api_create_session_link(
     session_id: str,
     body: dict = Body(...),
 ):
-    """Create a symlink inside the session's files dir pointing at an
-    absolute OS path on the host filesystem.
+    """Attach a dropped host path to the session.
 
-    This lets the user drag-and-drop a local file or folder into the chat
-    without copying bytes — the agent sees it via the standard virtual
-    path tools (ls, read_file, view_image, grep, glob).  Read-only by
-    convention; writes through the link follow the symlink to the real
-    file, which is usually undesirable but allowed for now.
+    A file is copied into ``uploads/`` so the session owns the bytes. A
+    later edit does not change the original. A directory is still a
+    symlink under ``links/`` — copying a folder would duplicate the tree.
 
-    Returns the session-relative virtual path (e.g. "/links/photo.png")
-    that can be embedded in the next user message.
+    Returns the session-relative virtual path (``/uploads/photo.png`` or
+    ``/links/notes``) to embed in the next user message.
     """
     src_raw = body.get("source", "")
     if not isinstance(src_raw, str) or not src_raw:
@@ -668,51 +678,28 @@ async def api_create_session_link(
         return JSONResponse(status_code=404, content={"error": f"source not found: {src_raw}"})
 
     files_dir = _session_files_dir(session_id)
+    if src.is_file():
+        uploads_dir = files_dir / "uploads"
+        await asyncio.to_thread(uploads_dir.mkdir, parents=True, exist_ok=True)
+        target = await asyncio.to_thread(_unique_child, uploads_dir, src)
+        # copy2 follows a symlink and writes a regular file.
+        await asyncio.to_thread(shutil.copy2, src, target)
+        asyncio.create_task(_maybe_index_file(target))
+        return {
+            "path": f"/uploads/{target.name}",
+            "is_dir": False,
+            "source": str(src),
+        }
+
     links_dir = files_dir / "links"
     await asyncio.to_thread(links_dir.mkdir, parents=True, exist_ok=True)
-
-    base = src.name or "link"
-    target = links_dir / base
-    n = 1
-    while await asyncio.to_thread(target.exists):
-        stem, suffix = src.stem or "link", src.suffix
-        target = links_dir / f"{stem}-{n}{suffix}"
-        n += 1
-
-    await asyncio.to_thread(target.symlink_to, src)
-    if src.is_file():
-        asyncio.create_task(_maybe_index_file(src))
-        await _remember_linked_file(session_id, str(src))
+    target = await asyncio.to_thread(_unique_child, links_dir, src)
+    await asyncio.to_thread(target.symlink_to, src, True)
     return {
         "path": f"/links/{target.name}",
-        "is_dir": src.is_dir(),
+        "is_dir": True,
         "source": str(src),
     }
-
-
-async def _remember_linked_file(session_id: str, realpath: str) -> None:
-    """Record a file the user dropped, so file tools may read that exact path."""
-    session = session_mgr.get_session(session_id)
-    if session is not None:
-        if realpath not in session.linked_files:
-            session.linked_files.append(realpath)
-            await session.save_meta_async()
-        return
-    meta_path = _sessions_dir() / f"{session_id}.json"
-    if not meta_path.exists():
-        return
-
-    def _write() -> None:
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
-        current = data.get("linked_files")
-        if not isinstance(current, list):
-            current = []
-        if realpath not in current:
-            current.append(realpath)
-        data["linked_files"] = current
-        meta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-    await asyncio.to_thread(_write)
 
 
 async def _bind_workspace(session_id: str, real: Path, grant):
@@ -841,6 +828,20 @@ async def api_workspace_tree(session_id: str, path: str = ""):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
+@router.get("/{session_id}/workspace/search")
+async def api_workspace_search(session_id: str, q: str = "", limit: int = 20):
+    from backend.workspace import search_paths
+
+    workspace = _read_workspace_meta(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    try:
+        rows = await asyncio.to_thread(search_paths, workspace, q, limit)
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    return {"paths": rows}
+
+
 @router.get("/{session_id}/workspace/file")
 async def api_workspace_file(session_id: str, path: str):
     from backend.workspace import read_file
@@ -914,13 +915,27 @@ async def api_workspace_revert(session_id: str, body: dict = Body(...)):
     if paths is not None and not isinstance(paths, list):
         return JSONResponse(status_code=400, content={"error": "paths must be a list"})
     turn = body.get("turn")
-    result = await asyncio.to_thread(
-        revert,
-        workspace,
-        session_id,
-        paths=paths,
-        turn=turn if isinstance(turn, int) else None,
-    )
+    hunk = body.get("hunk")
+    if isinstance(hunk, int):
+        if not paths or len(paths) != 1 or not isinstance(paths[0], str):
+            return JSONResponse(status_code=400, content={"error": "hunk undo needs one path"})
+        from backend.workspace_git import revert_hunk
+        result = await asyncio.to_thread(
+            revert_hunk,
+            workspace,
+            session_id,
+            path=paths[0],
+            hunk=hunk,
+            turn=turn if isinstance(turn, int) else None,
+        )
+    else:
+        result = await asyncio.to_thread(
+            revert,
+            workspace,
+            session_id,
+            paths=paths,
+            turn=turn if isinstance(turn, int) else None,
+        )
     if result.get("conflicts") and not result.get("restored"):
         return JSONResponse(status_code=409, content=result)
     return result
