@@ -78,6 +78,7 @@ app/src-tauri/resources/playwright-mcp/
 
 # Frontend build output
 app/dist/
+*.tsbuildinfo
 
 # PyInstaller artifacts
 *.spec

@@ -40,8 +40,11 @@ the orchestrator and to every sub-agent. Settings live on
   there would run later, and the instruction files are loaded into the
   prompt rather than rewritten by the agent.
   Read-only commands (`git status`, `ls`, `cat`, and the same kind of
-  command) skip the shell approval card. A folder can also store command
-  prefixes, such as `npm test*`, that skip the card for that project.
+  command) skip the shell approval card. That shortcut applies to
+  `execute` only. A folder can also store command prefixes, such as
+  `npm test*`, that skip the card for `execute` in that project.
+  `git_commit`, `git_branch`, `git_worktree`, `git_pr`, `project_check`,
+  `process_start`, and `process_stop` are shell and still ask.
   The global network switch still defaults off. A folder can turn shell
   network on for itself, and a host list limits that traffic to those hosts.
 - Ask and Plan mode (Code tab) are read-only. The policy denies
