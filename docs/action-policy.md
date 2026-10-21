@@ -28,10 +28,10 @@ the orchestrator and to every sub-agent. Settings live on
   sandbox is on. Sensitive locations such as `~/.ssh` stay denied even
   when a write grant covers a parent directory. The current session's
   files directory is re-opened after that deny, so the shell can read
-  uploads there. Ask still does not get write access to it. The rest of
-  Otto's app-data directory stays denied. The environment is
-  scrubbed of API keys either way. Shell reads are not limited to the
-  allowed folder.
+  uploads and write the output folder. Ask still does not get write
+  access to it. The rest of Otto's app-data directory stays denied.
+  The environment is scrubbed of API keys either way. Shell reads are
+  not limited to the allowed folder.
   If the sandbox is on and cannot be applied, the command does not run.
   Inside a folder you allowed, the sandbox also denies writes to `.git`,
   `.vscode`, `.idea`, `.gitattributes`, `.envrc`, `AGENTS.md`, and

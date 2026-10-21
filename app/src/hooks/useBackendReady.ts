@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { API_BASE } from "../config/apiBase";
+import { API_BASE, refreshApiToken } from "../config/apiBase";
 const STARTUP_POLL_MS = 500;
 const HEARTBEAT_MS = 5_000;
 const MAX_WAIT_MS = 300_000; // 5 min — AV scanning PyInstaller bundle on first launch can be slow
@@ -26,6 +26,9 @@ export function useBackendReady() {
             setReady(true);
             return;
           }
+          // The backend is up but rejected our token: it was regenerated
+          // after the app read the previous launch's file.
+          if (res.status === 401 && (await refreshApiToken())) continue;
         } catch {
           // backend not up yet
         }
@@ -58,6 +61,8 @@ export function useBackendReady() {
         if (res.ok) {
           failures = 0;
           setBackendReachable(true);
+        } else if (res.status === 401 && (await refreshApiToken())) {
+          // Backend restarted with a new token; the next beat will succeed.
         } else {
           failures++;
         }

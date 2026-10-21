@@ -189,8 +189,10 @@ def render_profile(
 
     ``session_paths`` are emitted after those denies. The session files
     directory lives under ``Application Support/Otto``, so the Otto deny
-    would otherwise hide the uploads the user just dropped. Only that
+    would otherwise hide uploads and the output folder. Only that
     directory is re-opened. The rest of Otto stays denied.
+    ``allow file*`` does not override an earlier ``deny file-read*``, so
+    the session rules spell read and write out separately.
     """
     lines = [
         "(version 1)",
