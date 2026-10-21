@@ -76,11 +76,15 @@ class PlaywrightSnapshotPruningMiddleware(AgentMiddleware):
         max_messages: Safety-net cap on total messages sent to the LLM.
             Only triggers for very long sessions.  Sourced from
             ``Environment.get_playwright_max_messages()`` via ``DeepAgent``.
+            ``None`` or ``0`` disables the cap. Servers with a prefix cache
+            (oMLX) need that: a sliding window drops the oldest message on
+            every step, so everything after the system prompt shifts and the
+            cached prefix never matches again.
     """
 
     name: str = "playwright_snapshot_pruning"
 
-    def __init__(self, max_messages: int = _DEFAULT_MAX_MESSAGES) -> None:
+    def __init__(self, max_messages: int | None = _DEFAULT_MAX_MESSAGES) -> None:
         self.max_messages = max_messages
 
     async def awrap_model_call(self, request, handler):
@@ -213,9 +217,9 @@ def _prune_snapshots(messages: list) -> list:
     return messages
 
 
-def _trim_to_window(messages: list, max_messages: int) -> list:
+def _trim_to_window(messages: list, max_messages: int | None) -> list:
     """Keep only the last *max_messages* messages, preserving System/Human messages."""
-    if len(messages) <= max_messages:
+    if not max_messages or len(messages) <= max_messages:
         return messages
     prefix = [m for m in messages if isinstance(m, (SystemMessage, HumanMessage))]
     remaining = [m for m in messages if not isinstance(m, (SystemMessage, HumanMessage))]
@@ -282,7 +286,7 @@ def _detect_error_loop(messages: list) -> list:
     return messages
 
 
-def _prune(messages: list, max_messages: int) -> list:
+def _prune(messages: list, max_messages: int | None) -> list:
     """Apply aggressive compaction, error-loop detection, then safety-net trim."""
     messages = _prune_snapshots(messages)
     messages = _detect_error_loop(messages)

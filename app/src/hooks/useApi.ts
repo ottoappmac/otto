@@ -42,6 +42,10 @@ import type {
   ScheduleStatusPoll,
   SessionInfo,
   SkillSpec,
+  FolderGrant,
+  FolderGrantPreview,
+  WorkspaceChanges,
+  WorkspaceGitStatus,
   WorkspaceTreeResult,
   TriggerRunsResponse,
   TriggerSpec,
@@ -57,7 +61,7 @@ import type {
   DistillUpload,
   DistillValidateReport,
 } from "../types";
-import { API_BASE } from "../config/apiBase";
+import { API_BASE, withApiToken } from "../config/apiBase";
 
 export interface MemoryHitsResponse {
   total_injections: number;
@@ -931,7 +935,9 @@ export const api = {
       `/api/sessions/${id}/files`,
     ),
   getSessionFileUrl: (id: string, filePath: string) =>
-    `${API_BASE}/api/sessions/${id}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
+    withApiToken(
+      `${API_BASE}/api/sessions/${id}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
+    ),
   deleteSessionFile: (id: string, filePath: string) =>
     request<{ status: string }>(`/api/sessions/${id}/files/${filePath}`, {
       method: "DELETE",
@@ -969,11 +975,77 @@ export const api = {
     return res.json();
   },
 
-  setSessionWorkspace: (id: string, source: string) =>
+  setSessionWorkspace: (id: string, source: string, mode: "read" | "write" = "write") =>
     request<SessionInfo>(`/api/sessions/${id}/workspace`, {
       method: "POST",
-      body: JSON.stringify({ source }),
+      body: JSON.stringify({ source, mode }),
     }),
+  setSessionMode: (id: string, mode: "agent" | "ask" | "plan" | "debug") =>
+    request<SessionInfo>(`/api/sessions/${id}/mode`, {
+      method: "PATCH",
+      body: JSON.stringify({ mode }),
+    }),
+  bindSessionWorkspace: (id: string, grantId: string) =>
+    request<SessionInfo>(`/api/sessions/${id}/workspace`, {
+      method: "PUT",
+      body: JSON.stringify({ grant_id: grantId }),
+    }),
+  previewFolderGrant: (path: string) =>
+    request<FolderGrantPreview>("/api/workspace-grants/preview", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  listFolderGrants: () => request<FolderGrant[]>("/api/workspace-grants"),
+  createFolderGrant: (path: string, mode: "read" | "write") =>
+    request<FolderGrant>("/api/workspace-grants", {
+      method: "POST",
+      body: JSON.stringify({ path, mode }),
+    }),
+  updateFolderGrant: (id: string, patch: { mode?: "read" | "write"; network?: boolean; network_hosts?: string[]; shell_allow?: string[] }) =>
+    request<FolderGrant>(`/api/workspace-grants/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  pathKinds: (paths: string[]) =>
+    request<{ paths: { path: string; is_dir: boolean; is_file: boolean }[] }>("/api/workspace-grants/kinds", {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    }),
+  saveWorkspaceFile: (id: string, path: string, content: string) =>
+    request<{ path: string; bytes: number }>(`/api/sessions/${id}/workspace/file`, {
+      method: "PUT",
+      body: JSON.stringify({ path, content }),
+    }),
+  revokeFolderGrant: (id: string) =>
+    request<{ status: string }>(`/api/workspace-grants/${id}`, { method: "DELETE" }),
+  listSessionsForGrant: (grantId: string) =>
+    request<SessionInfo[]>(`/api/sessions?workspace_grant_id=${encodeURIComponent(grantId)}`),
+  getWorkspaceGit: (id: string) =>
+    request<WorkspaceGitStatus>(`/api/sessions/${id}/workspace/git`),
+  getWorkspaceChanges: (id: string, turn?: number) =>
+    request<WorkspaceChanges>(
+      `/api/sessions/${id}/workspace/changes${turn != null ? `?turn=${turn}` : ""}`,
+    ),
+  getWorkspaceDiff: (id: string, path: string, turn?: number) =>
+    request<{ path: string; diff: string; truncated?: boolean; message?: string; hunks?: number }>(
+      `/api/sessions/${id}/workspace/diff?path=${encodeURIComponent(path)}${turn != null ? `&turn=${turn}` : ""}`,
+    ),
+  searchWorkspace: (id: string, query: string) =>
+    request<{ paths: { path: string; is_dir: boolean }[] }>(
+      `/api/sessions/${id}/workspace/search?q=${encodeURIComponent(query)}`,
+    ),
+  revertWorkspace: (id: string, paths?: string[], turn?: number, hunk?: number) =>
+    request<{ restored: string[]; conflicts: { path: string; reason: string }[] }>(
+      `/api/sessions/${id}/workspace/revert`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          paths: paths ?? null,
+          turn: turn ?? null,
+          ...(hunk != null ? { hunk } : {}),
+        }),
+      },
+    ),
   clearSessionWorkspace: (id: string) =>
     request<SessionInfo>(`/api/sessions/${id}/workspace`, { method: "DELETE" }),
   getWorkspaceTree: (id: string, path = "") =>
@@ -981,7 +1053,9 @@ export const api = {
       `/api/sessions/${id}/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`,
     ),
   getWorkspaceFileUrl: (id: string, relPath: string) =>
-    `${API_BASE}/api/sessions/${id}/workspace/file?path=${encodeURIComponent(relPath)}`,
+    withApiToken(
+      `${API_BASE}/api/sessions/${id}/workspace/file?path=${encodeURIComponent(relPath)}`,
+    ),
 
   /**
    * The file or folder currently on the host OS clipboard, or an empty path

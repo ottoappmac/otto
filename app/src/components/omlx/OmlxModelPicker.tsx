@@ -15,7 +15,7 @@ export function FitBadge({ fits }: { fits: string }) {
   };
   const { label, cls } = map[fits] ?? map["unknown"];
   return (
-    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${cls}`}>
+    <span className={`text-2xs font-semibold px-1.5 py-0.5 rounded border ${cls}`}>
       {label}
     </span>
   );
@@ -156,16 +156,16 @@ export function OmlxModelPicker({
     >
       <div className="min-w-0 flex-1 space-y-0.5">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <p className="text-[11px] font-medium text-th-text-primary truncate">{m.display_name}</p>
+          <p className="text-2xs font-medium text-th-text-primary truncate">{m.display_name}</p>
           <FitBadge fits={m.fits} />
           {m.already_cached && (
-            <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            <span className="text-2xs font-semibold px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               Cached
             </span>
           )}
         </div>
-        {m.blurb && <p className="text-[10px] text-th-text-muted">{m.blurb}</p>}
-        <p className="text-[9px] text-th-text-tertiary">
+        {m.blurb && <p className="text-2xs text-th-text-muted">{m.blurb}</p>}
+        <p className="text-2xs text-th-text-tertiary">
           {m.weights_gb} GB · {m.params_b}B · {m.quant}
         </p>
       </div>
@@ -174,7 +174,7 @@ export function OmlxModelPicker({
         disabled={loadingId !== null || m.fits === "over"}
         onClick={() => void handleLoad(m.repo_id)}
         title={m.fits === "over" ? "Model may exceed available RAM" : undefined}
-        className="shrink-0 px-2.5 py-1 rounded-md bg-th-tab-active-bg text-white text-[10px] font-medium disabled:opacity-50 inline-flex items-center gap-1"
+        className="shrink-0 px-2.5 py-1 rounded-md bg-th-tab-active-bg text-white text-2xs font-medium disabled:opacity-50 inline-flex items-center gap-1"
       >
         {loadingId === m.repo_id
           ? <Loader2 size={10} className="animate-spin" />
@@ -202,7 +202,7 @@ export function OmlxModelPicker({
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`flex-1 px-3 py-2 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors
+            className={`flex-1 px-3 py-2 text-2xs font-medium flex items-center justify-center gap-1.5 transition-colors
               ${tab === t.id
                 ? "bg-th-tab-active-bg text-white"
                 : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover/20"}`}
@@ -224,23 +224,23 @@ export function OmlxModelPicker({
                 placeholder="Search cached models…"
                 value={librarySearch}
                 onChange={(e) => setLibrarySearch(e.target.value)}
-                className="w-full pl-7 pr-3 py-1.5 text-[11px] rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
+                className="w-full pl-7 pr-3 py-1.5 text-2xs rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
               />
             </div>
             <div className="space-y-2 max-h-60 overflow-y-auto">
             {loadingLocal && (
-              <div className="flex items-center gap-2 text-[11px] text-th-text-muted py-4 justify-center">
+              <div className="flex items-center gap-2 text-2xs text-th-text-muted py-4 justify-center">
                 <Loader2 size={12} className="animate-spin" />
                 Scanning HF cache…
               </div>
             )}
             {scanError && (
-              <p className="text-[10px] text-red-400">{scanError}</p>
+              <p className="text-2xs text-red-400">{scanError}</p>
             )}
             {!loadingLocal && localModels?.length === 0 && (
               <div className="py-4 text-center space-y-1">
-                <p className="text-[11px] text-th-text-secondary">No models found in your HF cache.</p>
-                <p className="text-[10px] text-th-text-muted">
+                <p className="text-2xs text-th-text-secondary">No models found in your HF cache.</p>
+                <p className="text-2xs text-th-text-muted">
                   Switch to <strong>Discover</strong> to download a model, or set a custom cache path in Settings → MLX.
                 </p>
               </div>
@@ -252,7 +252,7 @@ export function OmlxModelPicker({
               );
               if (visible.length === 0 && s) {
                 return (
-                  <p className="text-[11px] text-th-text-muted text-center py-4">
+                  <p className="text-2xs text-th-text-muted text-center py-4">
                     No models match "{librarySearch}".
                   </p>
                 );
@@ -263,11 +263,11 @@ export function OmlxModelPicker({
                 className="flex items-center justify-between gap-2 rounded-lg border border-th-border bg-th-surface px-3 py-2"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-medium text-th-text-primary truncate">{m.repo_id}</p>
+                  <p className="text-2xs font-medium text-th-text-primary truncate">{m.repo_id}</p>
                   <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="text-[9px] text-th-text-muted">{m.size_gb} GB</span>
+                    <span className="text-2xs text-th-text-muted">{m.size_gb} GB</span>
                     {m.is_mlx && (
-                      <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                      <span className="text-2xs font-semibold px-1 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
                         MLX
                       </span>
                     )}
@@ -277,7 +277,7 @@ export function OmlxModelPicker({
                   type="button"
                   disabled={loadingId !== null}
                   onClick={() => void handleLoad(m.repo_id)}
-                  className="shrink-0 px-2.5 py-1 rounded-md bg-th-tab-active-bg text-white text-[10px] font-medium disabled:opacity-50 inline-flex items-center gap-1"
+                  className="shrink-0 px-2.5 py-1 rounded-md bg-th-tab-active-bg text-white text-2xs font-medium disabled:opacity-50 inline-flex items-center gap-1"
                 >
                   {loadingId === m.repo_id
                     ? <Loader2 size={10} className="animate-spin" />
@@ -301,12 +301,12 @@ export function OmlxModelPicker({
                 placeholder="Search models…"
                 value={discoverSearch}
                 onChange={(e) => setDiscoverSearch(e.target.value)}
-                className="w-full pl-7 pr-3 py-1.5 text-[11px] rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
+                className="w-full pl-7 pr-3 py-1.5 text-2xs rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
               />
             </div>
             <div className="space-y-2 max-h-60 overflow-y-auto">
             {loadingCatalog && (
-              <div className="flex items-center gap-2 text-[11px] text-th-text-muted py-4 justify-center">
+              <div className="flex items-center gap-2 text-2xs text-th-text-muted py-4 justify-center">
                 <Loader2 size={12} className="animate-spin" />
                 Scoring models against your hardware…
               </div>
@@ -323,24 +323,24 @@ export function OmlxModelPicker({
               return (
                 <>
                   {hubSearching && (
-                    <div className="flex items-center gap-2 text-[11px] text-th-text-muted py-4 justify-center">
+                    <div className="flex items-center gap-2 text-2xs text-th-text-muted py-4 justify-center">
                       <Loader2 size={12} className="animate-spin" />
                       Searching Hugging Face…
                     </div>
                   )}
                   {!hubSearching && hubResults.length > 0 && (
                     <>
-                      <p className="text-[9px] text-th-text-tertiary px-0.5">
+                      <p className="text-2xs text-th-text-tertiary px-0.5">
                         Results from Hugging Face
                       </p>
                       {hubResults.map(renderCatalogRow)}
                     </>
                   )}
                   {hubError && (
-                    <p className="text-[10px] text-red-400 text-center py-2">{hubError}</p>
+                    <p className="text-2xs text-red-400 text-center py-2">{hubError}</p>
                   )}
                   {!hubSearching && !hubError && hubResults.length === 0 && discoverSearch.trim() && (
-                    <p className="text-[11px] text-th-text-muted text-center py-4">
+                    <p className="text-2xs text-th-text-muted text-center py-4">
                       No models match "{discoverSearch}".{discoverSearch.trim().length < 2 && " Type a bit more to search Hugging Face."}
                     </p>
                   )}
@@ -371,7 +371,7 @@ export function OmlxModelPicker({
         {/* ── Custom tab ── */}
         {tab === "custom" && (
           <div className="space-y-3 py-1">
-            <p className="text-[11px] text-th-text-secondary leading-relaxed">
+            <p className="text-2xs text-th-text-secondary leading-relaxed">
               Enter a Hugging Face repo ID (e.g.{" "}
               <span className="font-mono">mlx-community/Qwen3-8B-4bit</span>) or an absolute path
               to a local model directory.
@@ -382,13 +382,13 @@ export function OmlxModelPicker({
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value)}
                 placeholder="mlx-community/your-model or /path/to/model"
-                className="flex-1 px-3 py-2 rounded-lg border border-th-border bg-th-surface text-[11px] text-th-text-primary placeholder:text-th-text-muted"
+                className="flex-1 px-3 py-2 rounded-lg border border-th-border bg-th-surface text-2xs text-th-text-primary placeholder:text-th-text-muted"
               />
               <button
                 type="button"
                 disabled={!customInput.trim() || loadingId !== null}
                 onClick={() => void handleLoad(customInput.trim())}
-                className="shrink-0 px-3 py-2 rounded-lg bg-th-tab-active-bg text-white text-[10px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
+                className="shrink-0 px-3 py-2 rounded-lg bg-th-tab-active-bg text-white text-2xs font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
               >
                 {loadingId === customInput.trim()
                   ? <Loader2 size={10} className="animate-spin" />
@@ -396,7 +396,7 @@ export function OmlxModelPicker({
                 Load
               </button>
             </div>
-            <p className="text-[10px] text-th-text-muted leading-relaxed">
+            <p className="text-2xs text-th-text-muted leading-relaxed">
               {serverRunning
                 ? <>Otto will stop the current server and restart it with{" "}
                     <span className="font-mono">omlx serve --model &lt;id&gt;</span>.

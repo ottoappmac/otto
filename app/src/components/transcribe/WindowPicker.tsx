@@ -78,7 +78,7 @@ export default function WindowPicker({
               <h2 className="text-[13px] font-semibold text-th-text-primary leading-tight">
                 {title} a window
               </h2>
-              <p className="text-[11px] text-th-text-muted leading-tight">
+              <p className="text-2xs text-th-text-muted leading-tight">
                 Choose an open window
               </p>
             </div>
@@ -129,7 +129,7 @@ export default function WindowPicker({
           ) : (
             <>
               {noThumbs && (
-                <div className="mb-3 p-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300 flex items-center gap-2">
+                <div className="mb-3 p-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-2xs text-amber-300 flex items-center gap-2">
                   <ShieldAlert size={13} className="shrink-0" />
                   <span className="flex-1">
                     Grant Screen Recording permission to see window previews and
@@ -166,7 +166,7 @@ export default function WindowPicker({
                         {win.app}
                       </p>
                       {win.title && (
-                        <p className="text-[11px] text-th-text-muted truncate">
+                        <p className="text-2xs text-th-text-muted truncate">
                           {win.title}
                         </p>
                       )}

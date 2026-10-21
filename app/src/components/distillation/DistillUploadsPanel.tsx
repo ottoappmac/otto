@@ -27,15 +27,15 @@ function formatWhen(iso: string): string {
 function FormatSpec() {
   return (
     <div className="rounded-xl border border-th-border bg-th-inset-bg/40 px-4 py-3 space-y-2">
-      <p className="text-[11px] font-medium text-th-text-secondary">Expected format</p>
-      <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+      <p className="text-2xs font-medium text-th-text-secondary">Expected format</p>
+      <p className="text-2xs text-th-text-tertiary leading-relaxed">
         One JSON object per line (JSONL), or a JSON array. Each example needs a{" "}
-        <code className="font-mono text-[10px]">messages</code> array with at least one{" "}
-        <code className="font-mono text-[10px]">user</code> and one{" "}
-        <code className="font-mono text-[10px]">assistant</code> turn. ShareGPT{" "}
-        <code className="font-mono text-[10px]">conversations</code> is also accepted.
+        <code className="font-mono text-2xs">messages</code> array with at least one{" "}
+        <code className="font-mono text-2xs">user</code> and one{" "}
+        <code className="font-mono text-2xs">assistant</code> turn. ShareGPT{" "}
+        <code className="font-mono text-2xs">conversations</code> is also accepted.
       </p>
-      <pre className="text-[10px] font-mono text-th-text-muted bg-black/30 rounded-lg p-2.5 overflow-x-auto leading-relaxed">{`{"messages":[{"role":"user","content":"Summarize this"},{"role":"assistant","content":"…"}]}`}</pre>
+      <pre className="text-2xs font-mono text-th-text-muted bg-black/30 rounded-lg p-2.5 overflow-x-auto leading-relaxed">{`{"messages":[{"role":"user","content":"Summarize this"},{"role":"assistant","content":"…"}]}`}</pre>
     </div>
   );
 }
@@ -56,26 +56,26 @@ function ReportCard({ report }: { report: DistillValidateReport }) {
             ? `${report.n_valid.toLocaleString()} valid row${report.n_valid === 1 ? "" : "s"}`
             : "Not usable for training"}
         </p>
-        <span className="text-[10px] text-th-text-muted ml-auto">
+        <span className="text-2xs text-th-text-muted ml-auto">
           {report.container}
           {report.format ? ` · ${report.format}` : ""}
         </span>
       </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-th-text-tertiary">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-2xs text-th-text-tertiary">
         <span>{report.n_rows} rows</span>
         <span>{report.n_invalid} invalid</span>
         <span>{report.n_messages.toLocaleString()} messages</span>
         <span>{report.n_tool_calls} tool calls</span>
       </div>
       {report.sample_preview && (
-        <p className="text-[11px] text-th-text-secondary italic truncate">
+        <p className="text-2xs text-th-text-secondary italic truncate">
           “{report.sample_preview}”
         </p>
       )}
       {report.errors.length > 0 && (
         <ul className="space-y-1 max-h-36 overflow-y-auto">
           {report.errors.map((e, i) => (
-            <li key={`${e.code}-${e.line}-${i}`} className="text-[11px] text-red-300">
+            <li key={`${e.code}-${e.line}-${i}`} className="text-2xs text-red-300">
               {e.line > 0 ? `Line ${e.line}: ` : ""}{e.message}
             </li>
           ))}
@@ -84,7 +84,7 @@ function ReportCard({ report }: { report: DistillValidateReport }) {
       {report.warnings.length > 0 && (
         <ul className="space-y-1 max-h-24 overflow-y-auto">
           {report.warnings.map((e, i) => (
-            <li key={`${e.code}-${e.line}-${i}`} className="text-[11px] text-amber-300">
+            <li key={`${e.code}-${e.line}-${i}`} className="text-2xs text-amber-300">
               {e.line > 0 ? `Line ${e.line}: ` : ""}{e.message}
             </li>
           ))}
@@ -208,7 +208,7 @@ export function DistillUploadsPanel({
         <p className="text-sm text-th-text-primary">
           {busy ? "Checking format…" : "Drop a .jsonl file here"}
         </p>
-        <p className="text-[11px] text-th-text-muted">or click to browse · UTF-8 · 50 MB max</p>
+        <p className="text-2xs text-th-text-muted">or click to browse · UTF-8 · 50 MB max</p>
       </label>
 
       {error && <p className="text-xs text-red-400">{error}</p>}
@@ -216,7 +216,7 @@ export function DistillUploadsPanel({
 
       <div className="bg-th-card-bg border border-th-card-border rounded-xl overflow-hidden">
         <div className="px-4 py-2.5 border-b border-th-border/50 flex items-center justify-between">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-th-text-muted">
+          <p className="text-2xs font-semibold uppercase tracking-wider text-th-text-muted">
             Saved files
           </p>
           {loading && <Loader2 size={12} className="animate-spin text-th-text-muted" />}
@@ -245,7 +245,7 @@ export function DistillUploadsPanel({
                     <FileUp size={12} className="text-violet-400 shrink-0" />
                     {u.filename}
                   </p>
-                  <p className="text-[10px] text-th-text-muted mt-0.5">
+                  <p className="text-2xs text-th-text-muted mt-0.5">
                     {u.n_valid.toLocaleString()} valid
                     {u.n_invalid ? ` · ${u.n_invalid} skipped` : ""}
                     {" · "}{formatBytes(u.bytes)}
@@ -255,7 +255,7 @@ export function DistillUploadsPanel({
                 <button
                   type="button"
                   onClick={() => onSelect(u)}
-                  className={`shrink-0 px-2.5 py-1 rounded-md text-[10px] font-medium border ${
+                  className={`shrink-0 px-2.5 py-1 rounded-md text-2xs font-medium border ${
                     selected
                       ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
                       : "text-th-text-tertiary border-th-border hover:text-th-text-primary"

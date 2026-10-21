@@ -28,7 +28,26 @@ export default {
           "inset-bg": "rgb(var(--color-inset-bg) / <alpha-value>)",
           "tab-active-bg": "rgb(var(--color-tab-active-bg) / <alpha-value>)",
           "tab-active-fg": "rgb(var(--color-tab-active-fg) / <alpha-value>)",
+          accent: "rgb(var(--color-accent) / <alpha-value>)",
+          success: "rgb(var(--color-success) / <alpha-value>)",
+          danger: "rgb(var(--color-danger) / <alpha-value>)",
+          warning: "rgb(var(--color-warning) / <alpha-value>)",
+          "diff-add": "rgb(var(--color-diff-add) / <alpha-value>)",
+          "diff-del": "rgb(var(--color-diff-del) / <alpha-value>)",
         },
+      },
+      // 11px floor, expressed in rem so it follows the font-scale setting.
+      fontSize: {
+        "2xs": ["0.6875rem", { lineHeight: "1rem" }],
+      },
+      transitionTimingFunction: {
+        "out-expo": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "in-out-soft": "cubic-bezier(0.4, 0, 0.2, 1)",
+      },
+      transitionDuration: {
+        fast: "120ms",
+        base: "180ms",
+        slow: "280ms",
       },
       animation: {
         "fade-in": "fadeIn 0.25s ease-out",
@@ -37,8 +56,18 @@ export default {
         "pop-in": "popIn 0.14s cubic-bezier(0.16, 1, 0.3, 1)",
         "live-sweep": "liveSweep 1.8s ease-in-out infinite",
         "dash-flow": "dashFlow 0.6s linear infinite",
+        "toast-in": "toastIn 0.22s cubic-bezier(0.16, 1, 0.3, 1)",
+        "panel-in": "panelIn 0.18s cubic-bezier(0.16, 1, 0.3, 1)",
       },
       keyframes: {
+        toastIn: {
+          "0%": { opacity: "0", transform: "translateY(8px) scale(0.98)" },
+          "100%": { opacity: "1", transform: "translateY(0) scale(1)" },
+        },
+        panelIn: {
+          "0%": { opacity: "0", transform: "translateX(6px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
         dashFlow: {
           to: { "stroke-dashoffset": "-10" },
         },

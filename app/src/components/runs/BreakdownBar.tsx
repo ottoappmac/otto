@@ -17,7 +17,7 @@ export function BreakdownBar({ items, title, emptyMessage = "No data", max }: Br
 
   return (
     <div className="bg-th-card-bg border border-th-card-border rounded-2xl p-4 shadow-sm shadow-black/[0.03]">
-      <h3 className="text-[11px] text-th-text-muted font-semibold uppercase tracking-wider mb-3">{title}</h3>
+      <h3 className="text-2xs text-th-text-muted font-semibold uppercase tracking-wider mb-3">{title}</h3>
       {topN.length === 0 ? (
         <p className="text-xs text-th-text-muted">{emptyMessage}</p>
       ) : (
@@ -27,7 +27,7 @@ export function BreakdownBar({ items, title, emptyMessage = "No data", max }: Br
             return (
               <div key={item.label} className="flex items-center gap-2">
                 <span
-                  className="text-[11px] text-th-text-secondary truncate shrink-0"
+                  className="text-2xs text-th-text-secondary truncate shrink-0"
                   style={{ minWidth: "7rem", maxWidth: "10rem" }}
                   title={item.label}
                 >
@@ -39,7 +39,7 @@ export function BreakdownBar({ items, title, emptyMessage = "No data", max }: Br
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className="text-[11px] text-th-text-muted w-7 text-right shrink-0">{item.count}</span>
+                <span className="text-2xs text-th-text-muted w-7 text-right shrink-0">{item.count}</span>
               </div>
             );
           })}

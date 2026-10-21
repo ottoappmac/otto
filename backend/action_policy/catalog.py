@@ -33,6 +33,7 @@ CATEGORIES: tuple[str, ...] = (
     "pim_write",
     "work_tools_write",
     "browser_automation",
+    "workspace_write",
     "unclassified",
 )
 
@@ -51,6 +52,7 @@ CATEGORY_TITLES: dict[str, str] = {
     "pim_write": "Change calendar, reminders, or notes?",
     "work_tools_write": "Post to a work tool?",
     "browser_automation": "Drive the browser?",
+    "workspace_write": "Edit the allowed folder?",
     "unclassified": "Run an unreviewed tool?",
 }
 
@@ -69,6 +71,7 @@ CATEGORY_BLURB: dict[str, str] = {
     "pim_write": "Creating or editing calendar events, reminders, and notes.",
     "work_tools_write": "Jira, Confluence, and OneDrive writes.",
     "browser_automation": "Playwright clicks, typing, and navigation.",
+    "workspace_write": "write_file and edit_file inside a folder you allowed. Denied outside that folder even when this is Allow.",
     "unclassified": "Tools Otto does not recognise (generated or third-party).",
 }
 
@@ -279,6 +282,20 @@ _read(
 # Tools that are not MCP servers. None = reviewed, not gated.
 _BARE_TOOLS: dict[str, str | None] = {
     "execute": "shell",
+    "git_commit": "shell",
+    "git_branch": "shell",
+    "git_worktree": "shell",
+    "git_pr": "shell",
+    "project_check": "shell",
+    "process_start": "shell",
+    "process_stop": "shell",
+    "search_code": None,
+    "index_project": None,
+    "process_output": None,
+    "process_ports": None,
+    "write_file": "workspace_write",
+    "edit_file": "workspace_write",
+    "edit": "workspace_write",
     "create_schedule": "persistence",
     "update_schedule": "persistence",
     "delete_schedule": "persistence",
@@ -455,6 +472,7 @@ def balanced_categories() -> dict[str, str]:
         "pim_write": "ask",
         "work_tools_write": "ask",
         "browser_automation": "allow",
+        "workspace_write": "allow",
         "unclassified": "ask",
     }
 
@@ -463,6 +481,7 @@ def locked_down_categories() -> dict[str, str]:
     cats = {name: "deny" for name in CATEGORIES}
     cats["shell"] = "ask"
     cats["browser_automation"] = "ask"
+    cats["workspace_write"] = "ask"
     return cats
 
 
@@ -525,6 +544,7 @@ def describe_action(name: str, args: dict | None, category: str | None) -> str:
     if category in (
         "destructive", "pim_write", "work_tools_write", "persistence",
         "settings_write", "mcp_authoring", "mail_read", "message_read",
+        "workspace_write",
     ):
         bits = []
         for key, value in list(args.items())[:8]:

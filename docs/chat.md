@@ -17,7 +17,7 @@ A new chat shows the **How can I help?** welcome screen with quick-start prompt 
 | **Message box** | Type your request. `/` opens a picker to route the turn to a specific subagent; otherwise the orchestrator decides how to handle it. |
 | **Model selector** | Bottom-left chip shows the active model (e.g. an MLX model) and tier (**Turbo** / Standard / Frontier). |
 | **Run depth** | **Auto**, **Quick**, or **Deep**, next to the model. Auto asks the model, before the run starts, to pick Quick or Deep for that message. Quick answers directly with a small tool-call limit. Deep is a full research run. A choice you set is used as-is and is not judged again. Each turn adds a line in the chat and on the run timeline: **Running Quick** or **Running Deep**, or **Auto chose Quick/Deep** plus the reason. When Auto picks, a small chip also appears on your message; hover it for the reason. |
-| **Attachments** | The **+** in the composer attaches files; you can also drag-and-drop files or folders onto the window. |
+| **Attachments** | The **+** in the composer attaches files; you can also drag-and-drop files or folders onto the window. See [Project folder](#project-folder) below. |
 | **Send** | Submits the message (Enter). |
 
 ## Active conversation
@@ -31,6 +31,7 @@ Once a run starts, the transcript streams in real time — agent messages, tool 
 | **Live / Connecting** | Connection pill (top-left) reflects the websocket status. |
 | **Run header** | When a run is active, the header shows the run id and live token/throughput stats (tokens in/out, TOPS t/s, KV cache %). |
 | **Graph** | Appears when subagents are involved — toggles an agent graph view of the delegation tree. |
+| **Code** | Opens the same session in the [Code](code.md) view. |
 | **Run #id** | Jumps to the full [run detail](runs.md) page for the session. |
 | **Folder** | Opens the session's working files folder on disk. |
 | **Files** | Lists files produced during the run. Reading or writing a file does not open the side panel on its own. Open a file from the message, the changed-files strip, or the files list. Turn on **Follow agent file edits** in Settings → Advanced, or pin it from the panel header, if you want the panel to open automatically. |
@@ -41,6 +42,12 @@ Once a run starts, the transcript streams in real time — agent messages, tool 
 Subagent activity is grouped, and any errors are pinned to the end of the conversation so they are never buried in the middle of a long transcript.
 
 ---
+
+## Project folder
+
+The **Project** menu in the header binds a folder to this chat so the coding agent can work in it. It lists your allowed folders. Picking one binds it with no second confirmation. **Allow a new folder…** opens the folder dialog in the desktop app; in a browser you type the path. Either way you confirm the resolved path and choose read only or edit before the folder is added. **×** on a folder removes it from Allowed folders. **Remove from this chat** only unbinds the open chat and leaves the folder allowed. The menu is locked while a run is in progress. You can also drag a folder onto the window.
+
+The folder dialog is native, so a desktop build made before it was added needs a rebuild to show it. See [Code](code.md) for modes, checkpoints, and what a folder grant covers.
 
 ## Capture
 

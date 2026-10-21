@@ -368,7 +368,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {!sessionId && (
-          <div className="flex items-start gap-2 text-[11px] text-th-text-tertiary bg-th-surface/60 border border-th-border rounded-lg p-2.5">
+          <div className="flex items-start gap-2 text-2xs text-th-text-tertiary bg-th-surface/60 border border-th-border rounded-lg p-2.5">
             <MessageSquarePlus size={13} className="shrink-0 mt-0.5" />
             <span>No chat is open — a new one will be started, and the video and its results saved into it.</span>
           </div>
@@ -398,13 +398,13 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
               </span>
             </button>
             {uploading && (
-              <p className="text-[11px] text-th-text-muted flex items-center gap-1.5">
+              <p className="text-2xs text-th-text-muted flex items-center gap-1.5">
                 <Loader2 size={11} className="animate-spin" />
                 {creatingSession ? "Starting a chat…" : "Uploading…"}
               </p>
             )}
             {!uploading && uploadedPath && (
-              <p className="text-[11px] text-emerald-400">Uploaded — ready to watch.</p>
+              <p className="text-2xs text-emerald-400">Uploaded — ready to watch.</p>
             )}
           </div>
         )}
@@ -413,7 +413,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
         {tab === "screen" && (
           <div className="space-y-3">
             {permission && permission.granted === false && (
-              <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 space-y-1.5">
+              <div className="text-2xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 space-y-1.5">
                 <p>Screen Recording permission is required.</p>
                 <button
                   type="button"
@@ -436,7 +436,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
                 <span className="flex items-center gap-1.5 text-[12px] text-th-text-secondary group-hover:text-th-text-primary">
                   <Mic size={12} className="shrink-0" /> Record audio
                 </span>
-                <span className="block text-[10px] text-th-text-muted leading-relaxed mt-0.5">
+                <span className="block text-2xs text-th-text-muted leading-relaxed mt-0.5">
                   {audioDevices.some((d) => d.is_loopback)
                     ? "Captures what's playing via your loopback device."
                     : "Captures your microphone. macOS can't record playback without a loopback device such as BlackHole."}
@@ -469,7 +469,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
                   alt="Screen recording preview"
                   className="w-full h-full object-contain"
                 />
-                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 text-[9px] font-medium text-white uppercase tracking-wider">
+                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 text-2xs font-medium text-white uppercase tracking-wider">
                   <Circle size={6} className="fill-red-500 text-red-500" />
                   Recording
                 </span>
@@ -488,7 +488,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
                   {recordedPath.split("/").pop()}
                 </span>
                 {recordedSize !== null && (
-                  <span className="text-[10px] text-th-text-muted shrink-0">
+                  <span className="text-2xs text-th-text-muted shrink-0">
                     {formatFileSize(recordedSize)}
                   </span>
                 )}
@@ -507,7 +507,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
               placeholder="https://youtube.com/watch?v=…"
               className="w-full px-3 py-2.5 bg-th-input-bg border border-th-input-border rounded-lg text-th-text-primary placeholder-th-text-muted focus:outline-none focus:border-blue-400 text-sm"
             />
-            <p className="text-[11px] text-th-text-muted">
+            <p className="text-2xs text-th-text-muted">
               {geminiConfigured
                 ? "Gemini will watch the URL directly (no download)."
                 : "Without a Gemini key, the video is downloaded and watched via frames."}
@@ -519,7 +519,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
         {tab === "live" && (
           <div className="space-y-3">
             {!geminiConfigured && (
-              <div className="flex items-start gap-2 text-[11px] text-th-text-tertiary bg-th-surface/60 border border-th-border rounded-lg p-2.5">
+              <div className="flex items-start gap-2 text-2xs text-th-text-tertiary bg-th-surface/60 border border-th-border rounded-lg p-2.5">
                 <Radio size={13} className="shrink-0 mt-0.5" />
                 <span>
                   Without a Gemini key this watches in short batches with your
@@ -538,11 +538,11 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
                     className="w-full h-full object-contain"
                   />
                 ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-[11px] text-th-text-muted">
+                  <div className="absolute inset-0 flex items-center justify-center text-2xs text-th-text-muted">
                     Waiting for the first frame…
                   </div>
                 )}
-                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 text-[9px] font-medium text-white uppercase tracking-wider">
+                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 text-2xs font-medium text-white uppercase tracking-wider">
                   <Circle size={6} className="fill-red-500 text-red-500" />
                   {live.mode === "local" ? "Local" : "Gemini"}
                 </span>
@@ -571,7 +571,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
               )}
             </button>
             {liveToAgent !== "off" && (
-              <p className="text-[11px] text-th-text-muted">
+              <p className="text-2xs text-th-text-muted">
                 {!canSendAgentContext()
                   ? "Commentary can't reach the agent until a chat is open."
                   : liveToAgent === "stream"
@@ -580,12 +580,12 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
               </p>
             )}
             {live.error && (
-              <p className="text-[11px] text-red-400">{live.error}</p>
+              <p className="text-2xs text-red-400">{live.error}</p>
             )}
             {live.commentary.length > 0 && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-th-text-tertiary">Commentary</span>
+                  <span className="text-2xs font-medium text-th-text-tertiary">Commentary</span>
                   <button
                     type="button"
                     onClick={live.clear}
@@ -609,7 +609,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
         {tab !== "live" && (
           <>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                 Question (optional)
               </label>
               <textarea
@@ -623,7 +623,7 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
 
             {(tab === "screen") && (
               <div>
-                <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+                <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                   Recording frame rate
                 </label>
                 <div className="flex gap-1.5">
@@ -668,14 +668,14 @@ export default function WatchDrawer({ open, onClose }: WatchDrawerProps) {
             </div>
 
             {error && (
-              <p className="text-[11px] text-red-400 flex items-start gap-1.5">
+              <p className="text-2xs text-red-400 flex items-start gap-1.5">
                 <AlertTriangle size={12} className="shrink-0 mt-0.5" /> {error}
               </p>
             )}
 
             {result && (
               <div className="space-y-1.5">
-                <span className="text-[11px] font-medium text-th-text-tertiary">Result</span>
+                <span className="text-2xs font-medium text-th-text-tertiary">Result</span>
                 <div className="text-[12px] text-th-text-secondary leading-relaxed whitespace-pre-wrap bg-th-surface/60 border border-th-border rounded-lg p-3 max-h-[320px] overflow-y-auto">
                   {result}
                 </div>

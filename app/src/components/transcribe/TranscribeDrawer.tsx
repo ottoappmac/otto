@@ -820,7 +820,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
           </div>
           <div className="min-w-0">
             <h2 className="text-[13px] font-semibold text-th-text-primary leading-tight tracking-tight">Live Capture</h2>
-            <p className="text-[11px] text-th-text-muted leading-tight truncate">
+            <p className="text-2xs text-th-text-muted leading-tight truncate">
               {recording ? "Recording · on-device & private" : "Audio & screen · on-device"}
             </p>
           </div>
@@ -847,7 +847,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
 
       {/* Source selection */}
       <div data-capture-region="sources" className="px-4 py-3 space-y-1.5 border-b border-th-border/70 shrink-0">
-        <p className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold px-0.5">Sources</p>
+        <p className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold px-0.5">Sources</p>
         {(["system", "mic"] as TranscribeSource[]).map((src) => {
           const meta = SOURCE_META[src];
           const Icon = meta.icon;
@@ -878,7 +878,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
                     />
                   </div>
                 ) : (
-                  <p className="text-[11px] text-amber-400/90 leading-tight mt-0.5">
+                  <p className="text-2xs text-amber-400/90 leading-tight mt-0.5">
                     {src === "system"
                       ? status && !status.supported
                         ? "Requires macOS 14.4+"
@@ -903,7 +903,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-medium text-th-text-primary leading-tight">Screen</p>
-            <div className="mt-0.5 space-y-1 text-[11px]">
+            <div className="mt-0.5 space-y-1 text-2xs">
               <div className="min-w-0">
                 <Popover
                   align="left"
@@ -1069,7 +1069,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
         </button>
 
         {!recording && activeSources.length === 0 ? (
-          <span className="text-[11px] text-th-text-muted">Enable a source</span>
+          <span className="text-2xs text-th-text-muted">Enable a source</span>
         ) : (
           <button
             type="button"
@@ -1089,13 +1089,13 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
 
       {modelDownloading && (
         <div className="mx-4 mt-3 p-2.5 rounded-2xl border border-indigo-500/25 bg-indigo-500/10 shrink-0 animate-fade-in">
-          <div className="flex items-center gap-2 text-[11px] text-indigo-300">
+          <div className="flex items-center gap-2 text-2xs text-indigo-300">
             <Loader2 size={13} className="shrink-0 animate-spin" />
             <span className="flex-1 font-medium">
               Downloading speech model…{modelPct != null ? ` ${modelPct}%` : ""}
             </span>
           </div>
-          <p className="mt-1 text-[10px] text-th-text-muted leading-snug">
+          <p className="mt-1 text-2xs text-th-text-muted leading-snug">
             One-time on-device setup (~1.5&nbsp;GB). Recording unlocks once it’s ready.
           </p>
           <div className="mt-2 h-1 rounded-full bg-th-surface-hover overflow-hidden">
@@ -1110,7 +1110,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
       )}
 
       {captureError && (
-        <div className="mx-4 mt-3 p-2.5 rounded-2xl border border-amber-500/25 bg-amber-500/10 text-[11px] text-amber-300 flex items-start gap-2 shrink-0 animate-fade-in">
+        <div className="mx-4 mt-3 p-2.5 rounded-2xl border border-amber-500/25 bg-amber-500/10 text-2xs text-amber-300 flex items-start gap-2 shrink-0 animate-fade-in">
           <AlertTriangle size={13} className="shrink-0 mt-0.5" />
           <span className="flex-1">
             {captureError === "screen-permission"
@@ -1137,7 +1137,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
       )}
 
       {autoSend && (
-        <div className="px-4 py-2 border-b border-th-border/70 flex items-center gap-2 text-[11px] shrink-0">
+        <div className="px-4 py-2 border-b border-th-border/70 flex items-center gap-2 text-2xs shrink-0">
           {agentBusy ? (
             <span className="flex items-center gap-1.5 text-th-text-muted">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -1161,7 +1161,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
       )}
 
       {t.error && (
-        <div className="mx-4 mt-3 p-2.5 rounded-2xl border border-red-500/25 bg-red-500/10 text-[11px] text-red-300 flex items-start gap-2 shrink-0 animate-fade-in">
+        <div className="mx-4 mt-3 p-2.5 rounded-2xl border border-red-500/25 bg-red-500/10 text-2xs text-red-300 flex items-start gap-2 shrink-0 animate-fade-in">
           <AlertTriangle size={13} className="shrink-0 mt-0.5" />
           <span className="flex-1">{t.error}</span>
           <button onClick={t.clearError} className="text-red-300/70 hover:text-red-200">
@@ -1200,7 +1200,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
             const divider = idx === firstUnsentIdx && firstUnsentIdx > 0 && (
               <div className="flex items-center gap-2 px-2.5 py-2 select-none">
                 <div className="flex-1 h-px bg-th-border/70" />
-                <span className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-th-text-muted font-semibold">
+                <span className="flex items-center gap-1 text-2xs uppercase tracking-wider text-th-text-muted font-semibold">
                   <Check size={9} className="text-emerald-400/80" /> Sent to Otto
                 </span>
                 <div className="flex-1 h-px bg-th-border/70" />
@@ -1225,11 +1225,11 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
                       onClick={() => toggleSelect(item.id)}
                       className="flex items-center gap-1.5 self-start max-w-full min-w-0"
                     >
-                      <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[9px] font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/25 max-w-[200px] min-w-0">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-px rounded-full text-2xs font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/25 max-w-[200px] min-w-0">
                         <Camera size={9} className="shrink-0" />
                         <span className="truncate min-w-0">{shot.label || "Screenshot"}</span>
                       </span>
-                      <span className="text-[10px] text-th-text-muted tabular-nums shrink-0">{fmtClock(item.ts)}</span>
+                      <span className="text-2xs text-th-text-muted tabular-nums shrink-0">{fmtClock(item.ts)}</span>
                       {isSent && (
                         <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-500/15">
                           <Check size={9} className="text-emerald-400" />
@@ -1290,10 +1290,10 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
                   }`}
                 >
                   <span className="flex items-center gap-1.5 self-start">
-                    <span className={`inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[9px] font-semibold ${meta.chip}`}>
+                    <span className={`inline-flex items-center gap-1 px-1.5 py-px rounded-full text-2xs font-semibold ${meta.chip}`}>
                       {seg.source === "mic" ? "Me" : "System"}
                     </span>
-                    <span className="text-[10px] text-th-text-muted tabular-nums">{fmtClock(seg.ts)}</span>
+                    <span className="text-2xs text-th-text-muted tabular-nums">{fmtClock(seg.ts)}</span>
                     {isSent && (
                       <span className="flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-500/15">
                         <Check size={9} className="text-emerald-400" />
@@ -1331,7 +1331,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
           {(["system", "mic"] as TranscribeSource[]).map((src) =>
             t.partials[src] ? (
               <div key={`p-${src}`} className="flex flex-col gap-1 px-2.5 py-2 rounded-2xl bg-th-surface-hover/30 text-[13px]">
-                <span className={`inline-flex items-center gap-1 self-start px-1.5 py-px rounded-full text-[9px] font-semibold opacity-60 ${SOURCE_META[src].chip}`}>
+                <span className={`inline-flex items-center gap-1 self-start px-1.5 py-px rounded-full text-2xs font-semibold opacity-60 ${SOURCE_META[src].chip}`}>
                   {src === "mic" ? "Me" : "System"}
                 </span>
                 <span className="text-th-text-muted italic leading-snug">
@@ -1349,7 +1349,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
               setAtBottom(true);
               if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
             }}
-            className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1.5 rounded-full bg-th-surface/95 backdrop-blur-md border border-th-border text-[11px] font-medium text-th-text-secondary shadow-lg shadow-black/10 hover:text-th-text-primary hover:border-th-border-strong transition-all animate-fade-in"
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1.5 rounded-full bg-th-surface/95 backdrop-blur-md border border-th-border text-2xs font-medium text-th-text-secondary shadow-lg shadow-black/10 hover:text-th-text-primary hover:border-th-border-strong transition-all animate-fade-in"
           >
             <ChevronDown size={13} /> Jump to latest
           </button>
@@ -1366,7 +1366,7 @@ export default function TranscribeDrawer({ open, onClose, standalone = false }: 
               <p className="text-[12px] font-medium text-th-text-primary leading-tight truncate">
                 Saved {downloadToast.filename}
               </p>
-              <div className="mt-0.5 flex items-center gap-2.5 text-[11px]">
+              <div className="mt-0.5 flex items-center gap-2.5 text-2xs">
                 {downloadToast.fullPath ? (
                   <button
                     onClick={() => openPath(downloadToast.fullPath!)}

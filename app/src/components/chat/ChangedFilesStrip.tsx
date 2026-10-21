@@ -34,7 +34,7 @@ export function ChangedFilesStrip({ files, onOpen, fileUrl }: ChangedFilesStripP
 
   return (
     <div className="mt-3 ml-10 p-3 rounded-xl border border-th-border bg-th-card-bg max-w-2xl">
-      <p className="text-[10px] uppercase tracking-wider font-semibold text-th-text-muted mb-2">
+      <p className="text-2xs uppercase tracking-wider font-semibold text-th-text-muted mb-2">
         Changed files ({files.length})
       </p>
       <div className="flex flex-wrap gap-1.5">

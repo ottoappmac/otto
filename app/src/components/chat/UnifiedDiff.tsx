@@ -34,13 +34,13 @@ export function UnifiedDiff({ path, oldText, newText, onOpen, maxLines = 80 }: U
         className="w-full flex items-center gap-2 px-3 py-1.5 bg-th-inset-bg border-b border-th-border text-left hover:bg-th-surface-hover transition-colors"
         title={path}
       >
-        <span className="text-[11px] font-mono text-th-text-primary truncate">{filename}</span>
-        <span className="text-[10px] text-th-text-muted truncate flex-1">{path}</span>
+        <span className="text-2xs font-mono text-th-text-primary truncate">{filename}</span>
+        <span className="text-2xs text-th-text-muted truncate flex-1">{path}</span>
         {onOpen && (
-          <span className="text-[10px] text-blue-400 shrink-0">Open</span>
+          <span className="text-2xs text-blue-400 shrink-0">Open</span>
         )}
       </button>
-      <pre className="text-[11px] leading-[1.55] font-mono overflow-x-auto max-h-64 overflow-y-auto">
+      <pre className="text-2xs leading-[1.55] font-mono overflow-x-auto max-h-64 overflow-y-auto">
         {oldLines.map((line, i) => (
           <div key={`-${i}`} className="px-3 bg-red-500/10 text-red-300/90 whitespace-pre">
             <span className="select-none text-red-400/70 mr-2">-</span>
@@ -54,7 +54,7 @@ export function UnifiedDiff({ path, oldText, newText, onOpen, maxLines = 80 }: U
           </div>
         ))}
         {omitted > 0 && (
-          <div className="px-3 py-1 text-[10px] text-th-text-muted bg-th-inset-bg">
+          <div className="px-3 py-1 text-2xs text-th-text-muted bg-th-inset-bg">
             … {omitted} more lines
           </div>
         )}

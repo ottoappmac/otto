@@ -139,35 +139,35 @@ export function DistilledModelsTab({
 
   return (
     <div className={className}>
-      <p className="text-[11px] text-th-text-secondary leading-relaxed">{ENGINE_NOTE[engine]}</p>
-      {fuseErr && <p className="text-[10px] text-red-400">{fuseErr}</p>}
+      <p className="text-2xs text-th-text-secondary leading-relaxed">{ENGINE_NOTE[engine]}</p>
+      {fuseErr && <p className="text-2xs text-red-400">{fuseErr}</p>}
       <div className="relative">
         <input
           type="text"
           placeholder="Search distilled adapters…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-2.5 py-1.5 text-[11px] rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50"
+          className="w-full px-2.5 py-1.5 text-2xs rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50"
         />
       </div>
       <div className="space-y-2 max-h-72 overflow-y-auto">
         {loading && (
-          <div className="flex items-center gap-2 text-[11px] text-th-text-muted py-4 justify-center">
+          <div className="flex items-center gap-2 text-2xs text-th-text-muted py-4 justify-center">
             <Loader2 size={12} className="animate-spin" />
             Scanning trained adapters…
           </div>
         )}
-        {error && <p className="text-[10px] text-red-400">{error}</p>}
+        {error && <p className="text-2xs text-red-400">{error}</p>}
         {!loading && adapters?.length === 0 && (
           <div className="py-4 text-center space-y-1">
-            <p className="text-[11px] text-th-text-secondary">No distilled adapters yet.</p>
-            <p className="text-[10px] text-th-text-muted">
+            <p className="text-2xs text-th-text-secondary">No distilled adapters yet.</p>
+            <p className="text-2xs text-th-text-muted">
               Train one on the Distill page.
             </p>
           </div>
         )}
         {!loading && adapters && adapters.length > 0 && visible.length === 0 && (
-          <p className="text-[11px] text-th-text-muted text-center py-4">
+          <p className="text-2xs text-th-text-muted text-center py-4">
             No adapters match “{search}”.
           </p>
         )}
@@ -191,7 +191,7 @@ export function DistilledModelsTab({
                 }`}
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-medium text-th-text-primary truncate">
+                  <p className="text-2xs font-medium text-th-text-primary truncate">
                     {a.display_name || a.catalog_id}
                   </p>
                     {canEditPurpose && editingId === a.catalog_id ? (
@@ -200,7 +200,7 @@ export function DistilledModelsTab({
                           value={purposeDraft}
                           onChange={(e) => setPurposeDraft(e.target.value)}
                           rows={2}
-                          className="w-full px-2 py-1.5 text-[11px] rounded-md bg-th-input-bg border border-th-input-border text-th-text-primary focus:outline-none focus:border-violet-400"
+                          className="w-full px-2 py-1.5 text-2xs rounded-md bg-th-input-bg border border-th-input-border text-th-text-primary focus:outline-none focus:border-violet-400"
                           placeholder="What this adapter is for…"
                         />
                         <div className="flex items-center gap-1.5">
@@ -208,40 +208,40 @@ export function DistilledModelsTab({
                             type="button"
                             disabled={savingPurpose}
                             onClick={() => void savePurpose(a.catalog_id)}
-                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-violet-500/15 text-violet-300 border border-violet-500/30 disabled:opacity-50"
+                            className="px-2 py-0.5 rounded text-2xs font-medium bg-violet-500/15 text-violet-300 border border-violet-500/30 disabled:opacity-50"
                           >
                             {savingPurpose ? "Saving…" : "Save"}
                           </button>
                           <button
                             type="button"
                             onClick={() => setEditingId(null)}
-                            className="px-2 py-0.5 rounded text-[10px] text-th-text-muted hover:text-th-text-primary"
+                            className="px-2 py-0.5 rounded text-2xs text-th-text-muted hover:text-th-text-primary"
                           >
                             Cancel
                           </button>
                         </div>
                       </div>
                     ) : (
-                      <p className="text-[10px] text-th-text-secondary mt-1 leading-snug line-clamp-2">
+                      <p className="text-2xs text-th-text-secondary mt-1 leading-snug line-clamp-2">
                         {a.purpose || (canEditPurpose ? "No purpose set" : "")}
                       </p>
                     )}
                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     {a.omlx_model_id && (
-                      <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                      <span className="text-2xs font-semibold px-1 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">
                         turbo-ready
                       </span>
                     )}
-                    <span className="text-[9px] text-th-text-muted truncate">
+                    <span className="text-2xs text-th-text-muted truncate">
                       {studentShort(a.base_repo_id)}
                       {teacher ? ` ← ${teacher}` : ""}
                     </span>
-                    <span className="text-[9px] text-th-text-muted">
+                    <span className="text-2xs text-th-text-muted">
                       {typeof a.size_mb === "number" ? `${a.size_mb.toFixed(1)} MB` : ""}
                     </span>
-                    {when && <span className="text-[9px] text-th-text-muted">{when}</span>}
+                    {when && <span className="text-2xs text-th-text-muted">{when}</span>}
                     {isActive && (
-                      <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-0.5">
+                      <span className="text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-0.5">
                         <CheckCircle2 size={8} />
                         active
                       </span>
@@ -250,7 +250,7 @@ export function DistilledModelsTab({
                       <button
                         type="button"
                         onClick={() => startEditPurpose(a)}
-                        className="text-[9px] text-th-text-muted hover:text-violet-300 inline-flex items-center gap-0.5"
+                        className="text-2xs text-th-text-muted hover:text-violet-300 inline-flex items-center gap-0.5"
                       >
                         <Pencil size={8} />
                         {a.purpose ? "Edit purpose" : "Add purpose"}
@@ -263,7 +263,7 @@ export function DistilledModelsTab({
                   disabled={!canUse || busyId === a.catalog_id}
                   onClick={() => { if (canUse) void handleUse(a); }}
                   title={canUse ? undefined : "Open Settings → Standard to attach this adapter"}
-                  className={`shrink-0 px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors inline-flex items-center gap-1 ${
+                  className={`shrink-0 px-2.5 py-1 rounded-md text-2xs font-medium transition-colors inline-flex items-center gap-1 ${
                     !canUse
                       ? "bg-th-surface text-th-text-muted border border-th-border cursor-not-allowed"
                       : isActive
@@ -288,7 +288,7 @@ export function DistilledModelsTab({
       </div>
       <button
         type="button"
-        className="w-full text-[10px] text-th-text-muted hover:text-th-text-secondary transition-colors pt-1 inline-flex items-center justify-center gap-1"
+        className="w-full text-2xs text-th-text-muted hover:text-th-text-secondary transition-colors pt-1 inline-flex items-center justify-center gap-1"
         onClick={() => void refresh()}
       >
         <RefreshCw size={10} />

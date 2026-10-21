@@ -61,8 +61,39 @@ def _head_tail_preview(text: str) -> tuple[str, int, bool]:
 
 # ---- Shell backend with SESSION_FILES env var ----------------------------
 
+# The Seatbelt profile always lets a command write these.
+_SANDBOX_WRITABLE_TEMP = ("/private/tmp", "/private/var/folders", "/tmp")
 
-def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
+
+def _sandbox_always_writable(path: Path, extra_write: list[str] | None = None) -> bool:
+    """True when the shell sandbox allows writes to *path* whatever the grant says."""
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        return True
+    bases = [Path(p) for p in _SANDBOX_WRITABLE_TEMP]
+    for raw in extra_write or []:
+        if raw:
+            bases.append(Path(raw).expanduser())
+    for base in bases:
+        try:
+            if resolved.is_relative_to(base.resolve()):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def _make_backend(
+    files_dir: Path,
+    project_root: Path | None = None,
+    *,
+    grant_mode: str = "write",
+    grant_roots: list[Path] | None = None,
+    linked_files: list[Path] | None = None,
+    session_id: str | None = None,
+    mode_getter: Callable[[], str] | None = None,
+) -> Any:
     """Create a ``LocalShellBackend`` with ``SESSION_FILES`` injected into
     the shell environment so agents can reference the real session files path.
 
@@ -141,7 +172,11 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
             # Defense-in-depth: after the lexical check, re-resolve symlinks so
             # a link planted inside the session root cannot be used to escape
             # it.  User-dropped escapes are legitimate only under /links/.
-            if not is_resolved_path_allowed(full, self.cwd, vpath):
+            if not is_resolved_path_allowed(
+                full, self.cwd, vpath,
+                grant_roots=grant_roots,
+                linked_files=linked_files,
+            ):
                 raise ValueError(
                     f"Path '{key}' resolves outside the session directory via a "
                     f"symlink and cannot be used with file tools."
@@ -181,21 +216,131 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                 logger.warning("[session_backend] read blocked: %s", exc)
                 return ReadResult(error=str(exc))
 
-        def write(self, file_path: str, content: str) -> Any:
+        def _current_mode(self) -> str:
+            # Read live: the user can flip the mode between turns, or while
+            # one is running, and the guard has to follow.
+            if mode_getter is None:
+                return "agent"
             try:
-                return super().write(file_path, content)
+                return mode_getter()
+            except Exception:
+                # Fail closed. If the mode cannot be read, treat it as Plan.
+                logger.warning("mode lookup failed; treating as plan", exc_info=True)
+                return "plan"
+
+        def _readonly_shell(self) -> bool:
+            return self._current_mode() in ("plan", "ask")
+
+        def _readonly_error(self, file_path: str) -> str | None:
+            mode = self._current_mode()
+            if mode == "ask":
+                return "Ask mode is read-only. Switch to Agent mode to make changes."
+            plan = mode == "plan"
+            if (grant_mode != "read" and not plan) or project_root is None:
+                return None
+            try:
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
             except ValueError as exc:
-                from deepagents.backends.protocol import WriteResult
+                return str(exc)
+            try:
+                if Path(full).resolve().is_relative_to(Path(project_root).resolve()):
+                    if plan:
+                        return (
+                            "Plan mode is read-only. The plan is saved to /output/plan.md. "
+                            "Switch to Agent mode to make changes."
+                        )
+                    return "This folder is shared read-only. Edits are blocked."
+            except (OSError, ValueError):
+                return None
+            return None
+
+        def _protected_error(self, file_path: str) -> str | None:
+            if project_root is None:
+                return None
+            try:
+                full = self._resolve_path(
+                    file_path if str(file_path).startswith("/") else "/" + str(file_path),
+                )
+                resolved = Path(full).resolve()
+                rel = resolved.relative_to(Path(project_root).resolve()).as_posix()
+            except (OSError, ValueError):
+                return None
+            from backend.workspace_policy import protected_workspace_reason
+            return protected_workspace_reason(rel)
+
+        def _track_project_write(self, file_path: str, before: bytes | None) -> None:
+            if not session_id or project_root is None:
+                return
+            try:
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
+                resolved = Path(full).resolve()
+                root = Path(project_root).resolve()
+                if not resolved.is_relative_to(root):
+                    return
+                rel = resolved.relative_to(root).as_posix()
+                after = resolved.read_bytes() if resolved.is_file() else None
+                from backend.workspace_git import capture_preimage, record_write
+                if before is not None:
+                    capture_preimage(session_id, root, resolved)
+                record_write(session_id, rel, before, after)
+            except Exception:
+                logger.debug("workspace write tracking failed", exc_info=True)
+
+        def write(self, file_path: str, content: str) -> Any:
+            from deepagents.backends.protocol import WriteResult
+            blocked = self._readonly_error(file_path)
+            if blocked:
+                return WriteResult(error=blocked)
+            protected = self._protected_error(file_path)
+            if protected:
+                return WriteResult(error=protected)
+            before: bytes | None = None
+            try:
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
+                path = Path(full)
+                if path.is_file():
+                    before = path.read_bytes()
+                    if project_root is not None and session_id:
+                        from backend.workspace_git import capture_preimage
+                        capture_preimage(session_id, Path(project_root), path.resolve())
+            except (OSError, ValueError):
+                before = None
+            try:
+                result = super().write(file_path, content)
+            except ValueError as exc:
                 logger.warning("[session_backend] write blocked: %s", exc)
                 return WriteResult(error=str(exc))
+            if not getattr(result, "error", None):
+                self._track_project_write(file_path, before)
+            return result
 
         def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> Any:
+            from deepagents.backends.protocol import EditResult
+            blocked = self._readonly_error(file_path)
+            if blocked:
+                return EditResult(error=blocked)
+            protected = self._protected_error(file_path)
+            if protected:
+                return EditResult(error=protected)
+            before: bytes | None = None
             try:
-                return super().edit(file_path, old_string, new_string, replace_all)
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
+                path = Path(full)
+                if path.is_file():
+                    before = path.read_bytes()
+                    if project_root is not None and session_id:
+                        from backend.workspace_git import capture_preimage
+                        capture_preimage(session_id, Path(project_root), path.resolve())
+            except (OSError, ValueError):
+                before = None
+            try:
+                result = super().edit(file_path, old_string, new_string, replace_all)
             except ValueError as exc:
-                from deepagents.backends.protocol import EditResult
                 logger.warning("[session_backend] edit blocked: %s", exc)
                 return EditResult(error=str(exc))
+            if not getattr(result, "error", None):
+                self._track_project_write(file_path, before)
+            return result
 
         def _to_virtual_path(self, path: Path) -> str:
             # Lexical conversion: when iterating a symlinked dir, we want
@@ -220,16 +365,71 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                     exit_code=1,
                     truncated=False,
                 )
-            effective_timeout = timeout if timeout is not None else self._default_timeout
+            from backend.shell_policy import shell_network, timeout_for_command
+
+            effective_timeout = timeout if timeout is not None else timeout_for_command(command, self._default_timeout)
             if effective_timeout <= 0:
                 raise ValueError(f"timeout must be positive, got {effective_timeout}")
             shell_cwd = getattr(self, "_execute_cwd", None) or self.cwd
             try:
                 from backend.exec_sandbox import passthrough_names, run_shell, sandbox_settings, scrub_env
 
-                enabled, network, extra_read, extra_write = sandbox_settings()
-                write_paths = [Path(self.cwd)]
-                if shell_cwd is not None:
+                enabled, global_network, extra_read, extra_write = sandbox_settings()
+                grant = None
+                if session_id:
+                    from backend.workspace_grants import get_grant
+                    meta = _read_workspace_meta(session_id)
+                    if meta is not None and meta.grant_id:
+                        grant = get_grant(meta.grant_id)
+                network, network_hosts = shell_network(
+                    global_network,
+                    bool(grant and grant.network),
+                    list(grant.network_hosts) if grant else [],
+                )
+                if not enabled and self._readonly_shell():
+                    # Without the sandbox, nothing stops a command from
+                    # writing the project. Ask and Plan have no other shell guard.
+                    label = "Ask" if self._current_mode() == "ask" else "Plan"
+                    return ExecuteResponse(
+                        output=(
+                            f"{label} mode runs shell commands only inside the sandbox, and "
+                            "the shell sandbox is turned off in Settings. Read files with "
+                            "read_file, grep, and ls instead."
+                        ),
+                        exit_code=1,
+                        truncated=False,
+                    )
+                if (
+                    shell_cwd is not None
+                    and project_root is not None
+                    and (grant_mode == "read" or self._readonly_shell())
+                    and _sandbox_always_writable(Path(shell_cwd), extra_write)
+                ):
+                    # The profile lets every command write temp folders and any
+                    # extra write path from Settings. A project there cannot be
+                    # made read-only for the shell, so refuse instead of
+                    # pretending it is.
+                    return ExecuteResponse(
+                        output=(
+                            "This folder is read-only for Otto, but it sits where the shell "
+                            "sandbox always allows writes (a temp folder or an extra write "
+                            "path in Settings), so shell commands cannot be held to that. "
+                            "Read files with read_file, grep, and ls, or move the project."
+                        ),
+                        exit_code=1,
+                        truncated=False,
+                    )
+                # Ask gives the shell no write paths at all. Plan still lets
+                # it write the session files (the plan lives there) but not
+                # the project. A read-only grant is not a write path either.
+                # Sensitive denies in the profile are emitted after these
+                # allows, so a broad grant cannot re-open ~/.ssh.
+                write_paths = [] if self._current_mode() == "ask" else [Path(self.cwd)]
+                if (
+                    shell_cwd is not None
+                    and grant_mode != "read"
+                    and not self._readonly_shell()
+                ):
                     write_paths.append(Path(shell_cwd))
                 for raw in extra_write:
                     if raw:
@@ -244,6 +444,18 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                     if self._env.get(key)
                 }
                 env = scrub_env(self._env, extra=session_env, passthrough=passthrough_names())
+                baseline = None
+                if (
+                    session_id
+                    and project_root is not None
+                    and grant_mode != "read"
+                    and not self._readonly_shell()
+                ):
+                    try:
+                        from backend.workspace_git import shell_baseline
+                        baseline = shell_baseline(Path(project_root))
+                    except Exception:
+                        logger.debug("shell baseline failed", exc_info=True)
                 result = run_shell(
                     command,
                     cwd=Path(shell_cwd),
@@ -251,12 +463,19 @@ def _make_backend(files_dir: Path, project_root: Path | None = None) -> Any:
                     timeout=effective_timeout,
                     sandbox=enabled,
                     network=network,
+                    network_hosts=network_hosts,
                     write_paths=write_paths,
                     read_paths=read_paths,
                     session_paths=[Path(self.cwd)],
-                    session_write=True,
+                    session_write=self._current_mode() != "ask",
                     profile_dir=Path(self.cwd),
                 )
+                if baseline and session_id and project_root is not None and not result.error:
+                    try:
+                        from backend.workspace_git import record_shell_changes
+                        record_shell_changes(session_id, Path(project_root), baseline)
+                    except Exception:
+                        logger.debug("shell attribution failed", exc_info=True)
                 if result.error:
                     return ExecuteResponse(output=result.error, exit_code=1, truncated=False)
                 output_parts = []
@@ -334,6 +553,43 @@ def _session_files_dir(session_id: str) -> Path:
     return d
 
 
+def _read_linked_files(session_id: str) -> list[str]:
+    """Real paths the user dropped into this session. Empty when unknown."""
+    meta_path = _sessions_dir() / f"{session_id}.json"
+    if not meta_path.exists():
+        return []
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw = data.get("linked_files") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, str) and item]
+
+
+def _migrate_legacy_workspace(workspace: SessionWorkspace) -> SessionWorkspace:
+    """Turn a pre-grant mapped folder into a legacy write grant when it is safe."""
+    if workspace.grant_id:
+        return workspace
+    if not workspace.host_path:
+        return workspace
+    try:
+        from backend.workspace_grants import upsert_grant
+        from backend.workspace_policy import validate_grantable
+        real = validate_grantable(workspace.host_path)
+        grant = upsert_grant(real, mode=workspace.mode or "write", source="legacy")
+    except Exception:
+        logger.info("legacy workspace %s was not migrated to a grant", workspace.host_path)
+        return workspace
+    return workspace.model_copy(update={
+        "host_path": grant.realpath,
+        "grant_id": grant.id,
+        "mode": grant.mode,
+        "name": workspace.name or grant.label,
+    })
+
+
 def _read_workspace_meta(session_id: str) -> SessionWorkspace | None:
     """Load the persisted workspace from session meta, if any."""
     meta_path = _sessions_dir() / f"{session_id}.json"
@@ -347,9 +603,56 @@ def _read_workspace_meta(session_id: str) -> SessionWorkspace | None:
     if not raw:
         return None
     try:
-        return SessionWorkspace.model_validate(raw)
+        workspace = SessionWorkspace.model_validate(raw)
     except Exception:
         return None
+    if workspace.grant_id:
+        return workspace
+    migrated = _migrate_legacy_workspace(workspace)
+    if migrated.grant_id and migrated.grant_id != workspace.grant_id:
+        try:
+            data["workspace"] = migrated.model_dump(mode="json")
+            meta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError:
+            logger.debug("could not persist migrated workspace for %s", session_id, exc_info=True)
+    return migrated
+
+
+_INSTRUCTION_CAP = 16_000
+_INSTRUCTION_NAMES = ("AGENTS.md", "CLAUDE.md")
+
+
+def _project_instructions(root: Path) -> str:
+    """Project instruction files, capped, for the mapped-project prompt.
+
+    Otto loads these and refuses to let the agent rewrite them.
+    """
+    chunks: list[str] = []
+    used = 0
+    for name in _INSTRUCTION_NAMES:
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        if not text:
+            continue
+        room = _INSTRUCTION_CAP - used
+        if room <= 0:
+            break
+        if len(text) > room:
+            text = text[:room].rstrip() + "\n…(truncated)"
+        used += len(text)
+        chunks.append(f"### {name}\n{text}")
+    if not chunks:
+        return ""
+    return (
+        "- Project instructions (do not rewrite these files; ask the user to edit them):\n\n"
+        + "\n\n".join(chunks)
+        + "\n"
+    )
 
 
 def _mapped_project_prompt_block(
@@ -364,20 +667,38 @@ def _mapped_project_prompt_block(
     is None, emit the "ask the user to map a folder" note only if
     *include_unmapped* is True (coding sessions / coding subagent).
     """
+    if workspace is not None and not workspace.grant_id:
+        return (
+            "\n\n## Mapped project\n"
+            "A folder was mapped before allowed-folder grants existed, and it "
+            "could not be migrated (it is too broad or contains protected "
+            "files). Ask the user to allow a project folder in Settings → "
+            "Privacy & Security, or from the Code tab.\n"
+        )
     if workspace is not None:
+        access = "read-only" if workspace.mode == "read" else "editable"
+        edit_line = (
+            "- This folder is read-only. Do not edit files in it or write "
+            "there from the shell. Session output still goes under `/output/`.\n"
+            if workspace.mode == "read"
+            else
+            "- Prefer `edit_file` over `write_file` for existing files. Stay "
+            f"inside `{workspace.virtual_path}` — do not edit paths outside it.\n"
+            "- Session output (reports, scratch files) still goes under `/output/`.\n"
+        )
+        instructions = _project_instructions(Path(workspace.host_path))
         return (
             f"\n\n## Mapped project\n"
-            f"The user mapped a project folder into this session.\n"
+            f"The user allowed a project folder for this session ({access}).\n"
             f"- Host path: `{workspace.host_path}` (also `$PROJECT_ROOT`)\n"
             f"- Virtual path for file tools (`read_file`, `write_file`, `edit_file`, "
             f"`ls`, `glob`, `grep`): `{workspace.virtual_path}/…` "
             f"(e.g. `{workspace.virtual_path}/src/main.py`)\n"
             f"- `execute` runs with cwd = the host path. Use relative paths in "
             f"shell commands (e.g. `ls`, `pytest`, `npm test`). HITL approval "
-            f"still applies.\n"
-            f"- Prefer `edit_file` over `write_file` for existing files. Stay "
-            f"inside `{workspace.virtual_path}` — do not edit paths outside it.\n"
-            f"- Session output (reports, scratch files) still goes under `/output/`.\n"
+            f"still applies to the shell.\n"
+            f"{edit_line}"
+            f"{instructions}"
         )
     if include_unmapped:
         return (
@@ -685,6 +1006,33 @@ def _maybe_file_attachment_filename(model: Any) -> Any | None:
     return maybe_for_model(model)
 
 
+def _playwright_pruning(model: Any) -> Any:
+    """Snapshot pruning, without the sliding message window on oMLX.
+
+    The window drops the oldest message on every step once a run passes its
+    cap, which moves everything after the system prompt and defeats oMLX's
+    prefix cache (re-prefill of ~20k tokens per step). Summarization still
+    bounds context growth there.
+    """
+    from middleware.playwright_pruning import PlaywrightSnapshotPruningMiddleware
+
+    if type(model).__name__ == "_OMLXChat":
+        return PlaywrightSnapshotPruningMiddleware(max_messages=None)
+    return PlaywrightSnapshotPruningMiddleware()
+
+
+def _maybe_duplicate_read(provider: str | None) -> Any | None:
+    """Return middleware that short-circuits an unchanged ``read_file`` on oMLX.
+
+    A second copy of a file that is already in the prompt adds a full prefill
+    and nothing new. Other providers keep the body so their own caches are
+    left alone.
+    """
+    from middleware.duplicate_read import maybe_for_provider
+
+    return maybe_for_provider(provider)
+
+
 def _maybe_file_attachment_limit(model: Any) -> Any | None:
     """Return a ``FileAttachmentLimitMiddleware`` for OpenAI-compatible models.
 
@@ -850,6 +1198,12 @@ def _build_standard_tools(
         tools.append(CheckDatesTool())
     except Exception as exc:
         logger.warning("Standard tool check_dates: could not load — %s", exc)
+    if session_id:
+        try:
+            from backend.project_tools import build_project_tools
+            tools.extend(build_project_tools(session_id))
+        except Exception as exc:
+            logger.warning("Project tools: could not load — %s", exc)
     try:
         if decide_enabled is None:
             from backend.config import AppConfig
@@ -917,6 +1271,27 @@ def _apply_universal_loop_guard(
             "Universal loop guard (%s): could not apply — %s", scope, exc
         )
         return None
+
+
+def _insert_stale_reply_guard(middleware: list[Any], *, scope: str) -> None:
+    """Add the guard against re-sending an earlier turn's answer.
+
+    Orchestrator only: it compares against earlier user turns, which only the
+    chat-facing agent has. Without it a long session can answer "still broken"
+    with its last "fixed" summary word for word and never touch the code.
+    """
+    try:
+        from middleware.react_middleware import MLXReActMiddleware
+        from middleware.stale_reply_guard import StaleReplyGuardMiddleware
+
+        idx = 0
+        for i, mw in enumerate(middleware):
+            if isinstance(mw, MLXReActMiddleware):
+                idx = i + 1
+                break
+        middleware.insert(idx, StaleReplyGuardMiddleware())
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Stale-reply guard (%s): could not apply — %s", scope, exc)
 
 
 def _insert_repeated_thought_guard(middleware: list[Any], *, scope: str) -> None:
@@ -1034,11 +1409,15 @@ def _enter_action_scope(session: "Session") -> tuple[Any, Any]:
     from backend.action_policy.gate import is_unattended
     from backend.action_policy.runtime import RunScope, begin_invocation, set_scope
 
+    from backend.session_mode import effective_mode
+
+    unattended = is_unattended(session.trigger_source)
     scope = RunScope(
         session_id=session.id,
-        attended=not is_unattended(session.trigger_source),
+        attended=not unattended,
         allowlist=_action_allowlist(session),
         agent_name=session.agent_name,
+        mode=effective_mode(session.mode, unattended=unattended),
     )
     return set_scope(scope), begin_invocation()
 
@@ -1097,6 +1476,23 @@ def _bind_decision_flags(session: Any, config: AppConfig) -> None:
     """
     session.decide_bound = bool(config.decision.enabled)
     session.safety_bound = bool(config.decision.safety_guard_enabled)
+    session.model_bound = _model_signature(
+        config, getattr(session, "distill_catalog_id", None)
+    )
+
+
+def _model_signature(config: Any, distill_catalog_id: str | None) -> tuple[str, str]:
+    """``(provider, model_id)`` a graph built from *config* would chat with.
+
+    Stamped on each session when its graph is built and compared at the start
+    of every turn, so picking another model in the UI reaches chats that are
+    already open (the old model is otherwise baked into the live graph).
+    """
+    cid = _effective_distill_catalog_id(distill_catalog_id, config)
+    provider = _distill_session_provider(cid, config)
+    if cid:
+        return provider, cid
+    return provider, _provider_model_for_main(config)[1]
 
 
 def _append_date_context(middleware: list[Any]) -> None:
@@ -1122,6 +1518,7 @@ def _build_gp_subagent(
     memory_middleware: list[Any] | None = None,
     session_id: str | None = None,
     safety_guard: bool = False,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Build the general-purpose subagent as a ``CompiledSubAgent``.
 
@@ -1190,7 +1587,7 @@ def _build_gp_subagent(
     # balloon the context window.
     if pw_pool is not None:
         from middleware.playwright_pruning import PlaywrightSnapshotPruningMiddleware
-        middleware.insert(0, PlaywrightSnapshotPruningMiddleware())
+        middleware.insert(0, _playwright_pruning(model))
         logger.info("Playwright snapshot pruning enabled for general-purpose subagent")
 
     # ReAct shim for text-only on-device models — same rationale as the
@@ -1228,6 +1625,10 @@ def _build_gp_subagent(
     file_attachment_limit = _maybe_file_attachment_limit(model)
     if file_attachment_limit is not None:
         middleware.append(file_attachment_limit)
+
+    duplicate_read = _maybe_duplicate_read(provider)
+    if duplicate_read is not None:
+        middleware.append(duplicate_read)
 
     # Last-resort context-window enforcement.  Appended at the END so it
     # runs innermost — sees the request after every other middleware
@@ -1311,6 +1712,7 @@ def _build_named_agent_subagent(
     memory_middleware: list[Any] | None = None,
     session_id: str | None = None,
     safety_guard: bool = False,
+    provider: str | None = None,
 ) -> dict[str, Any] | None:
     """Build a ``CompiledSubAgent`` that runs *agent_name* as a subagent.
 
@@ -1373,7 +1775,7 @@ def _build_named_agent_subagent(
 
     if pw_pool is not None:
         from middleware.playwright_pruning import PlaywrightSnapshotPruningMiddleware
-        middleware.insert(0, PlaywrightSnapshotPruningMiddleware())
+        middleware.insert(0, _playwright_pruning(model))
 
     react_shim = _maybe_react_shim(model)
     if react_shim is not None:
@@ -1390,6 +1792,10 @@ def _build_named_agent_subagent(
     file_attachment_limit = _maybe_file_attachment_limit(model)
     if file_attachment_limit is not None:
         middleware.append(file_attachment_limit)
+
+    duplicate_read = _maybe_duplicate_read(provider)
+    if duplicate_read is not None:
+        middleware.append(duplicate_read)
 
     ctx_trunc = _maybe_context_truncation(model)
     if ctx_trunc is not None:
@@ -2110,7 +2516,7 @@ def _compile_library_subagent(
     _append_action_policy(middleware, agent_name=agent_spec.name)
 
     if "playwright-mcp" in required_ids:
-        middleware.insert(0, PlaywrightSnapshotPruningMiddleware())
+        middleware.insert(0, _playwright_pruning(model))
         logger.info(
             "Playwright snapshot pruning enabled for %r",
             agent_spec.name,
@@ -2360,6 +2766,8 @@ class Session:
         # graph (see ``_reconcile_decide``).
         self.decide_bound: bool = False
         self.safety_bound: bool = False
+        # (provider, model id) the graph was built with; see ``_model_signature``.
+        self.model_bound: Optional[tuple[str, str]] = None
         # Chat model for this session. Used by the Auto run-depth judge,
         # which must run before the graph so Quick limits are already on.
         self.llm: Any = None
@@ -2396,6 +2804,9 @@ class Session:
         self.eval_pass_count: Optional[int] = None
         self.eval_total: Optional[int] = None
         self.workspace: Optional[SessionWorkspace] = None
+        self.linked_files: list[str] = []
+        # agent | ask | plan | debug. See backend/session_mode.py.
+        self.mode: str = "agent"
 
     def accumulate_mlx_stats(self, stats: dict) -> None:
         """Fold a single turn's MLX ``response_metadata`` stats into the
@@ -2473,6 +2884,8 @@ class Session:
             eval_pass_count=self.eval_pass_count,
             eval_total=self.eval_total,
             workspace=self.workspace,
+            linked_files=list(self.linked_files),
+            mode=self.mode,
             distill_catalog_id=self.distill_catalog_id or None,
             **self._throughput_fields(),
         )
@@ -2496,6 +2909,10 @@ class Session:
 
 
 _SESSION_IDLE_TIMEOUT_SECS = 30 * 60  # 30 minutes
+# Interactive chats have no end, so auto-eval waits until the user has
+# stopped sending messages. Schedule, trigger, and other one-shot runs
+# do not use this delay.
+_EVAL_IDLE_SECS = 120
 _MEMORY_EXTRACTION_INTERVAL = 3
 _MAX_SESSION_HISTORY = 50
 
@@ -2624,7 +3041,13 @@ class SessionManager:
 
     def __init__(self) -> None:
         self._active: dict[str, Session] = {}
+        # Session ids whose graph is being built and are not in ``_active``
+        # yet. ``_mode_for`` treats only this window as Agent-by-default.
+        self._opening: set[str] = set()
         self._eviction_task: Optional[asyncio.Task] = None
+        # Chat auto-eval timers, keyed by session id. One-shot runs do not
+        # use this; they evaluate as soon as the turn finishes.
+        self._eval_idle: dict[str, asyncio.Task] = {}
 
     async def _build_graph(
         self,
@@ -2867,8 +3290,19 @@ class SessionManager:
 
         files_dir = _session_files_dir(session_id)
         workspace = _read_workspace_meta(session_id)
-        project_root = Path(workspace.host_path) if workspace else None
-        backend = _make_backend(files_dir, project_root=project_root)
+        granted = workspace is not None and bool(workspace.grant_id)
+        project_root = Path(workspace.host_path) if granted else None
+        from backend.workspace_policy import allowance_for_session
+        grant_roots, linked_paths = allowance_for_session(session_id)
+        backend = _make_backend(
+            files_dir,
+            project_root=project_root,
+            grant_mode=workspace.mode if granted and workspace else "write",
+            grant_roots=grant_roots,
+            linked_files=linked_paths,
+            session_id=session_id,
+            mode_getter=lambda: self._mode_for(session_id),
+        )
 
         # --- Playwright browser isolation pool ---
         # When Playwright MCP is connected, create a pool of ephemeral
@@ -2894,7 +3328,12 @@ class SessionManager:
         mcp_builder_tools = build_mcp_builder_tools()
         schedule_tools = build_schedule_tools()
         trigger_tools = build_trigger_tools(agent_name=agent_name)
-        file_tools = build_file_tools(files_dir, vision_llm=_file_vision_llm)
+        file_tools = build_file_tools(
+            files_dir,
+            vision_llm=_file_vision_llm,
+            grant_roots=grant_roots,
+            linked_files=linked_paths,
+        )
         # watch_video lets the agent watch uploaded/recorded/YouTube videos.
         # The frame-based fallback path needs a vision-capable model: the main
         # model when it natively sees images, else the MLX VLM fallback (None
@@ -3109,6 +3548,7 @@ class SessionManager:
                 memory_middleware=memory_middleware or None,
                 session_id=session_id,
                 safety_guard=safety_guard_on,
+                provider=_orch_provider,
             )
             # Also register the current named agent as a self-subagent so the
             # orchestrator can delegate subtasks to it via
@@ -3126,6 +3566,7 @@ class SessionManager:
                 memory_middleware=memory_middleware or None,
                 session_id=session_id,
                 safety_guard=safety_guard_on,
+                provider=_orch_provider,
             )
             if named_subagent is not None:
                 subagents = [gp_subagent, named_subagent]
@@ -3219,6 +3660,7 @@ class SessionManager:
                 memory_middleware=memory_middleware or None,
                 session_id=session_id,
                 safety_guard=safety_guard_on,
+                provider=_orch_provider,
             )
             if subagents is None:
                 subagents = [gp_subagent]
@@ -3274,7 +3716,7 @@ class SessionManager:
         # ``_build_subagents_from_library`` / ``_build_gp_subagent``.
         if main_has_playwright:
             from middleware.playwright_pruning import PlaywrightSnapshotPruningMiddleware
-            extra_middleware.insert(0, PlaywrightSnapshotPruningMiddleware())
+            extra_middleware.insert(0, _playwright_pruning(graph_llm))
             logger.info(
                 "Playwright snapshot pruning enabled for main orchestrator (agent=%s)",
                 agent_name or "general-purpose",
@@ -3354,6 +3796,13 @@ class SessionManager:
             logger.info(
                 "File-attachment limit fix enabled for main orchestrator (model=%s)",
                 type(graph_llm).__name__,
+            )
+
+        orchestrator_duplicate_read = _maybe_duplicate_read(_orch_provider)
+        if orchestrator_duplicate_read is not None:
+            extra_middleware.append(orchestrator_duplicate_read)
+            logger.info(
+                "Unchanged read_file short-circuit enabled for main orchestrator"
             )
 
         # Last-resort context-window enforcement for the main orchestrator.
@@ -3460,6 +3909,16 @@ class SessionManager:
                 f"schedule when continuity with previous runs is useful.\n"
             )
 
+        system_prompt += (
+            "\n## When the user says a fix did not work\n"
+            "- If the user reports an error or says a problem is still there, your "
+            "earlier fix failed. Do not repeat or restate your earlier summary. "
+            "Re-read the files and re-run the failing command in THIS turn, quote "
+            "what you see, then change something different.\n"
+            "- Say a problem is fixed only after a check you ran this turn "
+            "passed. If a build or test still fails, say so.\n"
+        )
+
         system_prompt += "\n" + build_distilled_adapters_prompt_block(distill_catalog_id)
 
         _insert_safety_guard(
@@ -3469,12 +3928,19 @@ class SessionManager:
             check_input=True,
         )
         _insert_repeated_thought_guard(extra_middleware, scope="orchestrator")
+        _insert_stale_reply_guard(extra_middleware, scope="orchestrator")
         try:
             from middleware.run_depth import RunDepthMiddleware
 
             extra_middleware.append(RunDepthMiddleware())
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("Run depth: could not apply — %s", exc)
+        try:
+            from middleware.session_mode import SessionModeMiddleware
+
+            extra_middleware.append(SessionModeMiddleware(lambda: self._mode_for(session_id)))
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Session mode: could not apply — %s", exc)
         _append_date_context(extra_middleware)
 
         # Cap concurrent ``task`` (subagent) calls so a wide fan-out can't
@@ -3524,7 +3990,37 @@ class SessionManager:
     ) -> Session:
         config.apply_to_environ()
         session_id = str(uuid.uuid4())
+        self._opening.add(session_id)
+        try:
+            return await self._create_session_opened(
+                config,
+                session_id,
+                agent_name=agent_name,
+                is_scheduled_run=is_scheduled_run,
+                schedule_id=schedule_id,
+                trigger_source=trigger_source,
+                trigger_id=trigger_id,
+                parent_session_id=parent_session_id,
+                chain_depth=chain_depth,
+                distill_catalog_id=distill_catalog_id,
+            )
+        finally:
+            self._opening.discard(session_id)
 
+    async def _create_session_opened(
+        self,
+        config: AppConfig,
+        session_id: str,
+        *,
+        agent_name: Optional[str],
+        is_scheduled_run: bool,
+        schedule_id: Optional[str],
+        trigger_source: Optional[str],
+        trigger_id: Optional[str],
+        parent_session_id: Optional[str],
+        chain_depth: int,
+        distill_catalog_id: Optional[str],
+    ) -> Session:
         sqlite_conn = await _connect_checkpoint_db()
         checkpointer = AsyncSqliteSaver(sqlite_conn)
         await checkpointer.setup()
@@ -3657,6 +4153,17 @@ class SessionManager:
         if session_id in self._active:
             return self._active[session_id]
 
+        self._opening.add(session_id)
+        try:
+            return await self._resume_session_opened(session_id, config)
+        finally:
+            self._opening.discard(session_id)
+
+    async def _resume_session_opened(
+        self,
+        session_id: str,
+        config: AppConfig,
+    ) -> Optional[Session]:
         meta_path = _sessions_dir() / f"{session_id}.json"
         if not await asyncio.to_thread(meta_path.exists):
             return None
@@ -3734,6 +4241,9 @@ class SessionManager:
         session.eval_pass_count = info.eval_pass_count
         session.eval_total = info.eval_total
         session.workspace = info.workspace
+        session.linked_files = list(info.linked_files or [])
+        from backend.session_mode import normalize_mode
+        session.mode = normalize_mode(info.mode)
         self._active[session_id] = session
         logger.info("Resumed session %s (%s)", session_id, info.title)
         return session
@@ -3755,6 +4265,7 @@ class SessionManager:
                     is_scheduled_run=session.trigger_source == "schedule",
                     schedule_id=session.schedule_id,
                     live_output_queue=session.live_output_queue,
+                    distill_catalog_id=session.distill_catalog_id,
                 )
             except Exception as exc:
                 logger.warning(
@@ -3787,17 +4298,33 @@ class SessionManager:
     async def _rebuild_one_session(self, session: Session, config: AppConfig) -> None:
         """Swap *session*'s graph for a freshly built one (workspace, tools)."""
         old_tool_set = session.tool_set
+        old_model = getattr(session, "model_bound", None)
+        # A distilled bind is dropped when Turbo now points at another model.
+        cid = _effective_distill_catalog_id(session.distill_catalog_id, config)
         graph, mcp_mgr, _, llm = await self._build_graph(
             config, session.agent_name, session.id, session._checkpointer,
             is_scheduled_run=session.trigger_source == "schedule",
             schedule_id=session.schedule_id,
             live_output_queue=session.live_output_queue,
-            distill_catalog_id=session.distill_catalog_id,
+            distill_catalog_id=cid,
         )
         session.graph = graph
         session.tool_set = mcp_mgr
         session.llm = llm
+        session.distill_catalog_id = cid
+        session.llm_provider = _distill_session_provider(cid, config)
         _bind_decision_flags(session, config)
+        if old_model is not None and old_model != session.model_bound:
+            # Cost and run metrics follow the model the chat now uses.
+            session.model = cid
+            logger.info(
+                "Session %s switched model %s -> %s",
+                session.id, old_model, session.model_bound,
+            )
+            try:
+                await session.save_meta_async()
+            except Exception:
+                logger.debug("Could not save meta after model switch", exc_info=True)
         if old_tool_set is not None:
             try:
                 await old_tool_set.close()
@@ -3805,9 +4332,11 @@ class SessionManager:
                 logger.debug("Error closing old tool set for session %s", session.id, exc_info=True)
 
     async def _reconcile_decide(self, session: Session) -> dict[str, Any] | None:
-        """Rebuild an idle session whose graph disagrees with the Jev settings.
+        """Rebuild an idle session whose graph disagrees with the saved settings.
 
-        Covers both the ``jev`` tool and the safety guardrail. Runs at the
+        Covers the ``jev`` tool, the safety guardrail, and the chat model
+        (provider + model id), so picking another model in the UI applies to
+        chats that are already open. Runs at the
         start of each new user turn, like the privacy-lock check, so flipping
         a setting reaches chats that are already open. A running session is
         left alone: swapping its graph would close the tool set the current
@@ -3827,21 +4356,40 @@ class SessionManager:
         guard_wanted = bool(config.decision.safety_guard_enabled)
         if session.status == "running":
             return None
-        if session.decide_bound == tool_wanted and session.safety_bound == guard_wanted:
+        bound_model = getattr(session, "model_bound", None)
+        model_changed = bound_model is not None and bound_model != _model_signature(
+            config, getattr(session, "distill_catalog_id", None)
+        )
+        if (
+            session.decide_bound == tool_wanted
+            and session.safety_bound == guard_wanted
+            and not model_changed
+        ):
             return None
         try:
             await self._rebuild_one_session(session, config)
             logger.info(
-                "Session %s rebuilt: jev tool %s, safety guardrail %s",
+                "Session %s rebuilt: jev tool %s, safety guardrail %s, model changed %s",
                 session.id,
                 "on" if tool_wanted else "off",
                 "on" if guard_wanted else "off",
+                model_changed,
             )
         except Exception as exc:
             logger.warning(
                 "jev reconcile failed for session %s — keeping existing graph: %s",
                 session.id, exc,
             )
+            if model_changed:
+                return {
+                    "type": "error",
+                    "content": (
+                        "The model was changed, but this chat could not switch to it "
+                        f"({exc}). Nothing was run. Check the model in the picker, "
+                        "or start a new chat."
+                    ),
+                    "metadata": {"error_code": "model_switch_failed"},
+                }
             if guard_wanted and not session.safety_bound:
                 return {
                     "type": "error",
@@ -3861,6 +4409,80 @@ class SessionManager:
             await start_deferred_if_idle()
         except Exception:
             logger.debug("deferred distill start failed", exc_info=True)
+
+    def _depth_for_mode(self, session: Session, depth: Optional[str]) -> Optional[str]:
+        """Plan and Debug always run Deep. Quick would reject planning tools.
+
+        The stored ``requested_depth`` is left alone, so going back to Agent
+        restores whatever the user had picked.
+        """
+        from backend.session_mode import DEEP_MODES
+
+        if self._mode_for(session.id) in DEEP_MODES:
+            return "deep"
+        return depth
+
+    def _mode_for(self, session_id: str) -> str:
+        """The mode that applies to *session_id* right now.
+
+        Read at every guarded call, not captured when the graph was built.
+        A session that is in ``_opening`` is still being created or resumed:
+        creation has no file yet and stays Agent, and a resume uses the mode
+        already stored on disk. Anything else that is not in ``_active`` is
+        Plan, so a missing session cannot write. Scheduled and trigger runs
+        are always Agent once the session is known.
+        """
+        from backend.action_policy.gate import is_unattended
+        from backend.session_mode import effective_mode
+
+        session = self._active.get(session_id)
+        if session is not None:
+            return effective_mode(session.mode, unattended=is_unattended(session.trigger_source))
+        if session_id in self._opening:
+            return self._mode_while_opening(session_id)
+        return "plan"
+
+    def _mode_while_opening(self, session_id: str) -> str:
+        """Mode for a session whose graph is still being built.
+
+        No meta file means this is creation, which starts as Agent. A file
+        that cannot be read fails closed to Plan. A stored schedule or
+        trigger run stays Agent.
+        """
+        from backend.action_policy.gate import is_unattended
+        from backend.session_mode import effective_mode
+
+        meta_path = _sessions_dir() / f"{session_id}.json"
+        try:
+            if not meta_path.is_file():
+                return "agent"
+            raw = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("mode lookup failed for opening session %s", session_id, exc_info=True)
+            return "plan"
+        if not isinstance(raw, dict):
+            return "plan"
+        return effective_mode(raw.get("mode"), unattended=is_unattended(raw.get("trigger_source")))
+
+    async def set_mode(self, session_id: str, mode: str) -> Session:
+        """Change a session's mode. Takes effect on the next guarded call."""
+        from backend.session_mode import MODES
+
+        if mode not in MODES:
+            raise ValueError(f"Unknown mode: {mode!r}")
+        from backend.state import running_tasks
+        task = running_tasks.get(session_id)
+        if task is not None and not task.done():
+            raise RuntimeError("Cannot change mode while a run is in progress")
+        session = self._active.get(session_id)
+        if session is None:
+            session = await self.resume_session(session_id, await AppConfig.aload())
+            if session is None:
+                raise FileNotFoundError(f"Session not found: {session_id}")
+        session.mode = mode
+        session.updated_at = datetime.now(timezone.utc)
+        await session.save_meta_async()
+        return session
 
     async def set_workspace(
         self,
@@ -3907,13 +4529,27 @@ class SessionManager:
 
     async def delete_session(self, session_id: str) -> None:
         """Close an active session (if any) and remove its files from disk."""
+        self._cancel_pending_eval(session_id)
         import shutil
 
         from backend.session_transcript import delete_transcript
 
         session = self._active.pop(session_id, None)
-        if session:
+        host: str | None = None
+        if session is not None:
+            if session.workspace is not None:
+                host = session.workspace.host_path
             await session.close()
+        else:
+            meta_path = _sessions_dir() / f"{session_id}.json"
+            if meta_path.is_file():
+                try:
+                    data = json.loads(meta_path.read_text(encoding="utf-8"))
+                    raw = data.get("workspace") if isinstance(data, dict) else None
+                    if isinstance(raw, dict) and isinstance(raw.get("host_path"), str):
+                        host = raw["host_path"]
+                except (OSError, json.JSONDecodeError):
+                    host = None
 
         def _remove_session_files() -> None:
             meta_path = _sessions_dir() / f"{session_id}.json"
@@ -3926,6 +4562,8 @@ class SessionManager:
             delete_transcript(session_id)
             if session_dir.exists():
                 shutil.rmtree(session_dir, ignore_errors=True)
+            from backend.workspace_git import forget_session
+            forget_session(session_id, Path(host) if host else None)
 
         await asyncio.to_thread(_remove_session_files)
         try:
@@ -4567,6 +5205,7 @@ class SessionManager:
         # Mark run complete and compute cost
         now = datetime.now(timezone.utc)
         session.status = "completed"
+        self._persist_plan(session_id, state)
         session.finished_at = now
         session.duration_ms = int((now - session.created_at).total_seconds() * 1000)
         try:
@@ -4591,23 +5230,86 @@ class SessionManager:
         # generator and skips any code after the yield. Persisting meta and
         # kicking off the (fire-and-forget) evaluation here guarantees both run
         # for every completion path, not just ones that keep iterating.
+        try:
+            from backend.project_tools import auto_project_check
+            note = await asyncio.to_thread(auto_project_check, session.id)
+            if note:
+                item = {"type": "agent", "content": note}
+                await _append_message_async(session.id, item)
+                yield item
+        except Exception:
+            logger.debug("project check failed", exc_info=True)
         await session.save_meta_async()
         await self._maybe_start_deferred_distill()
         await self._maybe_evaluate_run(session)
         yield {"type": "done", "content": ""}
 
+    def _persist_plan(self, session_id: str, state: Any) -> None:
+        """Create or replace ``output/plan.md`` from a finished Plan turn."""
+        from backend.session_mode import final_assistant_text, store_plan_markdown
+
+        try:
+            if self._mode_for(session_id) != "plan":
+                return
+            values = getattr(state, "values", None) or {}
+            messages = values.get("messages") if isinstance(values, dict) else None
+            reply = final_assistant_text(messages or [])
+            if store_plan_markdown(_session_files_dir(session_id), reply):
+                logger.info("plan file updated session=%s", session_id)
+        except Exception:
+            logger.debug("plan file save failed", exc_info=True)
+
+    def _cancel_pending_eval(self, session_id: str) -> None:
+        """Drop a chat's idle-eval timer and any eval that already started."""
+        idle = getattr(self, "_eval_idle", None)
+        if isinstance(idle, dict):
+            timer = idle.pop(session_id, None)
+            if timer is not None and not timer.done():
+                timer.cancel()
+        from backend.eval_runner import cancel_evaluation
+        cancel_evaluation(session_id)
+
+    def _schedule_chat_eval(self, session_id: str) -> None:
+        """Score a chat once it has been idle. Replaces any earlier timer.
+
+        Does not cancel an eval that already started: that happens when the
+        next turn begins, not when this turn arms the wait.
+        """
+        idle = getattr(self, "_eval_idle", None)
+        if not isinstance(idle, dict):
+            idle = {}
+            self._eval_idle = idle
+        timer = idle.pop(session_id, None)
+        if timer is not None and not timer.done():
+            timer.cancel()
+
+        async def _fire() -> None:
+            await asyncio.sleep(_EVAL_IDLE_SECS)
+            if self._eval_idle.get(session_id) is not asyncio.current_task():
+                return
+            self._eval_idle.pop(session_id, None)
+            from backend.eval_runner import launch_evaluation
+            launch_evaluation(session_id)
+
+        idle[session_id] = asyncio.create_task(_fire())
+
     async def _maybe_evaluate_run(self, session: "Session") -> None:
         """Kick off a background end-of-run evaluation when enabled.
 
-        Fire-and-forget (same pattern as memory consolidation / transcript
-        indexing) so the run's ``done`` event is never delayed.  Best-effort.
+        Interactive chats wait until the session has been idle, because a
+        chat never closes. Any run with a trigger source (schedule, trigger,
+        spawn, and anything added later) is one-shot and evaluates now.
+        Fire-and-forget so the run's ``done`` event is never delayed.
         """
         try:
             cfg = await AppConfig.aload()
             if not cfg.evaluation.auto_evaluate:
                 return
-            from backend.eval_runner import launch_evaluation
-            launch_evaluation(session.id)
+            if session.trigger_source is not None:
+                from backend.eval_runner import launch_evaluation
+                launch_evaluation(session.id)
+                return
+            self._schedule_chat_eval(session.id)
         except Exception:
             logger.debug("Auto-evaluation trigger failed", exc_info=True)
 
@@ -4672,6 +5374,7 @@ class SessionManager:
         """Stream agent responses for a user message."""
         from langchain_core.messages import HumanMessage
 
+        self._cancel_pending_eval(session_id)
         session = await self._ensure_session(session_id)
         if not session:
             yield {"type": "error", "content": "Session not found"}
@@ -4706,6 +5409,7 @@ class SessionManager:
             session.requested_depth = depth
         elif session.requested_depth:
             depth = session.requested_depth
+        depth = self._depth_for_mode(session, depth)
 
         run_config = {"configurable": {"thread_id": session_id}, "recursion_limit": session.recursion_limit}
 
@@ -4780,12 +5484,22 @@ class SessionManager:
         finally:
             _exit_action_scope(scope_token, invocation_token)
 
+    @staticmethod
+    async def _mark_running(session: "Session") -> None:
+        """Flip a session that was waiting on the user (or idle) back to running."""
+        if session.status == "running":
+            return
+        session.status = "running"
+        session.updated_at = datetime.now(timezone.utc)
+        await session.save_meta_async()
+
     async def stream_resume(
         self,
         session_id: str,
         decisions: list[dict[str, Any]],
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Resume a paused graph after a HITL decision."""
+        self._cancel_pending_eval(session_id)
         session = await self._ensure_session(session_id)
         if not session:
             yield {"type": "error", "content": "Session not found"}
@@ -4796,6 +5510,10 @@ class SessionManager:
             yield privacy_err
             return
 
+        # The pause persisted "awaiting_input". The user has answered, so the
+        # run is executing again. Without this the Runs page (and the chat
+        # poll) keep reporting a blocked run until the whole resume ends.
+        await self._mark_running(session)
         scope_token, invocation_token = _enter_action_scope(session)
         try:
             run_config = {"configurable": {"thread_id": session_id}, "recursion_limit": session.recursion_limit}
@@ -4864,6 +5582,7 @@ class SessionManager:
         """Edit a user message and replay the graph from that point."""
         from langchain_core.messages import HumanMessage
 
+        self._cancel_pending_eval(session_id)
         session = await self._ensure_session(session_id)
         if not session:
             yield {"type": "error", "content": "Session not found"}
@@ -4895,6 +5614,7 @@ class SessionManager:
             session.requested_depth = depth
         elif session.requested_depth:
             depth = session.requested_depth
+        depth = self._depth_for_mode(session, depth)
         mode, source, reason = await self._choose_run_depth(
             session, new_content, depth, prior_msgs,
         )
@@ -4927,6 +5647,7 @@ class SessionManager:
             yield {"type": "memory_search", "content": "Searching memory…"}
 
         session.updated_at = datetime.now(timezone.utc)
+        session.status = "running"
 
         forked_state = await session.graph.aget_state(new_config)
         existing_count = len(forked_state.values.get("messages", []))

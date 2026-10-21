@@ -606,10 +606,10 @@ export function AgentGraph({ messages, onClose, fullPanel = false, durations = {
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-th-border/60 bg-th-bg-secondary/80 backdrop-blur-xl shrink-0">
-        <div className="flex items-center gap-1.5 text-[11px] text-th-text-secondary font-medium">
+        <div className="flex items-center gap-1.5 text-2xs text-th-text-secondary font-medium">
           <GitBranch size={11} className="text-blue-400" />
           Agent graph
-          <span className="text-[10px] text-th-text-muted/70 ml-1 tabular-nums">
+          <span className="text-2xs text-th-text-muted/70 ml-1 tabular-nums">
             {subagentCount} subagent{subagentCount !== 1 ? "s" : ""} · {toolCount} tool{toolCount !== 1 ? "s" : ""}
           </span>
         </div>
@@ -621,7 +621,7 @@ export function AgentGraph({ messages, onClose, fullPanel = false, durations = {
           >
             <ZoomOut size={12} />
           </button>
-          <span className="text-[10px] text-th-text-muted w-9 text-center tabular-nums">
+          <span className="text-2xs text-th-text-muted w-9 text-center tabular-nums">
             {Math.round(zoom * 100)}%
           </span>
           <button
@@ -672,7 +672,7 @@ export function AgentGraph({ messages, onClose, fullPanel = false, durations = {
           onWheel={onWheel}
         >
           {/* Hint */}
-          <span className="absolute bottom-1.5 right-2.5 text-[9px] text-th-text-muted/30 pointer-events-none z-10 select-none">
+          <span className="absolute bottom-1.5 right-2.5 text-2xs text-th-text-muted/30 pointer-events-none z-10 select-none">
             drag node to move · drag canvas to pan · scroll to zoom
           </span>
 
@@ -858,24 +858,24 @@ export function AgentGraph({ messages, onClose, fullPanel = false, durations = {
 
               {/* Meta row */}
               <div className="flex gap-2 flex-wrap">
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-th-inset-bg border border-th-border/60 text-th-text-muted capitalize">
+                <span className="text-2xs px-1.5 py-0.5 rounded bg-th-inset-bg border border-th-border/60 text-th-text-muted capitalize">
                   {selected.kind}
                 </span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${selected.status === "done" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"}`}>
+                <span className={`text-2xs px-1.5 py-0.5 rounded border font-medium ${selected.status === "done" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"}`}>
                   {selected.status === "done" ? "done" : "running"}
                 </span>
                 {selected.seq != null && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-th-inset-bg border border-th-border/60 text-th-text-muted tabular-nums">
+                  <span className="text-2xs px-1.5 py-0.5 rounded bg-th-inset-bg border border-th-border/60 text-th-text-muted tabular-nums">
                     step {selected.seq}
                   </span>
                 )}
                 {formatGraphDuration(selected.durationMs) && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 tabular-nums">
+                  <span className="text-2xs px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 tabular-nums">
                     {formatGraphDuration(selected.durationMs)}
                   </span>
                 )}
                 {selected.toolCount > 0 && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-th-inset-bg border border-th-border/60 text-th-text-muted tabular-nums">
+                  <span className="text-2xs px-1.5 py-0.5 rounded bg-th-inset-bg border border-th-border/60 text-th-text-muted tabular-nums">
                     {selected.toolCount} calls
                   </span>
                 )}
@@ -884,7 +884,7 @@ export function AgentGraph({ messages, onClose, fullPanel = false, durations = {
               {/* Args */}
               {selected.args && Object.keys(selected.args).length > 0 && (
                 <div>
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider mb-1.5">Arguments</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider mb-1.5">Arguments</p>
                   <div className="rounded-lg bg-th-inset-bg border border-th-border/50 p-2 space-y-1">
                     {Object.entries(selected.args).map(([k, v]) => (
                       <div key={k} className="text-[10.5px]">
@@ -901,12 +901,12 @@ export function AgentGraph({ messages, onClose, fullPanel = false, durations = {
               {/* Tools used (subagents) */}
               {selected.kind === "subagent" && selected.uniqueTools && selected.uniqueTools.length > 0 && (
                 <div>
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider mb-1.5">Tools used</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider mb-1.5">Tools used</p>
                   <div className="space-y-1">
                     {[...new Set(selected.uniqueTools)].map(t => {
                       const { Icon, className: c } = getToolIcon(t);
                       return (
-                        <div key={t} className="flex items-center gap-1.5 text-[11px] text-th-text-secondary">
+                        <div key={t} className="flex items-center gap-1.5 text-2xs text-th-text-secondary">
                           <Icon size={11} className={c} />
                           {t}
                         </div>
@@ -919,8 +919,8 @@ export function AgentGraph({ messages, onClose, fullPanel = false, durations = {
               {/* Result preview */}
               {selected.resultPreview && (
                 <div>
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider mb-1.5">Result preview</p>
-                  <pre className="text-[11px] text-th-text-muted bg-th-inset-bg border border-th-border/50 rounded-lg p-2 leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto font-mono">
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider mb-1.5">Result preview</p>
+                  <pre className="text-2xs text-th-text-muted bg-th-inset-bg border border-th-border/50 rounded-lg p-2 leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto font-mono">
                     {selected.resultPreview}{selected.resultPreview.length >= RESULT_PREVIEW_MAX ? "…" : ""}
                   </pre>
                 </div>

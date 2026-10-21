@@ -19,13 +19,44 @@ the orchestrator and to every sub-agent. Settings live on
 - After the agent reads mail, messages, or a web page, outbound sends
   that were set to allow drop back to ask, and a session grant does not
   cover them.
+- `write_file` and `edit_file` are `workspace_write`. Inside a folder you
+  allowed, Balanced lets them run and records the decision. Outside that
+  folder the file tools refuse the path even if the category is Allow. A
+  read-only grant blocks those edits and keeps the folder out of the
+  shell's write paths.
 - `execute` and shell triggers run under Seatbelt on macOS when the
-  sandbox is on. Sensitive locations such as `~/.ssh` stay denied. The
-  current session's files directory is re-opened after that deny, so
-  the shell can read uploads and write the output folder. The rest of
-  Otto's app-data directory stays denied. The environment is scrubbed
-  of API keys either way.
+  sandbox is on. Sensitive locations such as `~/.ssh` stay denied even
+  when a write grant covers a parent directory. The current session's
+  files directory is re-opened after that deny, so the shell can read
+  uploads and write the output folder. Ask still does not get write
+  access to it. The rest of Otto's app-data directory stays denied.
+  The environment is scrubbed of API keys either way. Shell reads are
+  not limited to the allowed folder.
   If the sandbox is on and cannot be applied, the command does not run.
+  Inside a folder you allowed, the sandbox also denies writes to `.git`,
+  `.vscode`, `.idea`, `.gitattributes`, `.envrc`, `AGENTS.md`, and
+  `CLAUDE.md`. The file tools refuse those paths as well, including when
+  the sandbox is off. A hook, a task file, or a clean filter planted
+  there would run later, and the instruction files are loaded into the
+  prompt rather than rewritten by the agent.
+  Read-only commands (`git status`, `ls`, `cat`, and the same kind of
+  command) skip the shell approval card. That shortcut applies to
+  `execute` only. A folder can also store command prefixes, such as
+  `npm test*`, that skip the card for `execute` in that project.
+  `git_commit`, `git_branch`, `git_worktree`, `git_pr`, `project_check`,
+  `process_start`, and `process_stop` are shell and still ask.
+  The global network switch still defaults off. A folder can turn shell
+  network on for itself, and a host list limits that traffic to those hosts.
+- Ask and Plan mode (Code tab) are read-only. The policy denies
+  sends, scheduling, desktop control, AppleScript, settings changes, and
+  other writes while a session is in Ask or Plan, whatever the category
+  setting says. The file tools refuse project writes, and Ask refuses every
+  file write. The shell gets no write access to the project, and in Ask it
+  gets no write paths. Seatbelt always allows writes to the system temp
+  folders, so a project in `/tmp` or `/private/var/folders`, or under an
+  extra write path, cannot be shielded from the shell. Ask, Plan, and
+  read-only folders then refuse `execute` for that project. Unattended runs always
+  run as Agent. See [code.md](code.md#modes).
 - Every gated decision is appended to `action_audit.jsonl` in the Otto
   app-data directory.
 

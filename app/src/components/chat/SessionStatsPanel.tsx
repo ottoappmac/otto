@@ -77,7 +77,7 @@ function Stat({
 }) {
   return (
     <span
-      className="inline-flex items-center gap-1.5 text-[11px] text-th-text-secondary"
+      className="inline-flex items-center gap-1.5 text-2xs text-th-text-secondary"
       title={title}
     >
       <span className="text-th-text-tertiary">{icon}</span>
@@ -163,7 +163,7 @@ export default function SessionStatsPanel({
       )}
       {cost != null && cost > 0 && (
         <Stat
-          icon={<span className="text-[11px]">$</span>}
+          icon={<span className="text-2xs">$</span>}
           label=""
           value={cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}
           title={`Estimated cost: $${cost.toFixed(4)}`}

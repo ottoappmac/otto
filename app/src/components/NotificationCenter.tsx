@@ -88,7 +88,7 @@ export default function NotificationCenter({ collapsed }: Props) {
       >
         <Bell size={14} />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1.5 min-w-[16px] h-[16px] flex items-center justify-center rounded-full border-2 border-th-sidebar-bg bg-red-500 text-[9px] font-bold text-white px-0.5">
+          <span className="absolute -top-1 -right-1.5 min-w-[16px] h-[16px] flex items-center justify-center rounded-full border-2 border-th-sidebar-bg bg-red-500 text-2xs font-bold text-white px-0.5">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
@@ -105,7 +105,7 @@ export default function NotificationCenter({ collapsed }: Props) {
               <button
                 onClick={markAllRead}
                 disabled={unreadCount === 0}
-                className="flex items-center gap-1 px-1.5 py-1 rounded text-[11px] text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover transition-all disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-th-text-muted"
+                className="flex items-center gap-1 px-1.5 py-1 rounded text-2xs text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover transition-all disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-th-text-muted"
                 title="Mark all read"
               >
                 <CheckCheck size={13} />
@@ -113,7 +113,7 @@ export default function NotificationCenter({ collapsed }: Props) {
               <button
                 onClick={clear}
                 disabled={items.length === 0}
-                className="flex items-center gap-1 px-1.5 py-1 rounded text-[11px] text-th-text-muted hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-th-text-muted"
+                className="flex items-center gap-1 px-1.5 py-1 rounded text-2xs text-th-text-muted hover:text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-th-text-muted"
                 title="Clear all"
               >
                 <Trash2 size={13} />
@@ -146,9 +146,9 @@ export default function NotificationCenter({ collapsed }: Props) {
                             {item.title}
                           </p>
                           {item.body && (
-                            <p className="text-[11px] text-th-text-muted mt-0.5 line-clamp-2">{item.body}</p>
+                            <p className="text-2xs text-th-text-muted mt-0.5 line-clamp-2">{item.body}</p>
                           )}
-                          <p className="text-[10px] text-th-text-muted mt-1">
+                          <p className="text-2xs text-th-text-muted mt-1">
                             {formatRelativeTime(new Date(item.createdAt).toISOString())}
                           </p>
                         </div>

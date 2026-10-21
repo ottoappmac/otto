@@ -112,7 +112,27 @@ class ActionPolicyMiddleware(AgentMiddleware):
             rate_limit=int(limits.get(category, 0)) if category else 0,
             agent_name=self.agent_name,
             agent_overrides=overrides,
+            session_mode="agent" if scope is None else scope.mode,
         )
+        if decision.effect == "ask" and name == "execute" and session_id:
+            from backend.shell_policy import allow_shell_command
+            from backend.workspace_grants import get_grant
+            from backend.session_manager import _read_workspace_meta
+            workspace = _read_workspace_meta(session_id)
+            rules: list[str] = []
+            if workspace is not None and workspace.grant_id:
+                grant = get_grant(workspace.grant_id)
+                if grant is not None:
+                    rules = list(grant.shell_allow)
+            reason = allow_shell_command(
+                str(args.get("command") or ""),
+                labels=decision.labels,
+                rules=rules,
+            )
+            if reason:
+                decision = ActionDecision(
+                    "allow", decision.category, decision.labels, False, decision.no_auto_approve, reason,
+                )
         return decision, name, args, server
 
     def _audit(self, decision: ActionDecision, name: str, server: str | None, args: dict, effect: str) -> None:

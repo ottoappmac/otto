@@ -96,6 +96,31 @@ def test_caps_total_entries_for_pathological_trees(tmp_path, monkeypatch):
     assert len(resp.json()) == 25
 
 
+_PNG_1X1 = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
+)
+
+
+def test_image_download_is_inline_png(tmp_path, monkeypatch):
+    sid = _session_id()
+    files_dir = tmp_path / sid / "files"
+    (files_dir / "uploads").mkdir(parents=True)
+    (files_dir / "uploads" / "images.png").write_bytes(_PNG_1X1)
+    (files_dir / "notes.txt").write_text("hello")
+    monkeypatch.setattr(sessions_routes, "_session_files_dir", lambda s: files_dir)
+
+    png = _client().get(f"/api/sessions/{sid}/files/uploads/images.png")
+    assert png.status_code == 200
+    assert png.headers["content-type"].startswith("image/png")
+    assert "inline" in png.headers["content-disposition"]
+    assert png.content == _PNG_1X1
+
+    text = _client().get(f"/api/sessions/{sid}/files/notes.txt")
+    assert text.status_code == 200
+    assert "attachment" in text.headers["content-disposition"]
+
+
 def test_missing_files_dir_returns_empty_list(tmp_path, monkeypatch):
     sid = _session_id()
     files_dir = tmp_path / sid / "files"  # never created

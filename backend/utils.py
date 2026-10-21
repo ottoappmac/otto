@@ -72,15 +72,24 @@ def remap_to_virtual_path(key: str, root: Path) -> str:
     return "/" + posix
 
 
-def is_resolved_path_allowed(full: Path, root: Path, vpath: str) -> bool:
+def is_resolved_path_allowed(
+    full: Path,
+    root: Path,
+    vpath: str,
+    *,
+    grant_roots: list[Path] | None = None,
+    linked_files: list[Path] | None = None,
+) -> bool:
     """Return True if *full* is allowed once symlinks are resolved.
 
     Defense-in-depth for the virtual filesystem: after the lexical containment
     check, re-resolve symlinks so a link planted inside the session root cannot
-    be used to read or write a real path outside it.  Legitimate user-dropped
-    escapes live exclusively under the ``/links/`` mount (created by the session
-    links API), so a resolved path that escapes *root* is permitted only when its
-    virtual path is under ``/links/``.
+    be used to read or write a real path outside it.
+
+    An escape is allowed only when the virtual path is under ``/links/`` and
+    the resolved path sits inside a folder grant for this session, or is a
+    file the user explicitly dropped (``linked_files``). A symlink the agent
+    creates under ``/links/`` does not widen the boundary.
 
     *vpath* is the session-virtual path (always leading-slash form, e.g.
     ``/links/foo/bar.txt``).  Both sides are resolved to normalize platform
@@ -89,7 +98,21 @@ def is_resolved_path_allowed(full: Path, root: Path, vpath: str) -> bool:
     resolved = full.resolve()
     if resolved.is_relative_to(root.resolve()):
         return True
-    return vpath.lstrip("/").split("/", 1)[0] == "links"
+    if vpath.lstrip("/").split("/", 1)[0] != "links":
+        return False
+    for grant_root in grant_roots or []:
+        try:
+            if resolved.is_relative_to(Path(grant_root).expanduser().resolve()):
+                return True
+        except (OSError, ValueError):
+            continue
+    for linked in linked_files or []:
+        try:
+            if resolved == Path(linked).expanduser().resolve():
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def extract_text_content(content: Any) -> str:

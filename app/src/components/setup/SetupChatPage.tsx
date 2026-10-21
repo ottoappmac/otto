@@ -2015,7 +2015,7 @@ resolveLastAssistant(
             ].map(({ icon: Icon, label }) => (
               <span
                 key={label}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-th-surface border border-th-border text-[11px] text-th-text-muted"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-th-surface border border-th-border text-2xs text-th-text-muted"
               >
                 <Icon className="w-3 h-3" />
                 {label}
@@ -2023,13 +2023,13 @@ resolveLastAssistant(
             ))}
           </div>
 
-          <p className="text-[11px] text-th-text-muted text-center mt-5">
+          <p className="text-2xs text-th-text-muted text-center mt-5">
             Everything can be changed later in Preferences.
           </p>
 
           <div className="flex justify-center mt-5">
             <button
-              className="text-[11px] text-th-text-muted hover:text-th-text-tertiary underline underline-offset-2 transition-colors"
+              className="text-2xs text-th-text-muted hover:text-th-text-tertiary underline underline-offset-2 transition-colors"
               onClick={() => void handleSkip()}
             >
               Skip setup
@@ -2076,7 +2076,7 @@ resolveLastAssistant(
             )}
           </div>
 
-          <div className="flex items-center justify-between text-[11px] text-th-text-muted">
+          <div className="flex items-center justify-between text-2xs text-th-text-muted">
             <span className="flex items-center gap-1.5">
               <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
               {downloadProgress !== null ? `${downloadProgress}% downloaded` : "Starting…"}
@@ -2085,7 +2085,7 @@ resolveLastAssistant(
           </div>
 
           <button
-            className="mt-9 text-[11px] text-th-text-muted hover:text-th-text-tertiary underline underline-offset-2 transition-colors"
+            className="mt-9 text-2xs text-th-text-muted hover:text-th-text-tertiary underline underline-offset-2 transition-colors"
             onClick={() => void handleUseLegacy()}
           >
             Set up manually instead
@@ -2118,7 +2118,7 @@ resolveLastAssistant(
         </div>
 
         <button
-          className="text-[11px] text-th-text-muted hover:text-th-text-secondary transition-colors px-2 py-1"
+          className="text-2xs text-th-text-muted hover:text-th-text-secondary transition-colors px-2 py-1"
           onClick={() => void handleUseLegacy()}
         >
           Manual setup
@@ -2135,7 +2135,7 @@ resolveLastAssistant(
                    style={{ width: `${downloadProgress}%` }} />
             )}
           </div>
-          <span className="text-[10px] text-th-text-muted whitespace-nowrap">
+          <span className="text-2xs text-th-text-muted whitespace-nowrap">
             {downloadProgress !== null ? `${downloadProgress}%` : "Downloading assistant model…"}
           </span>
         </div>
@@ -2171,7 +2171,7 @@ resolveLastAssistant(
               if (part.startsWith("**") && part.endsWith("**"))
                 return <strong key={pi} className="font-semibold text-th-text-primary">{part.slice(2, -2)}</strong>;
               if (part.startsWith("`") && part.endsWith("`"))
-                return <code key={pi} className="font-mono text-[11px] bg-th-code-bg px-1.5 py-0.5 rounded text-th-text-secondary">{part.slice(1, -1)}</code>;
+                return <code key={pi} className="font-mono text-2xs bg-th-code-bg px-1.5 py-0.5 rounded text-th-text-secondary">{part.slice(1, -1)}</code>;
               return <span key={pi}>{part}</span>;
             });
 
@@ -2207,7 +2207,7 @@ resolveLastAssistant(
                               {parenMatch ? (
                                 <>
                                   <span>{parenMatch[1]}</span>
-                                  <span className="px-1.5 py-0.5 rounded-md bg-blue-500/20 border border-blue-500/30 text-[10px] font-semibold text-blue-300 leading-none">
+                                  <span className="px-1.5 py-0.5 rounded-md bg-blue-500/20 border border-blue-500/30 text-2xs font-semibold text-blue-300 leading-none">
                                     {parenMatch[2]}
                                   </span>
                                 </>
@@ -2223,8 +2223,8 @@ resolveLastAssistant(
                                 <Info size={9} />
                                 {/* Tooltip popover */}
                                 <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 w-52 rounded-xl border border-th-border bg-th-bg shadow-lg px-3 py-2.5 text-left opacity-0 group-hover/chip:opacity-100 transition-opacity duration-150 z-20">
-                                  <span className="block text-[11px] font-semibold text-th-text-primary mb-1">{reply}</span>
-                                  <span className="block text-[11px] text-th-text-tertiary leading-relaxed">{tooltip}</span>
+                                  <span className="block text-2xs font-semibold text-th-text-primary mb-1">{reply}</span>
+                                  <span className="block text-2xs text-th-text-tertiary leading-relaxed">{tooltip}</span>
                                 </span>
                               </button>
                             )}
@@ -2271,16 +2271,16 @@ resolveLastAssistant(
                                   {stillRunning ? (
                                     <>
                                       <Loader2 size={10} className="animate-spin text-th-text-muted ml-1" />
-                                      <span className="text-[10px] text-th-text-muted font-mono">running…</span>
+                                      <span className="text-2xs text-th-text-muted font-mono">running…</span>
                                     </>
                                   ) : (
                                     <>
                                       <Check size={10} className="text-emerald-400/60 ml-1" />
-                                      <span className="text-[10px] text-emerald-400/60 font-mono">done</span>
+                                      <span className="text-2xs text-emerald-400/60 font-mono">done</span>
                                     </>
                                   )}
                                 </div>
-                                <pre className="text-[11px] font-mono text-th-text-secondary leading-5 whitespace-pre-wrap break-all">
+                                <pre className="text-2xs font-mono text-th-text-secondary leading-5 whitespace-pre-wrap break-all">
                                   {g.lines.join("\n").replace(/^`|`$/gm, "")}
                                 </pre>
                               </div>
@@ -2342,7 +2342,7 @@ resolveLastAssistant(
                     {msg.richModelPicker.allowSkip && !isBusy && (
                       <button
                         onClick={() => void handleModelSkip()}
-                        className="text-[11px] text-th-text-muted hover:text-th-text-secondary underline underline-offset-2 transition-colors"
+                        className="text-2xs text-th-text-muted hover:text-th-text-secondary underline underline-offset-2 transition-colors"
                       >
                         Skip, choose later in Settings
                       </button>
@@ -2395,14 +2395,14 @@ resolveLastAssistant(
                       ) : msg.commandOutput.status === "done" ? (
                         <Check size={10} className="text-emerald-400 shrink-0" />
                       ) : (
-                        <span className="text-[10px] text-red-400 shrink-0 leading-none font-bold">✗</span>
+                        <span className="text-2xs text-red-400 shrink-0 leading-none font-bold">✗</span>
                       )}
                       {/* Latest line preview */}
-                      <span className="text-[10px] font-mono truncate flex-1 text-th-text-muted">
+                      <span className="text-2xs font-mono truncate flex-1 text-th-text-muted">
                         {msg.commandOutput.lines[msg.commandOutput.lines.length - 1] ?? "…"}
                       </span>
                       {/* Line count + status badge */}
-                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap ${
+                      <span className={`text-2xs font-semibold px-1.5 py-0.5 rounded-full shrink-0 whitespace-nowrap ${
                         msg.commandOutput.status === "running"
                           ? "bg-blue-500/10 text-blue-400"
                           : msg.commandOutput.status === "done"
@@ -2420,7 +2420,7 @@ resolveLastAssistant(
                     {/* Output body — hidden when collapsed */}
                     {!collapsedOutputs.has(i) && (
                       <div className="max-h-56 overflow-y-auto px-3 py-2.5 bg-th-code-bg border-t border-th-border/60">
-                        <pre className="text-[11px] font-mono text-th-text-secondary leading-[1.65] whitespace-pre-wrap break-all">
+                        <pre className="text-2xs font-mono text-th-text-secondary leading-[1.65] whitespace-pre-wrap break-all">
                           {msg.commandOutput.lines.join("\n")}
                         </pre>
                         {msg.commandOutput.status === "running" && (
@@ -2575,7 +2575,7 @@ function BadgeChip({ badge }: { badge: NonNullable<ModelPickerOption["badge"]> }
     gray:   "bg-th-surface-hover border-th-border text-th-text-muted",
   };
   return (
-    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border shrink-0 ${styles[badge.color] ?? styles.gray}`}>
+    <span className={`px-1.5 py-0.5 rounded-full text-2xs font-medium border shrink-0 ${styles[badge.color] ?? styles.gray}`}>
       {badge.text}
     </span>
   );
@@ -2625,13 +2625,13 @@ function ModelPickerCard({ options, defaultIdx, allowSkip, onSelect, onSkip }: M
               <span className="flex items-center gap-2 min-w-0">
                 <span className="truncate text-th-text-primary font-medium">{baseName}</span>
                 {qualifier && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-th-surface-hover border border-th-border text-th-text-muted">
+                  <span className="shrink-0 px-1.5 py-0.5 rounded-full text-2xs font-medium bg-th-surface-hover border border-th-border text-th-text-muted">
                     {qualifier}
                   </span>
                 )}
                 {selected?.badge && <BadgeChip badge={selected.badge} />}
                 {selected?.sizeGb && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-th-surface-hover border border-th-border text-th-text-muted">
+                  <span className="shrink-0 px-1.5 py-0.5 rounded-full text-2xs font-medium bg-th-surface-hover border border-th-border text-th-text-muted">
                     {selected.sizeGb} GB
                   </span>
                 )}
@@ -2662,7 +2662,7 @@ function ModelPickerCard({ options, defaultIdx, allowSkip, onSelect, onSkip }: M
                       : <span className="w-3 shrink-0" />}
                     <span className="truncate font-medium">{baseName}</span>
                     {qualifier && (
-                      <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium border
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-2xs font-medium border
                         ${isSelected
                           ? "bg-blue-500/10 border-blue-500/30 text-blue-400"
                           : "bg-th-surface-hover border-th-border text-th-text-muted"
@@ -2674,7 +2674,7 @@ function ModelPickerCard({ options, defaultIdx, allowSkip, onSelect, onSkip }: M
                   <span className="flex items-center gap-1.5 shrink-0">
                     {opt.badge && <BadgeChip badge={opt.badge} />}
                     {opt.sizeGb && (
-                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border
+                      <span className={`px-1.5 py-0.5 rounded-full text-2xs font-medium border
                         ${isSelected
                           ? "bg-blue-500/10 border-blue-500/30 text-blue-400"
                           : "bg-th-surface-hover border-th-border text-th-text-muted"
@@ -2692,7 +2692,7 @@ function ModelPickerCard({ options, defaultIdx, allowSkip, onSelect, onSkip }: M
 
       {/* Model ID in mono — subtle */}
       {selected && (
-        <p className="text-[10px] font-mono text-th-text-muted/70 truncate px-0.5">{selected.id}</p>
+        <p className="text-2xs font-mono text-th-text-muted/70 truncate px-0.5">{selected.id}</p>
       )}
 
       {/* Actions */}
@@ -2706,7 +2706,7 @@ function ModelPickerCard({ options, defaultIdx, allowSkip, onSelect, onSkip }: M
         {allowSkip && (
           <button
             onClick={onSkip}
-            className="text-[11px] text-th-text-muted hover:text-th-text-secondary underline underline-offset-2 transition-colors"
+            className="text-2xs text-th-text-muted hover:text-th-text-secondary underline underline-offset-2 transition-colors"
           >
             Skip, choose later in Settings
           </button>

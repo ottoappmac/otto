@@ -1,12 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff, FolderPlus } from "lucide-react";
+import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff } from "lucide-react";
 import { api } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { AgentGraph } from "../components/chat/AgentGraph";
-import { MessageBubble, ThoughtBlock } from "../components/chat/MessageBubble";
-import { SubagentGroup } from "../components/chat/SubagentGroup";
+import { MessageBubble } from "../components/chat/MessageBubble";
+import { MessageList } from "../components/chat/MessageList";
 import { ArtifactPanel, artifactTypeFromPath } from "../components/chat/ArtifactPanel";
 import { ThinkingIndicator } from "../components/chat/ThinkingIndicator";
 import type { Artifact, ArtifactType } from "../components/chat/ArtifactPanel";
@@ -25,15 +25,20 @@ import { screenHighRiskCommand } from "../utils/highRiskCommands";
 import { useNotification } from "../context/NotificationContext";
 import { useConnection } from "../context/ConnectionContext";
 import { useTheme } from "../context/ThemeContext";
-import { usePolling } from "../hooks/usePolling";
+import { useChatModel, isDistillCatalogId } from "../hooks/useChatModel";
 import { CRON_PRESETS } from "../types";
-import type { AgentSpec, AppSettings, ChatMessage, ExoCatalogModel, MlxDownloadJob, SessionInfo, SessionWorkspace, WSMessage } from "../types";
+import type { AgentSpec, ChatMessage, FolderGrantPreview, FolderGrant, MlxDownloadJob, SessionInfo, SessionWorkspace, WSMessage } from "../types";
+import { FolderGrantDialog } from "../components/action/FolderGrantDialog";
+import { ProjectFolderMenu } from "../components/action/ProjectFolderMenu";
+import { pickDirectory } from "../utils/pickFolder";
 import { useVoice } from "../hooks/useVoice";
 import { onAskOtto } from "../utils/askOttoBus";
 import { subscribeSessionFiles } from "../utils/sessionFilesBus";
 import { getFollowFileEdits } from "../utils/followFileEdits";
 import { onAgentContext } from "../utils/agentContextBus";
 import { buildFileTree } from "../utils/fileTree";
+import { buildRenderItems, computeLatestTodoFlags } from "../utils/renderItems";
+import { isActivityFrame } from "../utils/liveMessages";
 import type { AskPayload } from "../utils/askOttoBus";
 import type { AskImage } from "../types";
 import logoDark from "../assets/logo-dark.png";
@@ -54,20 +59,16 @@ function dataUrlToFile(img: AskImage): File | null {
   }
 }
 
-function folderFromFileList(files: FileList | File[]): string | null {
-  const arr = Array.from(files);
-  const first = arr[0] as (File & { path?: string }) | undefined;
-  if (!first?.path) return null;
-  const abs = first.path.replace(/\\/g, "/");
-  const rel = first.webkitRelativePath?.replace(/\\/g, "/");
-  if (rel && abs.endsWith(rel)) {
-    return abs.slice(0, abs.length - rel.length).replace(/\/$/, "");
+function workspaceErrorText(error: unknown, fallback: string): string {
+  const text = error instanceof Error ? error.message : fallback;
+  const at = text.indexOf("{");
+  if (at >= 0) {
+    try {
+      const body = JSON.parse(text.slice(at)) as { error?: string };
+      if (body.error) return body.error;
+    } catch { /* raw */ }
   }
-  return abs.split("/").slice(0, -1).join("/") || null;
-}
-
-function isDistillCatalogId(id: string | undefined | null): boolean {
-  return (id || "").trim().startsWith("otto-distill/");
+  return text;
 }
 
 const FILE_WRITE_TOOLS = new Set(["edit_file", "write_file", "edit"]);
@@ -98,42 +99,6 @@ function latestWriteResultId(path: string, messages: ChatMessage[]): string | nu
   }
   return null;
 }
-
-type ChatModelOption = { id: string; name: string; adapter_path?: string };
-
-async function distilledChatOptions(engine: "mlx" | "omlx" | "exo" = "mlx"): Promise<ChatModelOption[]> {
-  try {
-    const res = await api.listDistillAdapters();
-    return (res.adapters ?? []).flatMap((a) => {
-      const name = (a.display_name || a.catalog_id).trim();
-      const label = name.toLowerCase().includes("distill") ? name : `${name} (distilled)`;
-      if (engine === "omlx") {
-        const oid = (a.omlx_model_id || "").trim();
-        if (!oid) return [];
-        return [{ id: oid, name: label, adapter_path: a.adapter_path }];
-      }
-      return [{ id: a.catalog_id, name: label, adapter_path: a.adapter_path }];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function mergeModelOptions(primary: ChatModelOption[], extra: ChatModelOption[]): ChatModelOption[] {
-  const seen = new Set<string>();
-  const out: ChatModelOption[] = [];
-  for (const row of [...extra, ...primary]) {
-    if (!row.id || seen.has(row.id)) continue;
-    seen.add(row.id);
-    out.push(row);
-  }
-  return out;
-}
-
-type RenderItem =
-  | { kind: "message"; message: ChatMessage; index: number }
-  | { kind: "subagent-group"; name: string; messages: ChatMessage[] }
-  | { kind: "thought-group"; messages: ChatMessage[] };
 
 // When rebuilding messages from the API (which never persists base64 images),
 // carry any images that are already in local state forward into the new array.
@@ -281,6 +246,8 @@ export default function ChatPage() {
   const [showWorkspaceTree, setShowWorkspaceTree] = useState(true);
   const [mappingFolder, setMappingFolder] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [grantPreview, setGrantPreview] = useState<FolderGrantPreview | null>(null);
+  const [grantMode, setGrantMode] = useState<"read" | "write">("write");
   const lastFollowedToolRef = useRef<string | null>(null);
   // What the open side preview has already shown, so a later write or mtime
   // change reloads it and the first observation of a file does not.
@@ -296,26 +263,34 @@ export default function ChatPage() {
   const [pendingFilePaths, setPendingFilePaths] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [currentModel, setCurrentModel] = useState<string>(() => localStorage.getItem("chatModel") ?? "");
   const [runDepth, setRunDepth] = useState<RunDepth>(() => {
     const stored = localStorage.getItem("otto.runDepth");
     return stored === "quick" || stored === "deep" || stored === "auto" ? stored : "auto";
   });
   const runDepthChosen = useRef(localStorage.getItem("otto.runDepth") != null);
-  const [availableModels, setAvailableModels] = useState<ChatModelOption[]>([]);
-  const [modelsFetched, setModelsFetched] = useState(false);
-  // Tracks the live EXO catalog (with downloaded/loaded flags) so that when
-  // the user picks a model from the chat ModelPicker we can fire-and-forget
-  // a preload for any model that's already on disk but not yet resident.
-  const exoCatalogRef = useRef<ExoCatalogModel[]>([]);
-
-  const exoAutoPreloadInFlightRef = useRef(false);
-  const [exoModelLoading, setExoModelLoading] = useState(false);
-  const [omlxModelLoading, setOmlxModelLoading] = useState(false);
-  // Tracks an active MLX download job for the currently-selected model so
-  // we can show progress and block sends while weights are still coming down.
-  const [mlxDownloadJob, setMlxDownloadJob] = useState<MlxDownloadJob | null>(null);
-  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const {
+    currentModel,
+    availableModels,
+    appSettings,
+    debugLlm,
+    mlxDownloadJob,
+    mlxIsDownloading,
+    exoModelLoading,
+    omlxModelLoading,
+    isModelBusy,
+    handleModelChange,
+  } = useChatModel({
+    onSettingsLoaded: (s) => {
+      if (runDepthChosen.current) return;
+      const d = s.orchestrator?.default_run_depth;
+      if (d === "auto" || d === "quick" || d === "deep") setRunDepth(d);
+    },
+    onSessionInvalidated: () => {
+      // The live session graph still has the previous model baked in.
+      setCurrentSessionId(null);
+      navigate("/chat", { replace: true });
+    },
+  });
   const voiceEnabled = !!(appSettings?.voice?.enabled);
   const wakeEnabled = !!(appSettings?.voice?.wake_enabled);
   const pendingVoiceTranscriptRef = useRef<string | null>(null);
@@ -334,7 +309,6 @@ export default function ChatPage() {
   const micMouseDownTimeRef = useRef<number | null>(null);
   const micClickLockRef = useRef(false);
   const MIC_HOLD_THRESHOLD_MS = 300;
-  const [debugLlm, setDebugLlm] = useState<{ provider: string; authMode: string; hasKeys: boolean; region: string } | null>(null);
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
@@ -354,13 +328,17 @@ export default function ChatPage() {
   const isPinnedToBottomRef = useRef(true);
   const inputRef = useRef<InlineUrlInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
   const slashRef = useRef<HTMLDivElement>(null);
   const atRef = useRef<HTMLDivElement>(null);
   const msgIdRef = useRef(0);
   const pendingMemoryTopicsRef = useRef<string[] | null>(null);
   const sendingRef = useRef(false);
   const hitlSubmittedRef = useRef<Set<string>>(new Set());
+  // After the user answers an approval / ask_user card the backend needs a
+  // moment to start the resume. A status poll that lands in that gap still
+  // says "awaiting input / not running". Until this deadline the poll must not
+  // flip the Stop button back to Send.
+  const hitlResumeUntilRef = useRef(0);
   const justCreatedRef = useRef(false);
   const sessionIdRef = useRef(currentSessionId);
   sessionIdRef.current = currentSessionId;
@@ -558,187 +536,6 @@ export default function ChatPage() {
 
   useEffect(() => { api.listAgents().then(setAgents).catch((e) => console.warn("Failed to load agents:", e)); }, []);
 
-  // Poll for an active MLX download job matching the currently-selected model.
-  const syncMlxDownload = useCallback(async () => {
-    if (debugLlm?.provider !== "mlx" || !currentModel) {
-      setMlxDownloadJob(null);
-      return;
-    }
-    try {
-      const r = await api.mlxDownloadList();
-      const active = r.jobs.find(
-        (j) => j.repo_id === currentModel && (j.status === "running" || j.status === "pending"),
-      ) ?? null;
-      setMlxDownloadJob(active);
-    } catch {
-      // best-effort — don't surface polling errors
-    }
-  }, [debugLlm?.provider, currentModel]);
-
-  const mlxIsDownloading = mlxDownloadJob !== null;
-  // Fast poll (800ms) while a download is active for live progress;
-  // slow poll (10s) otherwise so we notice when a download starts
-  // without hammering the backend from every open chat window.
-  usePolling(syncMlxDownload, mlxIsDownloading ? 800 : 10_000, debugLlm?.provider === "mlx");
-
-  const isModelBusy = mlxIsDownloading || exoModelLoading || omlxModelLoading;
-
-  useEffect(() => {
-    api.getSettings().then((s) => {
-      setAppSettings(s);
-      if (!runDepthChosen.current) {
-        const d = s.orchestrator?.default_run_depth;
-        if (d === "auto" || d === "quick" || d === "deep") setRunDepth(d);
-      }
-      const mlx = s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" };
-      if (s.llm.provider === "mlx") {
-        const mid = mlx.hf_llm_model_id?.trim() || localStorage.getItem("chatModel") || "";
-        setCurrentModel(mid);
-        if (mid) localStorage.setItem("chatModel", mid);
-        setDebugLlm({
-          provider: "mlx",
-          authMode: mlx.hf_token ? "hub + token" : "hub",
-          hasKeys: !!mid,
-          region: "",
-        });
-        // Populate model picker with every model already in the Hub cache.
-        // Falls back to just the configured id if the scan fails or returns nothing.
-        api.mlxLocalModels()
-          .then(async (r) => {
-            const rows = r.models ?? [];
-            const mapped: ChatModelOption[] = rows.map((m) => ({
-              id: m.repo_id,
-              name: m.source === "distill"
-                ? ((m.name || m.repo_id).toLowerCase().includes("distill") ? (m.name || m.repo_id) : `${m.name || m.repo_id} (distilled)`)
-                : (m.name || m.repo_id),
-              adapter_path: m.adapter_path,
-            }));
-            const extras = mapped.some((m) => isDistillCatalogId(m.id))
-              ? []
-              : await distilledChatOptions("mlx");
-            const merged = mergeModelOptions(
-              mapped.filter((m) => !isDistillCatalogId(m.id)),
-              mapped.filter((m) => isDistillCatalogId(m.id)).concat(extras),
-            );
-            if (merged.length > 0) {
-              setAvailableModels(merged);
-            } else if (mid) {
-              setAvailableModels([{ id: mid, name: mid }]);
-            } else {
-              setAvailableModels([]);
-            }
-          })
-          .catch(() => {
-            setAvailableModels(mid ? [{ id: mid, name: mid }] : []);
-          })
-          .finally(() => setModelsFetched(true));
-        return;
-      }
-      if (s.llm.provider === "exo") {
-        const mid = s.exo.model_name?.trim() || localStorage.getItem("chatModel") || "";
-        setCurrentModel(mid);
-        if (mid) localStorage.setItem("chatModel", mid);
-        setDebugLlm({
-          provider: "exo",
-          authMode: s.exo.base_url || `127.0.0.1:${s.exo.api_port}`,
-          hasKeys: !!mid && s.exo.enabled,
-          region: "",
-        });
-        // Populate the model picker from the live cluster catalog so the
-        // user can switch between any model exo has (downloaded or loaded)
-        // without leaving the chat page.  Falls back to just the currently
-        // configured id if the cluster is unreachable.
-        api.exoModels()
-          .then(async (r) => {
-            const catalog = r.reachable ? r.models : [];
-            exoCatalogRef.current = catalog;
-            const rich: ChatModelOption[] = catalog
-              .filter((m) => m.downloaded || m.loaded)
-              .map((m) => ({ id: m.id, name: m.name }));
-            const distilled = await distilledChatOptions("exo");
-            const merged = mergeModelOptions(rich, distilled);
-            if (merged.length > 0) {
-              setAvailableModels(merged);
-            } else if (mid) {
-              setAvailableModels([{ id: mid, name: mid }]);
-            } else {
-              setAvailableModels([]);
-            }
-          })
-          .catch((e) => {
-            console.warn("Failed to list EXO models:", e);
-            exoCatalogRef.current = [];
-            setAvailableModels(mid ? [{ id: mid, name: mid }] : []);
-          })
-          .finally(() => setModelsFetched(true));
-        return;
-      }
-      if (s.llm.provider === "openai") {
-        const o = s.llm.openai;
-        setCurrentModel(o.model_name);
-        localStorage.setItem("chatModel", o.model_name);
-        const activeKey = o.model_provider === "azure" ? o.azure_api_key : o.api_key;
-        setDebugLlm({
-          provider: o.model_provider === "azure" ? "azure" : "openai",
-          authMode: o.model_provider === "azure" ? o.azure_endpoint || "azure" : "api_key",
-          hasKeys: !!(activeKey),
-          region: o.model_provider === "azure" ? (o.azure_endpoint || "") : "",
-        });
-        if (!modelsFetched) {
-          api.listModels({ provider: "openai", api_key: activeKey, model_name: o.model_name, openai_model_provider: o.model_provider, azure_endpoint: o.azure_endpoint, azure_api_version: o.azure_api_version, azure_deployment: o.azure_deployment })
-            .then((r) => { if (r.models?.length) setAvailableModels(r.models); })
-            .catch((e) => console.warn("Failed to list OpenAI models:", e))
-            .finally(() => setModelsFetched(true));
-        }
-        return;
-      }
-      if (s.llm.provider === "omlx") {
-        const mid = s.omlx?.model_name?.trim() || localStorage.getItem("chatModel") || "";
-        setCurrentModel(mid);
-        if (mid) localStorage.setItem("chatModel", mid);
-        setDebugLlm({
-          provider: "omlx",
-          authMode: `127.0.0.1:${s.omlx?.api_port ?? 8000}`,
-          hasKeys: !!mid && !!(s.omlx?.enabled),
-          region: "",
-        });
-        api.omlxStatus()
-          .then(async (r) => {
-            const models = r.models ?? [];
-            const hub: ChatModelOption[] = models.length > 0
-              ? models.map((m: { id: string }) => ({ id: m.id, name: m.id }))
-              : (mid ? [{ id: mid, name: mid }] : []);
-            const distilled = await distilledChatOptions("omlx");
-            const merged = mergeModelOptions(hub, distilled);
-            if (merged.length > 0) {
-              setAvailableModels(merged);
-            } else {
-              setAvailableModels([]);
-            }
-          })
-          .catch(() => {
-            setAvailableModels(mid ? [{ id: mid, name: mid }] : []);
-          })
-          .finally(() => setModelsFetched(true));
-        return;
-      }
-      const a = s.llm.anthropic;
-      setCurrentModel(a.model_name);
-      localStorage.setItem("chatModel", a.model_name);
-      setDebugLlm({
-        provider: a.model_provider,
-        authMode: a.model_provider === "bedrock" ? a.bedrock_auth_mode : "api_key",
-        hasKeys: !!(a.aws_access_key_id || a.api_key),
-        region: a.bedrock_region,
-      });
-      if (!modelsFetched) {
-        api.listModels({ provider: s.llm.provider, api_key: a.api_key, model_name: a.model_name, model_provider: a.model_provider, bedrock_region: a.bedrock_region, bedrock_auth_mode: a.bedrock_auth_mode, aws_access_key_id: a.aws_access_key_id, aws_secret_access_key: a.aws_secret_access_key })
-          .then((r) => { if (r.models?.length) setAvailableModels(r.models); })
-          .catch((e) => console.warn("Failed to list models:", e))
-          .finally(() => setModelsFetched(true));
-      }
-    }).catch((e) => console.warn("Failed to load settings:", e));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const scrollRaf = useRef(0);
   useEffect(() => {
     // Respect the user's scroll position: only auto-scroll on new/streamed
@@ -862,6 +659,31 @@ export default function ChatPage() {
 
   const handleMessage = useCallback((msg: WSMessage) => {
     const sid = sessionIdRef.current ?? "";
+    if (msg.type === "resync" && sid) {
+      void api.getSessionMessages(sid).then((msgs) => {
+        if (!msgs) return;
+        setMessages(mergeToolMessages(msgs.map((m, index) => ({
+          id: `resync-${index}`,
+          type: (m.type as ChatMessage["type"]) ?? "agent",
+          content: (m.content as string) ?? "",
+          metadata: m.metadata as Record<string, unknown> | undefined,
+          timestamp: new Date(),
+          sessionId: sid,
+        }))));
+      }).catch((e) => setLastError({
+        code: "resync_failed",
+        message: e instanceof Error ? e.message : "Could not reload this chat",
+      }));
+      return;
+    }
+    if (msg.type === "done" || msg.type === "stopped" || msg.type === "hitl_request" || msg.type === "ask_user") {
+      // The resume we were waiting on has ended or paused again.
+      hitlResumeUntilRef.current = 0;
+    } else if (isActivityFrame(msg)) {
+      // Live output proves the agent is working, whatever a status poll that
+      // raced the resume reported.
+      setIsStreaming(true);
+    }
     if (msg.type === "done") {
       setIsStreaming(false);
       setPendingContext([]);
@@ -1295,8 +1117,11 @@ export default function ChatPage() {
         }
 
         const apiHasHitl = pendingInterrupts(apiMerged).length > 0;
+        // The user just answered a card; the resume is starting. Whatever this
+        // poll saw is from before it began, so wait for the next one.
+        if (Date.now() < hitlResumeUntilRef.current) return;
         const awaiting =
-          !!status?.awaiting_input
+          (!!status?.awaiting_input && !status.running)
           || (!!status && !status.running && hasUnmatchedApprovalTool(apiMerged));
         if (apiHasHitl) {
           setPollForInterrupt(false);
@@ -1377,6 +1202,7 @@ export default function ChatPage() {
       return;
     }
     hitlSubmittedRef.current.add(messageId);
+    hitlResumeUntilRef.current = Date.now() + 5000;
     if (currentSessionId) { clearSession(currentSessionId); watchSession(currentSessionId); }
     setMessages((prev) => prev.map((m) =>
       m.id === messageId
@@ -1488,7 +1314,7 @@ export default function ChatPage() {
     return api.getSessionFileUrl(currentSessionId, stripped);
   }, [currentSessionId, workspace]);
 
-  const mapWorkspace = useCallback(async (source: string) => {
+  const bindWorkspace = useCallback(async (bind: (sid: string) => Promise<SessionInfo>, forgetPending?: string) => {
     setWorkspaceError(null);
     setMappingFolder(true);
     try {
@@ -1502,16 +1328,55 @@ export default function ChatPage() {
         sid = await startSession(agent);
         await waitForConnection();
       }
-      const info = await api.setSessionWorkspace(sid, source);
+      const info = await bind(sid);
       setSessionInfo(info);
       setShowWorkspaceTree(true);
-      setPendingFolders((prev) => prev.filter((p) => p !== source));
+      if (forgetPending) setPendingFolders((prev) => prev.filter((p) => p !== forgetPending));
     } catch (e) {
-      setWorkspaceError(e instanceof Error ? e.message : "Could not map folder");
+      setWorkspaceError(workspaceErrorText(e, "Could not map folder"));
     } finally {
       setMappingFolder(false);
     }
   }, [currentSessionId, selectedAgent, startSession, waitForConnection]);
+
+  const mapWorkspace = useCallback(
+    (source: string) => bindWorkspace((sid) => api.setSessionWorkspace(sid, source, grantMode), source),
+    [bindWorkspace, grantMode],
+  );
+
+  // A folder you already allowed: no second confirmation.
+  const useGrant = useCallback(
+    (grant: FolderGrant) => bindWorkspace((sid) => api.bindSessionWorkspace(sid, grant.id)),
+    [bindWorkspace],
+  );
+
+  const beginGrant = useCallback(async (source: string) => {
+    setWorkspaceError(null);
+    try {
+      const preview = await api.previewFolderGrant(source);
+      setGrantMode(preview.existing_mode === "read" ? "read" : "write");
+      setGrantPreview(preview);
+    } catch (e) {
+      setWorkspaceError(workspaceErrorText(e, "Could not check that folder"));
+    }
+  }, []);
+
+  // A typed path (browser) or the native dialog (desktop app).
+  const chooseFolder = useCallback(async (path?: string) => {
+    const picked = path || await pickDirectory();
+    if (picked) await beginGrant(picked);
+  }, [beginGrant]);
+
+  const revokeGrant = useCallback(async (grant: FolderGrant) => {
+    if (!currentSessionId || workspaceRef.current?.grant_id !== grant.id) return;
+    try {
+      const info = await api.getSession(currentSessionId);
+      setSessionInfo(info);
+      if (!info.workspace) setOpenArtifact(null);
+    } catch (e) {
+      setWorkspaceError(workspaceErrorText(e, "Could not refresh this chat"));
+    }
+  }, [currentSessionId]);
 
   const unmapWorkspace = useCallback(async () => {
     if (!currentSessionId) return;
@@ -1828,211 +1693,6 @@ export default function ChatPage() {
     sendingRef.current = false;
   }, [messages, isStreaming, sendEdit, watchSession, currentSessionId, sessionId, runDepth]);
 
-  const handleModelChange = async (modelId: string) => {
-    setCurrentModel(modelId);
-    localStorage.setItem("chatModel", modelId);
-    try {
-      const s = await api.getSettings() as AppSettings;
-      const picked = availableModels.find((m) => m.id === modelId);
-      if (isDistillCatalogId(modelId)) {
-        if (s.llm.provider === "omlx") {
-          const adapters = await api.listDistillAdapters().catch(() => ({ adapters: [] }));
-          const row = (adapters.adapters ?? []).find((a) => a.catalog_id === modelId);
-          const omlxId = (row?.omlx_model_id || "").trim();
-          if (omlxId) {
-            modelId = omlxId;
-            setCurrentModel(omlxId);
-            localStorage.setItem("chatModel", omlxId);
-          } else {
-            console.warn("Distilled adapter is not fused for Turbo yet:", modelId);
-            return;
-          }
-        } else {
-          const prevProvider = s.llm.provider;
-          const omlxModel = s.omlx?.model_name?.trim() ?? "";
-          const nextMlx = {
-            ...(s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" }),
-            hf_llm_model_id: modelId,
-            adapter_path: picked?.adapter_path || s.llm.mlx.adapter_path || "",
-          };
-          const nextSettings = {
-            ...s,
-            llm: { ...s.llm, provider: "mlx" as const, mlx: nextMlx },
-          } as AppSettings;
-          await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-          setAppSettings(nextSettings);
-          setDebugLlm({
-            provider: "mlx",
-            authMode: nextMlx.hf_token ? "hub + token" : "hub",
-            hasKeys: !!modelId.trim(),
-            region: "",
-          });
-          if (prevProvider === "omlx") {
-            void (async () => {
-              try {
-                if (omlxModel) await api.omlxUnloadModel(omlxModel);
-                await api.omlxStop();
-              } catch {
-                /* Turbo unload is best-effort; Standard chat still uses mlx_lm. */
-              }
-            })();
-          }
-          return;
-        }
-      }
-      if (s.llm.provider === "mlx") {
-        const nextMlx = {
-          ...(s.llm.mlx ?? { hf_llm_model_id: "", hf_vlm_model_id: "", hf_draft_llm_model_id: "", hf_token: "" }),
-          hf_llm_model_id: modelId,
-          adapter_path: "",
-        };
-        const nextSettings = { ...s, llm: { ...s.llm, mlx: nextMlx } } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        setDebugLlm({
-          provider: "mlx",
-          authMode: nextMlx.hf_token ? "hub + token" : "hub",
-          hasKeys: !!modelId.trim(),
-          region: "",
-        });
-        return;
-      }
-      if (s.llm.provider === "exo") {
-        const nextExo = { ...s.exo, model_name: modelId };
-        const nextSettings = { ...s, exo: nextExo } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        setDebugLlm({
-          provider: "exo",
-          authMode: nextExo.base_url || `127.0.0.1:${nextExo.api_port}`,
-          hasKeys: !!modelId.trim() && nextExo.enabled,
-          region: "",
-        });
-        // Fetch a fresh catalog to get accurate downloaded/loaded state, then
-        // unload any other loaded model and warm-load the selected one.
-        // Uses the async job API (same as the settings page) so we can poll
-        // progress without blocking the UI thread.
-        const trimmedId = modelId.trim();
-        if (trimmedId && nextExo.enabled && !exoAutoPreloadInFlightRef.current) {
-          exoAutoPreloadInFlightRef.current = true;
-          setExoModelLoading(true);
-          void (async () => {
-            try {
-              // Fresh catalog so we don't act on stale downloaded/loaded flags.
-              const fresh = await api.exoModels();
-              if (fresh.reachable) exoCatalogRef.current = fresh.models;
-              const freshCatalog = fresh.reachable ? fresh.models : exoCatalogRef.current;
-              const newModel = freshCatalog.find((c) => c.id === trimmedId);
-              const loadedOthers = freshCatalog.filter((c) => c.loaded && c.id !== trimmedId);
-              for (const prev of loadedOthers) {
-                await api.exoUnload(prev.id);
-              }
-              // Only load if the model is on disk but not yet in cluster memory.
-              if (newModel?.downloaded && !newModel.loaded) {
-                const job = await api.exoPreloadStart(trimmedId, 1);
-                const startedAt = Date.now();
-                while (Date.now() - startedAt < 600_000) {
-                  await new Promise<void>((res) => setTimeout(res, 2000));
-                  const j = await api.exoPreloadStatus(job.job_id);
-                  if (j.status === "done" || j.status === "error" || j.status === "cancelled") break;
-                }
-                const r = await api.exoModels();
-                if (r.reachable) exoCatalogRef.current = r.models;
-              }
-            } catch (e) {
-              console.warn("Auto unload/preload of EXO model failed:", e);
-            } finally {
-              exoAutoPreloadInFlightRef.current = false;
-              setExoModelLoading(false);
-            }
-          })();
-        }
-        return;
-      }
-      if (s.llm.provider === "openai") {
-        const nextOpenAI = { ...s.llm.openai, model_name: modelId };
-        const nextSettings = { ...s, llm: { ...s.llm, openai: nextOpenAI } } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        const o = nextOpenAI;
-        const activeKey = o.model_provider === "azure" ? o.azure_api_key : o.api_key;
-        setDebugLlm({
-          provider: o.model_provider === "azure" ? "azure" : "openai",
-          authMode: o.model_provider === "azure" ? o.azure_endpoint || "azure" : "api_key",
-          hasKeys: !!(activeKey),
-          region: o.model_provider === "azure" ? (o.azure_endpoint || "") : "",
-        });
-        return;
-      }
-      if (s.llm.provider === "omlx") {
-        const adapters = await api.listDistillAdapters().catch(() => ({ adapters: [] }));
-        const fusedIds = new Set(
-          (adapters.adapters ?? []).map((a) => (a.omlx_model_id || "").trim()).filter(Boolean),
-        );
-        const pickingFused = fusedIds.has(modelId);
-        const nextMlx = pickingFused
-          ? s.llm.mlx
-          : {
-              ...s.llm.mlx,
-              hf_llm_model_id: isDistillCatalogId(s.llm.mlx?.hf_llm_model_id) ? "" : (s.llm.mlx?.hf_llm_model_id || ""),
-              adapter_path: "",
-            };
-        const nextOmlx = { ...s.omlx, model_name: modelId };
-        const nextSettings = { ...s, llm: { ...s.llm, mlx: nextMlx }, omlx: nextOmlx } as AppSettings;
-        await api.updateSettings(nextSettings as unknown as Record<string, unknown>);
-        setAppSettings(nextSettings);
-        setDebugLlm({
-          provider: "omlx",
-          authMode: `127.0.0.1:${nextOmlx.api_port ?? 8000}`,
-          hasKeys: !!modelId.trim() && !!(nextOmlx.enabled),
-          region: "",
-        });
-        // The live session graph still has the previous model baked in.
-        setCurrentSessionId(null);
-        navigate("/chat", { replace: true });
-        const trimmedOmlxId = modelId.trim();
-        if (trimmedOmlxId && nextOmlx.enabled) {
-          setOmlxModelLoading(true);
-          void (async () => {
-            try {
-              const status = await api.omlxStatus();
-              for (const loaded of status.loaded_models ?? []) {
-                if (loaded.id && loaded.id !== trimmedOmlxId) {
-                  await api.omlxUnloadModel(loaded.id).catch(() => undefined);
-                }
-              }
-              const alreadyLoaded = (status.loaded_models ?? []).some((m) => m.id === trimmedOmlxId);
-              if (!alreadyLoaded) {
-                const job = await api.omlxLoadModel(trimmedOmlxId);
-                const startedAt = Date.now();
-                while (Date.now() - startedAt < 600_000) {
-                  await new Promise<void>((res) => setTimeout(res, 2000));
-                  const j = await api.getOmlxJob(job.job_id);
-                  if (j.status === "done" || j.status === "error") break;
-                }
-              }
-            } catch (e) {
-              console.warn("oMLX model load failed:", e);
-            } finally {
-              setOmlxModelLoading(false);
-            }
-          })();
-        }
-        return;
-      }
-      s.llm.anthropic.model_name = modelId;
-      await api.updateSettings(s as unknown as Record<string, unknown>);
-      setAppSettings(s);
-      const a = s.llm.anthropic;
-      setDebugLlm({
-        provider: a.model_provider,
-        authMode: a.model_provider === "bedrock" ? a.bedrock_auth_mode : "api_key",
-        hasKeys: !!(a.aws_access_key_id || a.api_key),
-        region: a.bedrock_region,
-      });
-    } catch (e) { console.warn("Failed to save model settings:", e); }
-  };
-
   // The slash menu only lists named subagents.  The orchestrator (no
   // subagent) is the default already — users get there by simply not
   // picking, by pressing Escape, or by clicking X on the chip — so an
@@ -2211,17 +1871,10 @@ export default function ChatPage() {
     [sessionMessages],
   );
 
-  const latestTodoFlags = useMemo(() => {
-    const flags = new Array<boolean>(sessionMessages.length).fill(false);
-    for (let i = sessionMessages.length - 1; i >= 0; i--) {
-      const m = sessionMessages[i];
-      if ((m.type === "tool_call" || m.type === "tool_result") && m.content === "write_todos" && !m.metadata?.subagent) {
-        flags[i] = true;
-        break;
-      }
-    }
-    return flags;
-  }, [sessionMessages]);
+  const latestTodoFlags = useMemo(
+    () => computeLatestTodoFlags(sessionMessages),
+    [sessionMessages],
+  );
 
   const visibleSessionFiles = useMemo(
     () => sessionFiles.filter(f => !f.path.startsWith("large_tool_results/")),
@@ -2381,57 +2034,10 @@ export default function ChatPage() {
     setTimeout(() => navigate(`/chat/${sid}`), 30);
   }, [currentSessionId, navigate]);
 
-  const renderItems = useMemo((): RenderItem[] => {
-    const items: RenderItem[] = [];
-    const groups = new Map<string, RenderItem & { kind: "subagent-group" }>();
-    const subagentPrefixes = new Set<string>();
-    let generation = 0;
-    let prevWasSubagent = false;
-    let thoughtBuf: ChatMessage[] = [];
-    const flushThoughts = () => {
-      if (thoughtBuf.length === 0) return;
-      items.push({ kind: "thought-group", messages: thoughtBuf });
-      thoughtBuf = [];
-    };
-    for (let i = 0; i < sessionMessages.length; i++) {
-      const msg = sessionMessages[i];
-      // Errors are pulled out of the inline flow and pinned to the end of the
-      // chat (see errorMessages) so they're always visible after the latest turn.
-      if (msg.type === "error") continue;
-      const subagent = msg.metadata?.subagent as string | undefined;
-      if (subagent) {
-        flushThoughts();
-        subagentPrefixes.add(subagent.replace(/ #\d+$/, ""));
-        const groupKey = `${subagent}::${generation}`;
-        let group = groups.get(groupKey);
-        if (!group) {
-          group = { kind: "subagent-group", name: subagent, messages: [] };
-          groups.set(groupKey, group);
-          items.push(group);
-        }
-        group.messages.push(msg);
-        prevWasSubagent = true;
-      } else if (msg.type === "agent" && thoughtFlags[i]) {
-        if (prevWasSubagent) generation++;
-        prevWasSubagent = false;
-        thoughtBuf.push(msg);
-      } else {
-        if (prevWasSubagent) generation++;
-        prevWasSubagent = false;
-        flushThoughts();
-        items.push({ kind: "message", message: msg, index: i });
-      }
-    }
-    flushThoughts();
-    if (subagentPrefixes.size === 0) return items;
-    return items.filter((item) => {
-      if (item.kind !== "message") return true;
-      const msg = item.message;
-      if ((msg.type !== "tool_call" && msg.type !== "tool_result") || msg.content !== "task") return true;
-      const agentType = (msg.metadata?.args as Record<string, unknown>)?.subagent_type as string | undefined;
-      return !agentType || !subagentPrefixes.has(agentType);
-    });
-  }, [sessionMessages, thoughtFlags]);
+  const renderItems = useMemo(
+    () => buildRenderItems(sessionMessages, thoughtFlags),
+    [sessionMessages, thoughtFlags],
+  );
 
   // Errors are surfaced at the very end of the chat (after the latest agent
   // turn) rather than inline where they occurred, so they're never buried.
@@ -2462,8 +2068,8 @@ export default function ChatPage() {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex flex-col flex-1 min-w-0 h-full">
-      <header data-chat-region="header" className="border-b border-th-border px-6 py-3.5 flex items-center justify-between shrink-0 bg-th-bg-secondary">
-        <div className="flex items-center gap-3">
+      <header data-chat-region="header" className="border-b border-th-border px-6 py-3.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 shrink-0 bg-th-bg-secondary">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
           {currentSessionId && (
             <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium ${connected ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25" : "bg-amber-500/15 text-amber-400 border border-amber-500/25"}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400 animate-pulse"}`} />
@@ -2480,43 +2086,37 @@ export default function ChatPage() {
               From parent
             </button>
           )}
-          {workspace && (
+          <ProjectFolderMenu
+            workspace={workspace}
+            disabled={isStreaming}
+            busy={mappingFolder}
+            onUseGrant={useGrant}
+            onAllowFolder={chooseFolder}
+            onClear={unmapWorkspace}
+            onRevoked={revokeGrant}
+          />
+          {sessionInfo?.mode && sessionInfo.mode !== "agent" && (
             <span
-              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium bg-sky-500/15 text-sky-400 border border-sky-500/25 max-w-[280px]"
-              title={workspace.host_path}
+              className={`inline-flex items-center text-xs px-2.5 py-1 rounded-full font-medium border ${
+                sessionInfo.mode === "plan"
+                  ? "bg-violet-500/15 text-violet-300 border-violet-500/25"
+                  : sessionInfo.mode === "ask"
+                    ? "bg-sky-500/15 text-sky-300 border-sky-500/25"
+                    : "bg-amber-500/15 text-amber-300 border-amber-500/25"
+              }`}
+              title="Set in the Code tab. Ask and Plan are read-only."
             >
-              <Folder size={11} />
-              <span className="truncate">{workspace.name}</span>
-              <button
-                type="button"
-                onClick={() => unmapWorkspace()}
-                className="hover:text-th-text-primary transition-colors"
-                title="Unmap folder"
-              >
-                <X size={11} />
-              </button>
+              {sessionInfo.mode === "plan" ? "Plan mode" : sessionInfo.mode === "ask" ? "Ask mode" : "Debug mode"}
             </span>
           )}
-          {!workspace && (
-            <button
-              type="button"
-              onClick={() => folderInputRef.current?.click()}
-              disabled={mappingFolder || isStreaming}
-              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium text-th-text-tertiary hover:text-th-text-primary border border-transparent hover:border-th-border hover:bg-th-surface-hover transition-colors"
-              title="Map a project folder for the coding agent"
-            >
-              <FolderPlus size={11} />
-              {mappingFolder ? "Mapping…" : "Map folder"}
-            </button>
-          )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3 ml-auto min-w-0">
           {!currentSessionId && !selectedAgent && (
             <span
               className="text-xs text-th-text-tertiary"
               title="Slash to pick a subagent before sending; otherwise the orchestrator will route the message."
             >
-              Type <kbd className="px-1.5 py-0.5 bg-th-inset-bg border border-th-border rounded text-[10px] font-mono text-th-text-muted">/</kbd> to pick a subagent
+              Type <kbd className="px-1.5 py-0.5 bg-th-inset-bg border border-th-border rounded text-2xs font-mono text-th-text-muted">/</kbd> to pick a subagent
             </span>
           )}
           {renderItems.some(item => item.kind === "subagent-group") && (
@@ -2531,6 +2131,16 @@ export default function ChatPage() {
             >
               <GitBranch size={13} />
               <span>Graph</span>
+            </button>
+          )}
+          {currentSessionId && (
+            <button
+              onClick={() => navigate(`/code/${currentSessionId}`)}
+              className="flex items-center gap-1.5 text-xs text-th-text-tertiary hover:text-th-text-primary transition-colors px-2.5 py-1.5 rounded-lg hover:bg-th-surface-hover border border-transparent hover:border-th-border"
+              title="Open this session in the Code view"
+            >
+              <GitBranch size={13} />
+              <span>Code</span>
             </button>
           )}
           {currentSessionId && (
@@ -2558,7 +2168,7 @@ export default function ChatPage() {
           )}
           {memoryHits.hits > 0 && (
             <span
-              className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-blue-500/10 text-blue-400/80 border border-blue-500/15"
+              className="inline-flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full bg-blue-500/10 text-blue-400/80 border border-blue-500/15"
               title={`Memory injected in ${memoryHits.hits} of ${memoryHits.total} responses`}
             >
               <Brain size={11} />
@@ -2585,18 +2195,21 @@ export default function ChatPage() {
             <h3 className="text-xl font-semibold text-th-text-primary mb-2">How can I help?</h3>
             <p className="text-sm text-th-text-tertiary max-w-sm text-center leading-relaxed mb-7">
               {codingSelected
-                ? "Map a project folder, then describe the change. Otto will search, edit, and run commands in that tree."
+                ? "Choose a project folder, then describe the change. Otto will search, edit, and run commands in that tree."
                 : "Your AI agent — browse, write, run code, and more."}
             </p>
             {codingSelected && !workspace && (
-              <button
-                type="button"
-                onClick={() => folderInputRef.current?.click()}
-                className="mb-5 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-sky-300 bg-sky-500/10 border border-sky-500/25 rounded-xl hover:bg-sky-500/15 transition-colors"
-              >
-                <FolderPlus size={15} />
-                Map a project folder
-              </button>
+              <div className="mb-5">
+                <ProjectFolderMenu
+                  workspace={workspace}
+                  disabled={isStreaming}
+                  busy={mappingFolder}
+                  onUseGrant={useGrant}
+                  onAllowFolder={chooseFolder}
+                  onClear={unmapWorkspace}
+                  onRevoked={revokeGrant}
+                />
+              </div>
             )}
             <div className="flex flex-wrap gap-2 justify-center max-w-lg">
               {welcomePrompts.map((prompt) => (
@@ -2639,7 +2252,7 @@ export default function ChatPage() {
         )}
         {!isStreaming && viewableSessionFiles.length > 0 && (
           <div className="mt-4 ml-10 p-3 rounded-xl border border-th-border bg-th-card-bg">
-            <p className="text-[10px] uppercase tracking-wider font-semibold text-th-text-muted mb-2">
+            <p className="text-2xs uppercase tracking-wider font-semibold text-th-text-muted mb-2">
               Output files
             </p>
             <OutputFileGrid
@@ -2717,7 +2330,7 @@ export default function ChatPage() {
             </button>
             <button
               onClick={() => { if (currentSessionId) api.openSessionFilesFolder(currentSessionId).catch((e) => console.warn("Failed to open folder:", e)); }}
-              className="flex items-center gap-1 text-[10px] text-th-text-tertiary hover:text-th-text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-th-surface-hover"
+              className="flex items-center gap-1 text-2xs text-th-text-tertiary hover:text-th-text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-th-surface-hover"
               title="Open in file manager"
             >
               <ExternalLink size={11} />
@@ -2760,21 +2373,6 @@ export default function ChatPage() {
           className="hidden"
           onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ""; }}
         />
-        <input
-          ref={folderInputRef}
-          type="file"
-          className="hidden"
-          // @ts-expect-error webkitdirectory is a non-standard attribute
-          webkitdirectory=""
-          directory=""
-          onChange={(e) => {
-            if (!e.target.files?.length) return;
-            const dir = folderFromFileList(e.target.files);
-            e.target.value = "";
-            if (dir) mapWorkspace(dir);
-            else setWorkspaceError("Drop a folder onto the window to map it (this picker needs a desktop path).");
-          }}
-        />
         {(pendingFiles.length > 0 || pendingFilePaths.length > 0 || pendingFolders.length > 0) && (
           <div className="flex flex-wrap gap-2 mb-3 max-w-4xl mx-auto">
             {pendingFiles.map((f, i) => (
@@ -2807,8 +2405,8 @@ export default function ChatPage() {
                   <span className="truncate max-w-[150px] font-medium">{basename}</span>
                   <button
                     type="button"
-                    onClick={() => mapWorkspace(name)}
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 hover:bg-sky-500/30"
+                    onClick={() => { void beginGrant(name); }}
+                    className="text-2xs px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 hover:bg-sky-500/30"
                     title="Map as project workspace"
                   >
                     Map
@@ -2824,6 +2422,20 @@ export default function ChatPage() {
         {workspaceError && (
           <p className="max-w-4xl mx-auto mb-2 text-xs text-red-400">{workspaceError}</p>
         )}
+        {grantPreview && (
+          <FolderGrantDialog
+            preview={grantPreview}
+            mode={grantMode}
+            busy={mappingFolder}
+            onMode={setGrantMode}
+            onCancel={() => setGrantPreview(null)}
+            onConfirm={() => {
+              const path = grantPreview.realpath;
+              setGrantPreview(null);
+              void mapWorkspace(path);
+            }}
+          />
+        )}
         {/* Context-injection nudge — slides in/out while agent is running */}
         {isStreaming && (
           <div
@@ -2838,7 +2450,7 @@ export default function ChatPage() {
                 <MessageSquarePlus size={13} className="shrink-0 text-violet-400" />
                 <span className="text-xs text-violet-300/90">
                   Type to steer the agent in real time — press{" "}
-                  <kbd className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-violet-500/20 border border-violet-400/30 font-mono text-[10px] text-violet-300 leading-none">
+                  <kbd className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-violet-500/20 border border-violet-400/30 font-mono text-2xs text-violet-300 leading-none">
                     ↵
                   </kbd>{" "}
                   to inject
@@ -2863,7 +2475,7 @@ export default function ChatPage() {
           {slashOpen && slashItems.length > 0 && (
             <div ref={slashRef} className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-th-card-bg border border-th-border rounded-lg shadow-xl z-50">
               <div className="px-3 py-2 border-b border-th-border">
-                <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Select Agent</span>
+                <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Select Agent</span>
               </div>
               {slashItems.map((item, i) => (
                 <button
@@ -2877,7 +2489,7 @@ export default function ChatPage() {
                   }`}
                 >
                   <span className="font-medium">{item.name}</span>
-                  {item.description && <span className="text-[11px] text-th-text-muted truncate">{item.description}</span>}
+                  {item.description && <span className="text-2xs text-th-text-muted truncate">{item.description}</span>}
                 </button>
               ))}
             </div>
@@ -2892,7 +2504,7 @@ export default function ChatPage() {
                   <div key={`${item.group}:${item.path}:${i}`}>
                     {showHeader && (
                       <div className="px-3 py-2 border-b border-th-border">
-                        <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">
+                        <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">
                           {item.group === "pending"
                             ? "Attached (not sent yet)"
                             : item.group === "workspace"
@@ -2917,7 +2529,7 @@ export default function ChatPage() {
                       )}
                       <span className="truncate font-mono text-xs flex-1">{item.path}</span>
                       {item.pending && (
-                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400/80">
+                        <span className="shrink-0 text-2xs px-1 py-0.5 rounded bg-amber-500/10 text-amber-400/80">
                           not sent
                         </span>
                       )}
@@ -3085,19 +2697,19 @@ export default function ChatPage() {
             <ModelPicker value={currentModel} models={availableModels} onChange={handleModelChange} />
             <DepthPicker value={runDepth} onChange={handleRunDepthChange} />
             {exoModelLoading && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 shrink-0">
+              <span className="inline-flex items-center gap-1 text-2xs text-amber-400 shrink-0">
                 <Loader2 size={11} className="animate-spin" />
                 Loading…
               </span>
             )}
             {omlxModelLoading && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 shrink-0">
+              <span className="inline-flex items-center gap-1 text-2xs text-amber-400 shrink-0">
                 <Loader2 size={11} className="animate-spin" />
                 Loading…
               </span>
             )}
             {debugLlm && (
-              <div className="flex items-center gap-1.5 text-[10px] text-th-text-muted truncate">
+              <div className="flex items-center gap-1.5 text-2xs text-th-text-muted truncate">
                 <span className="px-1.5 py-0.5 rounded bg-th-inset-bg text-th-text-tertiary border border-th-border">
                   {debugLlm.provider === "exo" ? "Cluster"
                     : debugLlm.provider === "omlx" ? "Turbo"
@@ -3168,7 +2780,7 @@ export default function ChatPage() {
                 </span>
                 {m.label && (
                   <span
-                    className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-medium ${tone}`}
+                    className={`inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full border font-medium ${tone}`}
                     title={`Model: ${m.label}`}
                   >
                     <Cpu size={10} />
@@ -3215,7 +2827,9 @@ export default function ChatPage() {
 
     {/* All viewable artifacts — side split panel */}
     {openArtifact && (
-      <div className="h-full shrink-0 flex" style={{ width: artifactWidth }}>
+      // The cap keeps the chat column (and its header actions) usable when
+      // the window is narrow; the panel gives up width instead of covering it.
+      <div className="h-full shrink-0 flex" style={{ width: artifactWidth, maxWidth: "calc(100% - 360px)", minWidth: 240 }}>
         {/* Drag handle */}
         <div
           onMouseDown={onArtifactResizeStart}
@@ -3234,87 +2848,6 @@ export default function ChatPage() {
   );
 }
 
-
-// ---------------------------------------------------------------------------
-// MessageList — memoized so that typing in the input textarea does NOT
-// trigger re-renders of the (potentially very long) message history.
-// All callback props must be wrapped in useCallback in ChatPage.
-// ---------------------------------------------------------------------------
-
-interface MessageListProps {
-  items: RenderItem[];
-  thoughtFlags: boolean[];
-  latestTodoFlags: boolean[];
-  isStreaming: boolean;
-  currentSessionId: string | null;
-  resolveSubagentModel: (name: string) => { label: string; family: string };
-  onEditMessage: (idx: number, content: string) => void;
-  onHitlDecision: (id: string, decisions: Array<Record<string, unknown>>, requestId?: string) => void;
-  onApproveAllSession: (id: string, decisions: Array<Record<string, unknown>>) => void;
-  onOpenArtifact: (path: string, fileUrl: string, type: ArtifactType) => void;
-}
-
-const MessageList = memo(function MessageList({
-  items,
-  thoughtFlags,
-  latestTodoFlags,
-  isStreaming,
-  currentSessionId,
-  resolveSubagentModel,
-  onEditMessage,
-  onHitlDecision,
-  onApproveAllSession,
-  onOpenArtifact,
-}: MessageListProps) {
-  return (
-    <>
-      {items.map((item) => {
-        if (item.kind === "subagent-group") {
-          const model = resolveSubagentModel(item.name);
-          return (
-            <SubagentGroup
-              key={`group-${item.name}`}
-              name={item.name}
-              messages={item.messages}
-              modelLabel={model.label}
-              modelFamily={model.family}
-              sessionId={currentSessionId ?? undefined}
-              onOpenArtifact={onOpenArtifact}
-            />
-          );
-        }
-        if (item.kind === "thought-group") {
-          const streaming = item.messages.some((m) => m.metadata?.streaming);
-          return (
-            <ThoughtBlock
-              key={`thought-${item.messages.map((m) => m.id).join("-")}-${streaming ? "live" : "done"}`}
-              messages={item.messages}
-            />
-          );
-        }
-        const { message: msg, index: idx } = item;
-        return (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            isThought={thoughtFlags[idx]}
-            isLatestTodo={latestTodoFlags[idx]}
-            canEdit={msg.type === "user" && !isStreaming}
-            sessionId={currentSessionId ?? undefined}
-            onEdit={(newContent) => onEditMessage(idx, newContent)}
-            onHitlDecision={(decisions) => onHitlDecision(
-              msg.id,
-              decisions,
-              typeof msg.metadata?.request_id === "string" ? msg.metadata.request_id : undefined,
-            )}
-            onApproveAllSession={(decisions) => onApproveAllSession(msg.id, decisions)}
-            onOpenArtifact={onOpenArtifact}
-          />
-        );
-      })}
-    </>
-  );
-});
 
 function ChatScheduleDialog({
   agentName,
@@ -3411,7 +2944,7 @@ function ChatScheduleDialog({
                 placeholder="0 9 * * 1-5"
               />
             )}
-            <p className="text-[11px] text-th-text-muted mt-1.5">Cron: {cron}</p>
+            <p className="text-2xs text-th-text-muted mt-1.5">Cron: {cron}</p>
           </div>
           {error && (
             <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</div>
@@ -3464,7 +2997,7 @@ function MlxDownloadBanner({ job }: { job: MlxDownloadJob }) {
 
   return (
     <div className="max-w-4xl mx-auto mb-1.5 rounded-lg border border-th-border bg-th-surface px-3 py-2 space-y-1.5">
-      <div className="flex items-center justify-between gap-2 text-[11px]">
+      <div className="flex items-center justify-between gap-2 text-2xs">
         <span className="inline-flex items-center gap-1.5 text-amber-400 font-medium">
           <Loader2 size={11} className="animate-spin" />
           Downloading model…

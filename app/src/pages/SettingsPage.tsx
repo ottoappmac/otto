@@ -16,6 +16,7 @@ import VoiceModelChooser from "../components/voice/VoiceModelChooser";
 import DecisionPanel from "../components/decision/DecisionPanel";
 import { DistilledModelsTab } from "../components/distillation/DistilledModelsTab";
 import { ActionPolicyPanel } from "../components/action/ActionPolicyPanel";
+import { AllowedFolders } from "../components/action/AllowedFolders";
 import type { ActionPolicySettings, AppSettings, DistillAdapter, ExoCatalogModel, ExoConfig, ExoJob, ExoNodeInfo, ExoRemote, ExoStatus, GoogleConfig, LanSshHost, MlxHfConfig, OpenAIConfig, OrchestratorConfig, PrivacyAuditEntry, PrivacyStatus, SshConfigHost, VideoAudioDevice, VoiceConfig } from "../types";
 import { getFollowFileEdits, setFollowFileEdits } from "../utils/followFileEdits";
 
@@ -307,6 +308,7 @@ const DEFAULT_SETTINGS: AppSettings = {
       pim_write: "ask",
       work_tools_write: "ask",
       browser_automation: "allow",
+      workspace_write: "allow",
       unclassified: "ask",
     },
     agent_overrides: {},
@@ -1738,12 +1740,12 @@ export default function SettingsPage() {
                           <div className="flex-1 min-w-0">
                             <span className="text-sm font-medium text-th-text-primary">{name}</span>
                             {downloaded > 0 && (
-                              <span className="block mt-0.5 text-[9px] font-medium text-emerald-500/80">
+                              <span className="block mt-0.5 text-2xs font-medium text-emerald-500/80">
                                 {downloaded} downloaded
                               </span>
                             )}
                           </div>
-                          <span className={`mt-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold border leading-none shrink-0 ${
+                          <span className={`mt-0.5 px-1.5 py-0.5 rounded-md text-2xs font-semibold border leading-none shrink-0 ${
                             selected ? tagCls : "bg-th-surface-hover border-th-border text-th-text-muted"
                           }`}>
                             {tag}
@@ -1795,7 +1797,7 @@ export default function SettingsPage() {
                           error={modelsError}
                           onFetch={handleFetchAnthropicModels}
                         />
-                        <p className="text-[11px] text-th-text-muted leading-relaxed">
+                        <p className="text-2xs text-th-text-muted leading-relaxed">
                           Click <em>Fetch models</em> to list the IDs your{" "}
                           {settings.llm.anthropic.model_provider === "bedrock"
                             ? "Bedrock account"
@@ -1823,7 +1825,7 @@ export default function SettingsPage() {
                           error={modelsError}
                           onFetch={handleFetchOpenAIModels}
                         />
-                        <p className="text-[11px] text-th-text-muted leading-relaxed">
+                        <p className="text-2xs text-th-text-muted leading-relaxed">
                           Click <em>Fetch models</em> to list available models. Configure API key
                           and advanced settings under the{" "}
                           <button
@@ -1846,7 +1848,7 @@ export default function SettingsPage() {
                           onChange={(v) => updateGoogleField("model_name", v)}
                           placeholder="gemini-2.5-flash"
                         />
-                        <p className="text-[11px] text-th-text-muted leading-relaxed">
+                        <p className="text-2xs text-th-text-muted leading-relaxed">
                           Gemini is the only provider with native video understanding
                           (files, YouTube URLs, custom frame rate). Configure the API key
                           and video resolution under the{" "}
@@ -1879,7 +1881,7 @@ export default function SettingsPage() {
                       )}
                     />
                     <div className="flex items-center justify-between">
-                      <p className="text-[11px] text-th-text-muted leading-relaxed">
+                      <p className="text-2xs text-th-text-muted leading-relaxed">
                         Listing models cached under{" "}
                         <code className="font-mono">{mlxHubDefaultPath || mlxHubDefaultSuffix}</code>.
                         Manage downloads, draft &amp; vision models, and turbo
@@ -1895,7 +1897,7 @@ export default function SettingsPage() {
                       </p>
                       <button
                         type="button"
-                        className="ml-2 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50"
+                        className="ml-2 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50"
                         onClick={() => void refreshMlxModels()}
                         disabled={mlxListLoading}
                         title="Re-scan the MLX Hub cache"
@@ -1909,7 +1911,7 @@ export default function SettingsPage() {
                       </button>
                     </div>
                     {mlxListError && (
-                      <p className="text-[11px] text-rose-400">{mlxListError}</p>
+                      <p className="text-2xs text-rose-400">{mlxListError}</p>
                     )}
                   </div>
                 )}
@@ -1932,7 +1934,7 @@ export default function SettingsPage() {
                       options={exoModelSelectOptions}
                     />
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-[11px] text-th-text-muted leading-relaxed">
+                      <p className="text-2xs text-th-text-muted leading-relaxed">
                         {exoCatalogReachable ? (
                           <>
                             Cluster reports{" "}
@@ -1964,7 +1966,7 @@ export default function SettingsPage() {
                       </p>
                       <button
                         type="button"
-                        className="ml-2 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50"
+                        className="ml-2 inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50"
                         onClick={() => void refreshExoCatalog()}
                         disabled={exoCatalogLoading}
                         title="Re-fetch the cluster catalog"
@@ -2060,7 +2062,7 @@ export default function SettingsPage() {
                   ]}
                 />
                 {settings.orchestrator.llm_family === "exo" && (
-                  <p className="text-[11px] text-th-text-muted leading-relaxed">
+                  <p className="text-2xs text-th-text-muted leading-relaxed">
                     Reuses the cluster URL and model id picked in{" "}
                     <button
                       type="button"
@@ -2105,7 +2107,7 @@ export default function SettingsPage() {
                     { value: "lite", label: "Force lite (~300 tokens, OSS-friendly)" },
                   ]}
                 />
-                <p className="text-[11px] text-th-text-tertiary mt-1">
+                <p className="text-2xs text-th-text-tertiary mt-1">
                   Full mode is used by default for all models, including local (mlx/omlx/exo).
                   Lite mode keeps the four behaviour-critical rules (subagent dispatch, /output writes,
                   execute path safety, action confirmation) and drops the long Claude-tuned blocks.
@@ -2261,7 +2263,7 @@ export default function SettingsPage() {
                   onChange={(v) => updateGoogleField("temperature", parseFloat(v) || 0.0)}
                   type="number"
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed">
+                <p className="text-2xs text-th-text-muted leading-relaxed">
                   Get a key from Google AI Studio. YouTube URL input supports public
                   videos only (free tier: up to 8 hours/day).
                 </p>
@@ -2397,14 +2399,14 @@ export default function SettingsPage() {
                         options={activeModelOpts}
                       />
                       {activeIsDistill && (
-                        <p className="text-[11px] text-violet-300 leading-relaxed">
+                        <p className="text-2xs text-violet-300 leading-relaxed">
                           Distilled LoRA on Standard MLX
                           {distilledRow?.base_repo_id ? ` (student ${distilledRow.base_repo_id.split("/").pop()})` : ""}.
                           New chats load this student + adapter via mlx_lm. Turbo is unloaded so MiniMax is not the live model.
                         </p>
                       )}
                       {activeModelNotInCache && !activeIsDistill && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
                           not in cache listing yet
                         </span>
                       )}
@@ -2460,7 +2462,7 @@ export default function SettingsPage() {
                       onChange={(v) => updateMlxPartial({ mlx_prompt_cache_max_tokens: Math.max(0, parseInt(v, 10) || 0) })}
                     />
                   </div>
-                  <p className="text-[11px] text-th-text-muted leading-relaxed">
+                  <p className="text-2xs text-th-text-muted leading-relaxed">
                     The KV cache stores the model's attention state for the conversation so far. Without a cap it grows for as long as the agent runs and can push your Mac into swap or trigger out-of-memory crashes after long autonomous sessions. The default 65 536 tokens caps the cache around 2 GB on a 7B 4-bit model, above OTTO's prompt so the cache can be reused. When the cap is hit, the generated tail is dropped and the reusable prompt is kept; if the prompt itself is larger than the cap, the cache is rebuilt. Set to 0 only if you know you have headroom.
                   </p>
                   <div className="flex flex-col gap-3">
@@ -2548,7 +2550,7 @@ export default function SettingsPage() {
                       >
                         {t}
                         {badge !== null && (
-                          <span className={`min-w-[17px] h-[17px] flex items-center justify-center px-1 rounded-full text-[10px] font-semibold leading-none ${
+                          <span className={`min-w-[17px] h-[17px] flex items-center justify-center px-1 rounded-full text-2xs font-semibold leading-none ${
                             active
                               ? "bg-th-tab-active-bg text-th-tab-active-fg"
                               : "bg-th-surface text-th-text-secondary border border-th-border"
@@ -2562,7 +2564,7 @@ export default function SettingsPage() {
                 </nav>
 
                 <span
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-2xs font-medium border ${
                     exoLiveStatus?.reachable
                       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
                       : settings.exo.enabled
@@ -2643,7 +2645,7 @@ export default function SettingsPage() {
                 />
 
                 <div className="space-y-1">
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Networking</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Networking</p>
                   <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <InputField
@@ -2669,7 +2671,7 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-1">
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Lifecycle</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Lifecycle</p>
                   <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
                     <Toggle
                       label="Auto-start on boot"
@@ -2706,9 +2708,9 @@ export default function SettingsPage() {
                 </p>
 
                 <div className="space-y-1">
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Active Model</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Active Model</p>
                   <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
-                    <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+                    <p className="text-2xs text-th-text-tertiary leading-relaxed">
                       Used when{" "}
                       <button type="button" onClick={() => setLlmSubTab("Model Provider")} className="underline hover:text-th-text-primary">
                         Model Provider
@@ -2722,7 +2724,7 @@ export default function SettingsPage() {
                       options={exoModelSelectOptions}
                     />
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <p className="text-[11px] text-th-text-muted leading-relaxed">
+                      <p className="text-2xs text-th-text-muted leading-relaxed">
                         {exoCatalogReachable ? (
                           <>
                             <strong>{exoCatalog.filter((m) => m.downloaded).length}</strong>{" "}
@@ -2736,7 +2738,7 @@ export default function SettingsPage() {
                         {settings.exo.model_name?.trim() && exoCatalogReachable && (
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded-md border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
                             onClick={() => void handleExoUnload()}
                             disabled={exoUnloading}
                             title="Evict model instances from cluster RAM (weights stay on disk)"
@@ -2747,7 +2749,7 @@ export default function SettingsPage() {
                         )}
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50 transition-colors"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50 transition-colors"
                           onClick={() => void refreshExoCatalog()}
                           disabled={exoCatalogLoading}
                           title="Re-fetch the cluster catalog"
@@ -2758,7 +2760,7 @@ export default function SettingsPage() {
                       </div>
                     </div>
                     {exoUnloadMsg && (
-                      <p className={`text-[11px] ${exoUnloadMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
+                      <p className={`text-2xs ${exoUnloadMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
                         {exoUnloadMsg.ok ? "✓ " : "✗ "}{exoUnloadMsg.text}
                       </p>
                     )}
@@ -2766,9 +2768,9 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-1">
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Download a Model</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Download a Model</p>
                   <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
-                    <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+                    <p className="text-2xs text-th-text-tertiary leading-relaxed">
                       Browse the cluster catalog, then download &amp; load any model. The cluster shards weights across placement nodes — a 4-bit 30B model is ~20 GB.
                     </p>
                     <ExoModelChooser
@@ -2787,9 +2789,9 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-1">
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Placement Strategy</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Placement Strategy</p>
                   <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
-                    <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+                    <p className="text-2xs text-th-text-tertiary leading-relaxed">
                       Minimum nodes that must hold a shard. <strong>1</strong> (default) = fastest single-node. Set <strong>2+</strong> to pipeline-parallel split for larger models or longer contexts. Note: cross-node tensor traffic costs tokens/sec.
                     </p>
                     <CommitInputField
@@ -2805,38 +2807,38 @@ export default function SettingsPage() {
                     {settings.exo.min_nodes > settings.exo.remotes.length + 1 && (
                       <div className="flex items-start gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
                         <AlertTriangle size={12} className="text-amber-400 shrink-0 mt-0.5" />
-                        <p className="text-[11px] text-amber-400 leading-relaxed">
+                        <p className="text-2xs text-amber-400 leading-relaxed">
                           Only {settings.exo.remotes.length + 1} node{settings.exo.remotes.length + 1 === 1 ? "" : "s"} configured (this Mac + {settings.exo.remotes.length} remote{settings.exo.remotes.length === 1 ? "" : "s"}). The cluster will reject placement requests with min_nodes greater than reachable peers.
                         </p>
                       </div>
                     )}
 
                     <label className="flex flex-col gap-1">
-                      <span className="text-[11px] font-medium text-th-text-secondary">Sharding strategy</span>
+                      <span className="text-2xs font-medium text-th-text-secondary">Sharding strategy</span>
                       <select
                         value={settings.exo.sharding ?? "Pipeline"}
                         onChange={(e) => updateExoPartial({ sharding: e.target.value })}
-                        className="bg-th-input-bg border border-th-border rounded px-2 py-1 text-[11px] text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
+                        className="bg-th-input-bg border border-th-border rounded px-2 py-1 text-2xs text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
                       >
                         <option value="Pipeline">Pipeline — best single-request latency (default)</option>
                         <option value="Tensor">Tensor — higher throughput on 2-4 nodes</option>
                       </select>
-                      <span className="text-[10px] text-th-text-muted leading-relaxed">
+                      <span className="text-2xs text-th-text-muted leading-relaxed">
                         Pipeline splits layers across devices (lowest latency for one request at a time, works for every model). Tensor splits each layer for up to 1.8x/3.2x throughput on 2/4 nodes, but only tensor-capable models support it. No effect on single-node placements.
                       </span>
                     </label>
 
                     <label className="flex flex-col gap-1">
-                      <span className="text-[11px] font-medium text-th-text-secondary">Collective backend</span>
+                      <span className="text-2xs font-medium text-th-text-secondary">Collective backend</span>
                       <select
                         value={settings.exo.instance_meta ?? "MlxRing"}
                         onChange={(e) => updateExoPartial({ instance_meta: e.target.value })}
-                        className="bg-th-input-bg border border-th-border rounded px-2 py-1 text-[11px] text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
+                        className="bg-th-input-bg border border-th-border rounded px-2 py-1 text-2xs text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
                       >
                         <option value="MlxRing">MlxRing — universal (default)</option>
                         <option value="MlxJaccl">MlxJaccl — Thunderbolt 5 / RDMA only</option>
                       </select>
-                      <span className="text-[10px] text-th-text-muted leading-relaxed">
+                      <span className="text-2xs text-th-text-muted leading-relaxed">
                         MlxRing works over any network. MlxJaccl has lower inter-node latency but requires Thunderbolt 5 / RDMA-capable hardware (M4 Pro/Max, macOS 26.2+) — only enable it on a qualified cluster.
                       </span>
                     </label>
@@ -2844,9 +2846,9 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-1">
-                  <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Generation</p>
+                  <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">Generation</p>
                   <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
-                    <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+                    <p className="text-2xs text-th-text-tertiary leading-relaxed">
                       Per-request generation knobs sent to the cluster. Lower <strong>max tokens</strong> and disabling <strong>thinking</strong> are the two biggest latency wins for an interactive agent.
                     </p>
                     <CommitInputField
@@ -2860,9 +2862,9 @@ export default function SettingsPage() {
                       }}
                     />
                     <label className="flex items-center justify-between gap-2 cursor-pointer select-none">
-                      <span className="text-[11px] text-th-text-secondary">
+                      <span className="text-2xs text-th-text-secondary">
                         Thinking mode
-                        <span className="text-[10px] text-th-text-muted ml-1">(chain-of-thought; Qwen3 / DeepSeek / GLM)</span>
+                        <span className="text-2xs text-th-text-muted ml-1">(chain-of-thought; Qwen3 / DeepSeek / GLM)</span>
                       </span>
                       <input
                         type="checkbox"
@@ -2885,7 +2887,7 @@ export default function SettingsPage() {
                       remote{settings.exo.remotes.length === 1 ? "" : "s"} configured
                     </span>
                     {exoLiveStatus?.reachable && (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                         {Math.max(0, exoLiveStatus.peer_count - 1)} joined
                       </span>
@@ -2901,7 +2903,7 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
-                  <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+                  <p className="text-2xs text-th-text-tertiary leading-relaxed">
                     Each node is an SSH alias from <code className="font-mono text-th-text-secondary">~/.ssh/config</code> with key-based (non-interactive) auth. "Start" deploys the cluster helper and launches the daemon on the remote, mirroring <code className="font-mono text-th-text-secondary">exo up --remote</code>.
                   </p>
 
@@ -2909,10 +2911,10 @@ export default function SettingsPage() {
                     <div className="space-y-3 rounded-md border border-th-border bg-th-bg p-3">
                       {/* Mode toggle: classic alias vs from-scratch wizard. */}
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[11px] font-medium text-th-text-secondary">
+                        <span className="text-2xs font-medium text-th-text-secondary">
                           Add a remote by:
                         </span>
-                        <div className="inline-flex rounded-md border border-th-border bg-th-surface p-0.5 text-[11px]">
+                        <div className="inline-flex rounded-md border border-th-border bg-th-surface p-0.5 text-2xs">
                           <button
                             type="button"
                             onClick={() => setExoAddMode("alias")}
@@ -2970,7 +2972,7 @@ export default function SettingsPage() {
                           <div className="space-y-2">
                             {aliases.length > 0 && (
                               <div>
-                                <p className="text-[11px] font-medium text-th-text-secondary uppercase tracking-wide mb-1">
+                                <p className="text-2xs font-medium text-th-text-secondary uppercase tracking-wide mb-1">
                                   From your ~/.ssh/config
                                 </p>
                                 <div className="flex flex-wrap gap-1.5">
@@ -3003,11 +3005,11 @@ export default function SettingsPage() {
                             )}
                             {(lan.length > 0 || exoLanScanned) && (
                               <div>
-                                <p className="text-[11px] font-medium text-th-text-secondary uppercase tracking-wide mb-1">
+                                <p className="text-2xs font-medium text-th-text-secondary uppercase tracking-wide mb-1">
                                   Discovered on this LAN
                                 </p>
                                 {lan.length === 0 ? (
-                                  <p className="text-[11px] text-th-text-muted">
+                                  <p className="text-2xs text-th-text-muted">
                                     No <code className="font-mono">_ssh._tcp</code> services
                                     advertised on this network.
                                   </p>
@@ -3051,7 +3053,7 @@ export default function SettingsPage() {
                                             </span>
                                           ) : tb ? (
                                             <>
-                                              <span className="ml-1 px-1 rounded-sm bg-amber-500/20 text-amber-400 text-[10px] font-semibold uppercase tracking-wide">
+                                              <span className="ml-1 px-1 rounded-sm bg-amber-500/20 text-amber-400 text-2xs font-semibold uppercase tracking-wide">
                                                 TB
                                               </span>
                                               <span className="text-th-text-muted ml-1 font-mono">
@@ -3143,7 +3145,7 @@ export default function SettingsPage() {
                           a.includes(".") || /\d+\.\d+\.\d+\.\d+/.test(a);
                         if (!looksLikeHostname) return null;
                         return (
-                          <p className="text-[11px] text-amber-500 leading-relaxed -mt-1">
+                          <p className="text-2xs text-amber-500 leading-relaxed -mt-1">
                             <strong>{a}</strong> isn't a Host alias in{" "}
                             <code>~/.ssh/config</code>. SSH will dial this hostname
                             directly — make sure it resolves and your key is
@@ -3154,7 +3156,7 @@ export default function SettingsPage() {
                       })()}
                       {exoSshTestResult && (
                         <div
-                          className={`rounded-md border px-3 py-2 text-[11px] leading-relaxed ${
+                          className={`rounded-md border px-3 py-2 text-2xs leading-relaxed ${
                             exoSshTestResult.ok
                               ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
                               : "border-rose-500/40 bg-rose-500/10 text-rose-400"
@@ -3171,7 +3173,7 @@ export default function SettingsPage() {
                             </div>
                           )}
                           {!exoSshTestResult.ok && exoSshTestResult.stderr && (
-                            <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-th-text-muted">
+                            <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-2xs text-th-text-muted">
                               {exoSshTestResult.stderr.trim()}
                             </pre>
                           )}
@@ -3189,7 +3191,7 @@ export default function SettingsPage() {
                         onChange={setExoAddDataDir}
                         placeholder="(defaults to platform standard)"
                       />
-                      <p className="text-[11px] text-th-text-muted leading-relaxed">
+                      <p className="text-2xs text-th-text-muted leading-relaxed">
                         We use the SSH alias to <code>scp</code> the cluster helper and{" "}
                         <code>ssh</code> in for install &amp; start. The alias must
                         authenticate non-interactively (key-based). LAN-discovered hosts
@@ -3229,7 +3231,7 @@ export default function SettingsPage() {
                     <div className="flex flex-col items-center gap-2 py-8 text-center">
                       <Server size={28} className="text-th-text-muted opacity-40" />
                       <p className="text-xs font-medium text-th-text-secondary">No remote nodes</p>
-                      <p className="text-[11px] text-th-text-muted max-w-xs leading-relaxed">
+                      <p className="text-2xs text-th-text-muted max-w-xs leading-relaxed">
                         Add a secondary Mac or Linux machine via SSH to distribute model shards across multiple devices.
                       </p>
                     </div>
@@ -3291,12 +3293,12 @@ export default function SettingsPage() {
                                   {r.label || r.ssh_alias}
                                 </span>
                                 {r.label && (
-                                  <code className="text-[10px] font-mono text-th-text-muted bg-th-inset-bg px-1.5 py-0.5 rounded">
+                                  <code className="text-2xs font-mono text-th-text-muted bg-th-inset-bg px-1.5 py-0.5 rounded">
                                     {r.ssh_alias}
                                   </code>
                                 )}
                                 <span
-                                  className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-[1px] text-[10px] font-medium ${badgeStyles[badgeKind]}`}
+                                  className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-[1px] text-2xs font-medium ${badgeStyles[badgeKind]}`}
                                   title={
                                     peer
                                       ? `Reported as ${peer.friendly_name ?? peer.node_id.slice(0, 12)}…${peer.memory_total_gb ? ` · ${peer.memory_free_gb ?? "?"} / ${peer.memory_total_gb} GB free` : ""}`
@@ -3317,12 +3319,12 @@ export default function SettingsPage() {
                               </div>
                               {(peer?.chip || peer?.memory_total_gb || r.app_data_dir) && (
                                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                  {peer?.chip && <span className="text-[10px] text-th-text-muted">{peer.chip}</span>}
+                                  {peer?.chip && <span className="text-2xs text-th-text-muted">{peer.chip}</span>}
                                   {peer?.memory_total_gb && (
-                                    <span className="text-[10px] text-th-text-muted">{peer.memory_free_gb ?? "?"} / {peer.memory_total_gb} GB free</span>
+                                    <span className="text-2xs text-th-text-muted">{peer.memory_free_gb ?? "?"} / {peer.memory_total_gb} GB free</span>
                                   )}
                                   {r.app_data_dir && (
-                                    <span className="text-[10px] text-th-text-muted font-mono truncate max-w-[200px]">{r.app_data_dir}</span>
+                                    <span className="text-2xs text-th-text-muted font-mono truncate max-w-[200px]">{r.app_data_dir}</span>
                                   )}
                                 </div>
                               )}
@@ -3330,7 +3332,7 @@ export default function SettingsPage() {
 
                             {/* Actions */}
                             <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                              <label className="flex items-center gap-1 text-[11px] text-th-text-tertiary cursor-pointer select-none">
+                              <label className="flex items-center gap-1 text-2xs text-th-text-tertiary cursor-pointer select-none">
                                 <input
                                   type="checkbox"
                                   checked={r.enabled}
@@ -3395,7 +3397,7 @@ export default function SettingsPage() {
                           {(exoOpNotices[`up-${r.ssh_alias}`] ?? exoOpNotices[`down-${r.ssh_alias}`]) && !remoteUpJobs[r.ssh_alias] && (() => {
                             const notice = exoOpNotices[`up-${r.ssh_alias}`] ?? exoOpNotices[`down-${r.ssh_alias}`];
                             return (
-                              <div className={`mx-3.5 mb-3 flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] border ${
+                              <div className={`mx-3.5 mb-3 flex items-center gap-1.5 px-3 py-2 rounded-lg text-2xs border ${
                                 notice.kind === "progress"
                                   ? "border-blue-500/20 bg-blue-500/5 text-blue-400"
                                   : notice.kind === "success"
@@ -3417,7 +3419,7 @@ export default function SettingsPage() {
                             const done = job.status === "done";
                             const failed = job.status === "error";
                             return (
-                              <div className={`mx-3.5 mb-3 rounded-lg border text-[11px] ${
+                              <div className={`mx-3.5 mb-3 rounded-lg border text-2xs ${
                                 running ? "border-blue-500/20 bg-blue-500/5"
                                   : done ? "border-emerald-500/20 bg-emerald-500/5"
                                   : "border-red-500/20 bg-red-500/5"
@@ -3441,10 +3443,10 @@ export default function SettingsPage() {
                                 </div>
                                 {job.log_lines.length > 0 && (
                                   <details open={running || failed}>
-                                    <summary className="cursor-pointer px-3 pb-1 text-th-text-muted hover:text-th-text-secondary list-none text-[10px]">
+                                    <summary className="cursor-pointer px-3 pb-1 text-th-text-muted hover:text-th-text-secondary list-none text-2xs">
                                       {job.log_lines.length} log line{job.log_lines.length !== 1 ? "s" : ""}
                                     </summary>
-                                    <pre className="mx-3 mb-2 max-h-40 overflow-auto rounded-lg bg-black/80 p-2 text-[10px] text-emerald-100 font-mono whitespace-pre-wrap">
+                                    <pre className="mx-3 mb-2 max-h-40 overflow-auto rounded-lg bg-black/80 p-2 text-2xs text-emerald-100 font-mono whitespace-pre-wrap">
                                       {job.log_lines.join("\n")}
                                     </pre>
                                   </details>
@@ -3571,7 +3573,7 @@ export default function SettingsPage() {
                     setA({ max_db_mb: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   When the database exceeds this size, the oldest records are automatically deleted until it fits. Runs hourly alongside the retention pass. 0 = no cap.
                 </p>
                 <InputField
@@ -3585,7 +3587,7 @@ export default function SettingsPage() {
                     setA({ idle_threshold_secs: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Skip recording when there's been no keyboard or mouse input for this long. Big DB-size win for users who leave the laptop on overnight.
                 </p>
                 <InputField
@@ -3599,7 +3601,7 @@ export default function SettingsPage() {
                     setA({ min_span_secs: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Drop spans shorter than this — cleans up tab-flicking noise without losing the windows you actually used.
                 </p>
                 <InputField
@@ -3613,7 +3615,7 @@ export default function SettingsPage() {
                     setA({ max_span_secs: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Force a new row after this many seconds on the same window. Without sharding, a 90-min focus session collapses into one row that loses everything that happened inside. 600s ≈ 6 rows/hour during deep focus.
                 </p>
                 <InputField
@@ -3627,7 +3629,7 @@ export default function SettingsPage() {
                     setA({ context_max_chars: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Each row keeps a rolling log of distinct selections / typed inputs seen during the span. When this limit is hit, the oldest entries are trimmed from the front. Set to 0 to keep only the latest snapshot (legacy behaviour).
                 </p>
                 <InputField
@@ -3641,7 +3643,7 @@ export default function SettingsPage() {
                     setA({ field_val_max_chars: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Max characters captured from the active text field each tick. Native apps like Notes, Mail, Pages, and Xcode expose their full document content here. 8000 ≈ one full page of writing. Set to 0 to disable.
                 </p>
                 <InputField
@@ -3655,7 +3657,7 @@ export default function SettingsPage() {
                     setA({ browser_text_max_chars: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Pulls the visible page body text (title + headings + body) from the active tab in Safari, Chrome, Brave, and Arc via AppleScript. Massively richer than URL alone.
                   <br />
                   <span className="text-amber-400">Safari requires</span> Develop → "Allow JavaScript from Apple Events".
@@ -3672,7 +3674,7 @@ export default function SettingsPage() {
                     setA({ ax_walk_max_chars: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Walks the Accessibility tree of non-browser apps and harvests visible text. Captures rich context for Electron apps (Cursor, VS Code, Slack, Discord, Notion) and AppKit apps with multi-pane layouts. Tab labels, file tree entries, status bar — anything AX exposes.
                 </p>
                 <InputField
@@ -3686,7 +3688,7 @@ export default function SettingsPage() {
                     setA({ ax_walk_max_depth: n });
                   }}
                 />
-                <p className="text-[10px] text-th-text-muted -mt-3">
+                <p className="text-2xs text-th-text-muted -mt-3">
                   Recursion depth when descending the AX tree. Electron apps (Cursor, Slack, Discord, VS Code, Notion) nest text inside 15-25 layers of empty Chromium AXGroup wrappers before reaching the actual AXStaticText leaves. Native AppKit apps are much shallower (5-8 levels). 25 is the sweet spot.
                 </p>
                 <div>
@@ -3706,7 +3708,7 @@ export default function SettingsPage() {
                     className="w-full px-3 py-2 rounded-lg bg-th-input-bg border border-th-input-border text-sm text-th-text-primary placeholder-th-text-muted focus:outline-none focus:border-blue-400 transition-colors font-mono"
                     placeholder="1Password\nBitwarden\nBanking"
                   />
-                  <p className="text-[10px] text-th-text-muted mt-1">
+                  <p className="text-2xs text-th-text-muted mt-1">
                     Apps whose name contains any of these strings will never be recorded.
                   </p>
                 </div>
@@ -3791,7 +3793,7 @@ export default function SettingsPage() {
                     setV({ frame_rate: n });
                   }}
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                <p className="text-2xs text-th-text-muted leading-relaxed -mt-2">
                   1 fps suits most content. Lower for long/static video (lectures);
                   higher for fast action. Higher rates cost more tokens.
                 </p>
@@ -3820,7 +3822,7 @@ export default function SettingsPage() {
                   checked={!!v.cache_transcripts}
                   onChange={(val) => setV({ cache_transcripts: val })}
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                <p className="text-2xs text-th-text-muted leading-relaxed -mt-2">
                   Keeps each clip's transcript in the session's transcripts/ folder
                   so re-analysing it skips transcription — the slow part of the
                   frame path. Turn off to leave nothing on disk.
@@ -3863,7 +3865,7 @@ export default function SettingsPage() {
                     setV({ frames_per_request: n });
                   }}
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                <p className="text-2xs text-th-text-muted leading-relaxed -mt-2">
                   Above this, the clip is walked in order and each batch carries a
                   running summary, so no single request can blow a context limit.
                   Local servers reject on image count rather than payload size —
@@ -3892,7 +3894,7 @@ export default function SettingsPage() {
                     setV({ realtime_fps: n });
                   }}
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed">
+                <p className="text-2xs text-th-text-muted leading-relaxed">
                   With a Gemini API key, live watching streams the screen to Gemini
                   Live, which accepts at most 1 frame per second. Without one it
                   falls back to your local vision model, which describes a batch of
@@ -3914,7 +3916,7 @@ export default function SettingsPage() {
                   checked={!!v.live_preview}
                   onChange={(val) => setV({ live_preview: val })}
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                <p className="text-2xs text-th-text-muted leading-relaxed -mt-2">
                   Mirrors each captured frame into the Watch panel so you can see
                   exactly what the model is being shown, and confirm the right
                   screen is being captured.
@@ -3929,7 +3931,7 @@ export default function SettingsPage() {
                     { value: "stream", label: "Live — hand over in chunks while watching" },
                   ]}
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                <p className="text-2xs text-th-text-muted leading-relaxed -mt-2">
                   Commentary is passed as context, not as a message, so it never
                   starts an agent turn on its own — it's folded into whatever you
                   ask next, or injected into a run already in progress.
@@ -3971,7 +3973,7 @@ export default function SettingsPage() {
                     }}
                   />
                 </div>
-                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-1">
+                <p className="text-2xs text-th-text-muted leading-relaxed -mt-1">
                   Only used when watching without Gemini. Shorter batches react
                   faster but interrupt the model more often; each batch occupies
                   it for the length of one request.
@@ -3986,7 +3988,7 @@ export default function SettingsPage() {
                   checked={!!v.debug_save_frames}
                   onChange={(val) => setV({ debug_save_frames: val })}
                 />
-                <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+                <p className="text-2xs text-th-text-muted leading-relaxed -mt-2">
                   Writes the exact frames the model was shown into the session's
                   video-frames/ folder, alongside a manifest with their timestamps
                   and the transcript. Useful for telling a bad frame sample apart
@@ -4203,7 +4205,7 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <Toggle
                   label="Auto-evaluate completed runs"
-                  description="When a run finishes, an LLM picks suitable metrics and scores it automatically. Turn this off to evaluate runs manually with the Evaluate button on each run."
+                  description="Chats are scored after about 2 minutes idle. Schedule, trigger, and other non-chat runs are scored as soon as they finish. Turn this off to evaluate runs manually with the Evaluate button on each run."
                   checked={settings.evaluation?.auto_evaluate ?? false}
                   onChange={(v) => setSettings((s) => ({ ...s, evaluation: { ...s.evaluation, auto_evaluate: v } }))}
                 />
@@ -4376,7 +4378,7 @@ function ExoReleaseCheckButton({ currentRef }: { currentRef: string }) {
         type="button"
         onClick={runCheck}
         disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-md border border-th-border bg-th-bg px-2.5 py-1.5 text-[11px] font-medium text-th-text-secondary hover:bg-th-inset-bg disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 rounded-md border border-th-border bg-th-bg px-2.5 py-1.5 text-2xs font-medium text-th-text-secondary hover:bg-th-inset-bg disabled:opacity-50"
       >
         {busy ? (
           <Loader2 size={12} className="animate-spin" />
@@ -4386,7 +4388,7 @@ function ExoReleaseCheckButton({ currentRef }: { currentRef: string }) {
         Check for a new cluster release
       </button>
       {result && (
-        <div className="flex-1 text-[11px] leading-relaxed">
+        <div className="flex-1 text-2xs leading-relaxed">
           {result.ok ? (
             result.newer ? (
               <span className="text-amber-600">
@@ -4501,8 +4503,8 @@ function OmlxModelSelector({
   if (reachable && !savedModel) {
     return (
       <div className="space-y-2">
-        <p className="text-[11px] font-medium text-th-text-primary">Load a model</p>
-        <p className="text-[10px] text-th-text-muted leading-relaxed">
+        <p className="text-2xs font-medium text-th-text-primary">Load a model</p>
+        <p className="text-2xs text-th-text-muted leading-relaxed">
           The oMLX server is running but no model has been set. Pick one below.
         </p>
         <OmlxModelPicker
@@ -4514,9 +4516,9 @@ function OmlxModelSelector({
           }}
         />
         {loadErr && (
-          <p className="text-[10px] text-red-400 leading-relaxed">{loadErr}</p>
+          <p className="text-2xs text-red-400 leading-relaxed">{loadErr}</p>
         )}
-        <p className="text-[11px] text-th-text-muted leading-relaxed">
+        <p className="text-2xs text-th-text-muted leading-relaxed">
           Manage the server and KV cache under the{" "}
           <button type="button" onClick={onGoToOnDevice} className="underline hover:text-th-text-primary">Turbo</button>{" "}sub-tab.
         </p>
@@ -4548,9 +4550,9 @@ function OmlxModelSelector({
         }}
       />
       {loadErr && (
-        <p className="text-[10px] text-red-400 leading-relaxed">{loadErr}</p>
+        <p className="text-2xs text-red-400 leading-relaxed">{loadErr}</p>
       )}
-      <p className="text-[11px] text-th-text-muted leading-relaxed">
+      <p className="text-2xs text-th-text-muted leading-relaxed">
         Manage the server, context window, and KV cache under the{" "}
         <button type="button" onClick={onGoToOnDevice} className="underline hover:text-th-text-primary">Turbo</button>{" "}sub-tab.
       </p>
@@ -4598,12 +4600,12 @@ function OmlxModelDropdown({
         <span className="flex items-center gap-2 min-w-0">
           <span className="truncate text-th-text-primary">{displayLabel}</span>
           {value && !reachable && (
-            <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-th-surface-hover border border-th-border text-th-text-muted">
+            <span className="shrink-0 px-1.5 py-0.5 rounded-full text-2xs font-medium bg-th-surface-hover border border-th-border text-th-text-muted">
               Offline — saved
             </span>
           )}
           {value && reachable && (
-            <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+            <span className="shrink-0 px-1.5 py-0.5 rounded-full text-2xs font-medium bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
               Active
             </span>
           )}
@@ -4636,7 +4638,7 @@ function OmlxModelDropdown({
                   <span className="truncate font-medium">{shortLabel}</span>
                 </span>
                 {size && (
-                  <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium border
+                  <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-2xs font-medium border
                     ${isSelected ? "bg-blue-500/10 border-blue-500/30 text-blue-400" : "bg-th-surface-hover border-th-border text-th-text-muted"}`}>
                     {size}
                   </span>
@@ -4865,7 +4867,7 @@ function OmlxQuickPanel({
           <p className="text-[12px] font-medium text-th-text-primary">oMLX server</p>
           {detecting && <Loader2 size={11} className="animate-spin text-th-text-tertiary" />}
         </div>
-        <div className="flex items-center gap-1.5 text-[10px]">
+        <div className="flex items-center gap-1.5 text-2xs">
           {!detecting && (
             <>
               <span className={`inline-block w-1.5 h-1.5 rounded-full ${reachable ? "bg-emerald-500" : installed ? "bg-amber-500" : "bg-th-text-muted"}`} />
@@ -4877,7 +4879,7 @@ function OmlxQuickPanel({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-th-text-tertiary">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-2xs text-th-text-tertiary">
         <div className="truncate">CLI: <span className="text-th-text-secondary">{info?.detection.cli_path ?? "—"}</span></div>
         <div className="truncate">Brew: <span className="text-th-text-secondary">{homebrew ? "yes" : "no"}</span></div>
         <div className="truncate">Service: <span className="text-th-text-secondary">{info?.detection.brew_service_state ?? "—"}</span></div>
@@ -4897,14 +4899,14 @@ function OmlxQuickPanel({
 
       {/* Upgrade banner — shown only when an update is available via Homebrew */}
       {versionInfo?.upgrade_available && versionInfo.homebrew && (
-        <div className="flex items-center justify-between rounded-md border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-[10px]">
+        <div className="flex items-center justify-between rounded-md border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-2xs">
           <span className="text-blue-300">
             Update available: {versionInfo.installed_version} → {versionInfo.latest_version}
           </span>
           <button
             onClick={() => void runUpgrade()}
             disabled={busy === "upgrade"}
-            className="ml-3 flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium bg-blue-500/20 text-blue-300 border border-blue-500/40 hover:bg-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="ml-3 flex items-center gap-1 rounded px-2 py-0.5 text-2xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/40 hover:bg-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {busy === "upgrade" ? (
               <><Loader2 size={10} className="animate-spin" /> Upgrading…</>
@@ -4917,7 +4919,7 @@ function OmlxQuickPanel({
 
       <div className="space-y-2">
         <p className="text-sm font-medium text-th-text-tertiary">Distilled (Turbo)</p>
-        <p className="text-[11px] text-th-text-muted leading-relaxed">
+        <p className="text-2xs text-th-text-muted leading-relaxed">
           oMLX cannot attach a LoRA. Fuse writes a full MLX copy, then loads it here.
         </p>
         <DistilledModelsTab
@@ -4957,7 +4959,7 @@ function OmlxQuickPanel({
           }}
         />
         {isDistillCatalogId(settings.llm.mlx.hf_llm_model_id) && (
-          <p className="text-[11px] text-violet-300 leading-relaxed">
+          <p className="text-2xs text-violet-300 leading-relaxed">
             Distilled LoRA is the Standard MLX model. This field is only the oMLX server load.
           </p>
         )}
@@ -4966,7 +4968,7 @@ function OmlxQuickPanel({
 
       {turboSubTab === "Model" && (
         <div className="space-y-3">
-          <p className="text-[11px] text-th-text-secondary leading-relaxed">
+          <p className="text-2xs text-th-text-secondary leading-relaxed">
             Browse, download, and load models from HuggingFace Hub. Downloads go to the shared
             HF cache used by both Standard and Turbo.
             {reachable
@@ -5005,7 +5007,7 @@ function OmlxQuickPanel({
 
       {turboSubTab === "Overview" && (<>
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-th-text-secondary w-28 shrink-0">Context window</span>
+        <span className="text-2xs text-th-text-secondary w-28 shrink-0">Context window</span>
         <input
           type="number"
           min={4096}
@@ -5020,13 +5022,13 @@ function OmlxQuickPanel({
             const v = parseInt(e.target.value, 10) || 131072;
             void saveCache({ max_context_window: v });
           }}
-          className="w-28 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-[11px] text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg disabled:opacity-40"
+          className="w-28 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-2xs text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg disabled:opacity-40"
         />
-        <span className="text-[10px] text-th-text-muted">tokens</span>
+        <span className="text-2xs text-th-text-muted">tokens</span>
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-th-text-secondary w-28 shrink-0">Max output tokens</span>
+        <span className="text-2xs text-th-text-secondary w-28 shrink-0">Max output tokens</span>
         <input
           type="number"
           min={256}
@@ -5036,15 +5038,15 @@ function OmlxQuickPanel({
             const v = parseInt(e.target.value, 10) || 8192;
             setSettings((s) => ({ ...s, omlx: { ...s.omlx, max_tokens: v } }));
           }}
-          className="w-28 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-[11px] text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
+          className="w-28 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-2xs text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
         />
-        <span className="text-[10px] text-th-text-muted">tokens</span>
+        <span className="text-2xs text-th-text-muted">tokens</span>
       </div>
 
       <label className="flex items-center justify-between gap-2 cursor-pointer select-none">
-        <span className="text-[11px] text-th-text-secondary">
+        <span className="text-2xs text-th-text-secondary">
           Thinking mode
-          <span className="text-[10px] text-th-text-muted ml-1">(chain-of-thought; Qwen3 etc.)</span>
+          <span className="text-2xs text-th-text-muted ml-1">(chain-of-thought; Qwen3 etc.)</span>
         </span>
         <input
           type="checkbox"
@@ -5062,7 +5064,7 @@ function OmlxQuickPanel({
             type="button"
             onClick={() => void run("install")}
             disabled={busy !== null}
-            className="px-3 py-1.5 rounded-md bg-th-tab-active-bg text-white text-[11px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-md bg-th-tab-active-bg text-white text-2xs font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
             title={homebrew ? "Run brew tap + brew install" : "Download + install from the official oMLX release (no Homebrew needed)"}
           >
             {busy === "install" ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
@@ -5074,7 +5076,7 @@ function OmlxQuickPanel({
             type="button"
             onClick={() => void run("start")}
             disabled={busy !== null}
-            className="px-3 py-1.5 rounded-md bg-th-tab-active-bg text-white text-[11px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-md bg-th-tab-active-bg text-white text-2xs font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
           >
             {busy === "start" ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
             Start
@@ -5085,7 +5087,7 @@ function OmlxQuickPanel({
             type="button"
             onClick={() => void run("stop")}
             disabled={busy !== null}
-            className="px-3 py-1.5 rounded-md border border-th-border text-th-text-secondary text-[11px] font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1.5"
+            className="px-3 py-1.5 rounded-md border border-th-border text-th-text-secondary text-2xs font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1.5"
           >
             {busy === "stop" ? <Loader2 size={11} className="animate-spin" /> : <Square size={11} />}
             Stop
@@ -5094,7 +5096,7 @@ function OmlxQuickPanel({
         <button
           type="button"
           onClick={() => void refresh()}
-          className="px-3 py-1.5 rounded-md border border-th-border text-th-text-secondary text-[11px] font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-md border border-th-border text-th-text-secondary text-2xs font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1.5"
         >
           <RefreshCw size={11} />
           Refresh
@@ -5102,19 +5104,19 @@ function OmlxQuickPanel({
       </div>
 
       {err && (
-        <p className="text-[11px] text-rose-400 leading-relaxed">{err}</p>
+        <p className="text-2xs text-rose-400 leading-relaxed">{err}</p>
       )}
 
       {/* KV cache / turbo mode */}
       <div className="border-t border-th-border pt-2 space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-[11px] font-medium text-th-text-secondary">KV Cache (turbo mode)</p>
+          <p className="text-2xs font-medium text-th-text-secondary">KV Cache (turbo mode)</p>
           {cacheSaving && <Loader2 size={10} className="animate-spin text-th-text-tertiary" />}
         </div>
 
         {/* Enable KV cache toggle */}
         <label className="flex items-center justify-between gap-2 cursor-pointer select-none">
-          <span className="text-[11px] text-th-text-secondary">Enable KV cache</span>
+          <span className="text-2xs text-th-text-secondary">Enable KV cache</span>
           <input
             type="checkbox"
             checked={cache?.cache_enabled ?? true}
@@ -5126,7 +5128,7 @@ function OmlxQuickPanel({
 
         {/* SSD cold tier toggle */}
         <label className="flex items-center justify-between gap-2 cursor-pointer select-none">
-          <span className="text-[11px] text-th-text-secondary">SSD cold tier</span>
+          <span className="text-2xs text-th-text-secondary">SSD cold tier</span>
           <input
             type="checkbox"
             checked={cache ? !cache.hot_cache_only : false}
@@ -5140,7 +5142,7 @@ function OmlxQuickPanel({
         {cache && !cache.hot_cache_only && cache.cache_enabled && (
           <>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-th-text-secondary w-24 shrink-0">SSD directory</span>
+              <span className="text-2xs text-th-text-secondary w-24 shrink-0">SSD directory</span>
               <input
                 type="text"
                 value={cache.ssd_cache_dir}
@@ -5148,11 +5150,11 @@ function OmlxQuickPanel({
                 disabled={cacheSaving}
                 onChange={(e) => setCache({ ...cache, ssd_cache_dir: e.target.value })}
                 onBlur={(e) => void saveCache({ ssd_cache_dir: e.target.value })}
-                className="flex-1 min-w-0 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-[11px] text-th-text-primary placeholder-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
+                className="flex-1 min-w-0 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-2xs text-th-text-primary placeholder-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
               />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-th-text-secondary w-24 shrink-0">SSD max size</span>
+              <span className="text-2xs text-th-text-secondary w-24 shrink-0">SSD max size</span>
               <input
                 type="text"
                 value={cache.ssd_cache_max_size}
@@ -5160,7 +5162,7 @@ function OmlxQuickPanel({
                 disabled={cacheSaving}
                 onChange={(e) => setCache({ ...cache, ssd_cache_max_size: e.target.value })}
                 onBlur={(e) => void saveCache({ ssd_cache_max_size: e.target.value })}
-                className="flex-1 min-w-0 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-[11px] text-th-text-primary placeholder-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
+                className="flex-1 min-w-0 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-2xs text-th-text-primary placeholder-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
               />
             </div>
           </>
@@ -5170,7 +5172,7 @@ function OmlxQuickPanel({
         {cache && cache.cache_enabled && (
           <>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-th-text-secondary w-24 shrink-0">Hot cache size</span>
+              <span className="text-2xs text-th-text-secondary w-24 shrink-0">Hot cache size</span>
               <input
                 type="text"
                 value={cache.hot_cache_max_size}
@@ -5178,11 +5180,11 @@ function OmlxQuickPanel({
                 disabled={cacheSaving}
                 onChange={(e) => setCache({ ...cache, hot_cache_max_size: e.target.value })}
                 onBlur={(e) => void saveCache({ hot_cache_max_size: e.target.value })}
-                className="flex-1 min-w-0 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-[11px] text-th-text-primary placeholder-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
+                className="flex-1 min-w-0 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-2xs text-th-text-primary placeholder-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg"
               />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-th-text-secondary w-24 shrink-0">Initial blocks</span>
+              <span className="text-2xs text-th-text-secondary w-24 shrink-0">Initial blocks</span>
               <input
                 type="number"
                 min={1}
@@ -5194,16 +5196,16 @@ function OmlxQuickPanel({
                   const v = parseInt(e.target.value, 10);
                   if (Number.isFinite(v) && v > 0) void saveCache({ initial_cache_blocks: v });
                 }}
-                className="w-24 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-[11px] text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg disabled:opacity-40"
+                className="w-24 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-2xs text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg disabled:opacity-40"
               />
-              <span className="text-[10px] text-th-text-muted">KV blocks pre-allocated</span>
+              <span className="text-2xs text-th-text-muted">KV blocks pre-allocated</span>
             </div>
           </>
         )}
 
         {/* Batching — continuous-batching concurrency cap */}
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-th-text-secondary w-24 shrink-0">Batch size</span>
+          <span className="text-2xs text-th-text-secondary w-24 shrink-0">Batch size</span>
           <input
             type="number"
             min={1}
@@ -5218,25 +5220,25 @@ function OmlxQuickPanel({
               const v = parseInt(e.target.value, 10);
               if (Number.isFinite(v) && v > 0) void saveCache({ max_concurrent_requests: v });
             }}
-            className="w-24 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-[11px] text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg disabled:opacity-40"
+            className="w-24 bg-th-input-bg border border-th-border rounded px-2 py-0.5 text-2xs text-th-text-primary focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg disabled:opacity-40"
           />
-          <span className="text-[10px] text-th-text-muted">max concurrent requests</span>
+          <span className="text-2xs text-th-text-muted">max concurrent requests</span>
         </div>
 
         {cacheErr && (
-          <p className="text-[10px] text-rose-400 leading-relaxed">{cacheErr}</p>
+          <p className="text-2xs text-rose-400 leading-relaxed">{cacheErr}</p>
         )}
       </div>
 
       {/* Cache performance & disk usage */}
       <div className="border-t border-th-border pt-2 space-y-2">
         <div className="flex items-center justify-between">
-          <p className="text-[11px] font-medium text-th-text-secondary">Cache performance</p>
+          <p className="text-2xs font-medium text-th-text-secondary">Cache performance</p>
           <button
             type="button"
             onClick={() => void refreshStats()}
             disabled={statsLoading}
-            className="inline-flex items-center gap-1 text-[10px] text-th-text-muted hover:text-th-text-secondary disabled:opacity-40"
+            className="inline-flex items-center gap-1 text-2xs text-th-text-muted hover:text-th-text-secondary disabled:opacity-40"
           >
             {statsLoading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
             Refresh
@@ -5245,7 +5247,7 @@ function OmlxQuickPanel({
 
         {cacheStats?.reachable ? (
           <>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-2xs">
               <div className="text-th-text-muted">Efficiency</div>
               <div className="text-th-text-secondary font-medium">{cacheStats.cache_efficiency_pct}%</div>
 
@@ -5266,7 +5268,7 @@ function OmlxQuickPanel({
 
               <div className="text-th-text-muted">Disk usage</div>
               <div className="text-th-text-secondary">{cacheStats.disk_gb} GB
-                <span className="text-th-text-muted ml-1 font-mono text-[9px] break-all">{cacheStats.cache_dir}</span>
+                <span className="text-th-text-muted ml-1 font-mono text-2xs break-all">{cacheStats.cache_dir}</span>
               </div>
             </div>
 
@@ -5275,7 +5277,7 @@ function OmlxQuickPanel({
                 type="button"
                 onClick={() => void clearCache("hot")}
                 disabled={clearingCache !== null}
-                className="px-2.5 py-1 rounded-md border border-th-border text-th-text-secondary text-[10px] font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1 disabled:opacity-40"
+                className="px-2.5 py-1 rounded-md border border-th-border text-th-text-secondary text-2xs font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1 disabled:opacity-40"
               >
                 {clearingCache === "hot" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
                 Clear hot cache
@@ -5284,7 +5286,7 @@ function OmlxQuickPanel({
                 type="button"
                 onClick={() => void clearCache("ssd")}
                 disabled={clearingCache !== null}
-                className="px-2.5 py-1 rounded-md border border-th-border text-th-text-secondary text-[10px] font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1 disabled:opacity-40"
+                className="px-2.5 py-1 rounded-md border border-th-border text-th-text-secondary text-2xs font-medium hover:bg-th-surface-hover/30 inline-flex items-center gap-1 disabled:opacity-40"
               >
                 {clearingCache === "ssd" ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
                 Clear SSD cache
@@ -5292,7 +5294,7 @@ function OmlxQuickPanel({
             </div>
           </>
         ) : (
-          <p className="text-[10px] text-th-text-muted">
+          <p className="text-2xs text-th-text-muted">
             {statsLoading
               ? "Loading…"
               : reachable
@@ -5302,7 +5304,7 @@ function OmlxQuickPanel({
         )}
       </div>
 
-      <p className="text-[10px] text-th-text-muted leading-relaxed">
+      <p className="text-2xs text-th-text-muted leading-relaxed">
         For first-time install or a richer setup flow with live install logs,
         use Settings → Reset setup wizard, or run{" "}
         <span className="font-mono">brew tap jundot/omlx https://github.com/jundot/omlx && brew install omlx</span> manually.
@@ -5342,7 +5344,7 @@ function ScreenAudioSettings({
           checked={recordAudio}
           onChange={(val) => onChange({ record_audio: val })}
         />
-        <p className="text-[11px] text-th-text-muted leading-relaxed -mt-2">
+        <p className="text-2xs text-th-text-muted leading-relaxed -mt-2">
           Adds a sound track to the mp4, which is then transcribed when the
           recording is analysed. Needs the Microphone permission on top of
           Screen Recording.
@@ -5506,7 +5508,7 @@ function ExoModelSelectField({ label, value, onChange, options }: { label: strin
           <span className="flex items-center gap-2 min-w-0">
             <span className="truncate">{selected?.label ?? (value || "(pick a model)")}</span>
             {selected?.loaded && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0">
                 loaded
               </span>
             )}
@@ -5524,7 +5526,7 @@ function ExoModelSelectField({ label, value, onChange, options }: { label: strin
               >
                 <span className="truncate">{o.label}</span>
                 {o.loaded && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0 ml-2">
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 shrink-0 ml-2">
                     loaded
                   </span>
                 )}
@@ -5573,7 +5575,7 @@ function Toggle({ label, description, checked, onChange }: { label: string; desc
       </button>
       <div className="min-w-0">
         <span className="text-sm text-th-text-secondary">{label}</span>
-        {description && <p className="text-[11px] text-th-text-muted mt-0.5 leading-relaxed">{description}</p>}
+        {description && <p className="text-2xs text-th-text-muted mt-0.5 leading-relaxed">{description}</p>}
       </div>
     </label>
   );
@@ -5646,7 +5648,7 @@ function ModelPickerField({ value, onChange, models, loading, error, onFetch }: 
                   <span className="text-th-text-primary truncate">
                     {selectedModel ? selectedModel.name : value}
                   </span>
-                  <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-th-inset-bg border border-th-border text-th-text-muted">
+                  <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-mono font-medium bg-th-inset-bg border border-th-border text-th-text-muted">
                     {value}
                   </span>
                 </>
@@ -5664,7 +5666,7 @@ function ModelPickerField({ value, onChange, models, loading, error, onFetch }: 
                 {value && !currentInList && (
                   <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-500/5 border-b border-th-border">
                     <span className="text-xs text-th-text-secondary truncate">{value}</span>
-                    <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 border border-amber-500/30 text-amber-300">custom</span>
+                    <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-mono bg-amber-500/10 border border-amber-500/30 text-amber-300">custom</span>
                   </div>
                 )}
                 {models.map((m) => {
@@ -5679,7 +5681,7 @@ function ModelPickerField({ value, onChange, models, loading, error, onFetch }: 
                       <span className={`truncate ${active ? "text-blue-300 font-medium" : "text-th-text-primary"}`}>
                         {m.name}
                       </span>
-                      <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border ${active ? "bg-blue-500/20 border-blue-500/40 text-blue-300" : "bg-th-inset-bg border-th-border text-th-text-muted"}`}>
+                      <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-mono border ${active ? "bg-blue-500/20 border-blue-500/40 text-blue-300" : "bg-th-inset-bg border-th-border text-th-text-muted"}`}>
                         {m.id}
                       </span>
                     </button>
@@ -5897,6 +5899,8 @@ function PrivacyTab({ settings, setSettings }: {
         onChange={(action_policy) => setSettings((prev) => ({ ...prev, action_policy }))}
       />
 
+      <AllowedFolders />
+
       {/* ── Main toggle card ─────────────────────────────────────────────── */}
       <Card title="Privacy Lock" dot={engaged ? "bg-emerald-500" : "bg-th-text-muted"}>
         <div className="space-y-4">
@@ -5929,7 +5933,7 @@ function PrivacyTab({ settings, setSettings }: {
                       : "All providers allowed. Enable to restrict Otto to on-device inference only."}
                   </p>
                   {engaged && status?.audit_token && (
-                    <p className="text-[10px] font-mono text-th-text-muted mt-1 truncate">
+                    <p className="text-2xs font-mono text-th-text-muted mt-1 truncate">
                       Audit token: {status.audit_token}
                     </p>
                   )}
@@ -6040,7 +6044,7 @@ function PrivacyTab({ settings, setSettings }: {
               className="w-full accent-emerald-500 disabled:cursor-not-allowed"
             />
           </div>
-          <div className="flex items-start gap-2 text-[11px] text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
+          <div className="flex items-start gap-2 text-2xs text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
             <ShieldAlert size={12} className="shrink-0 mt-0.5" />
             <span>
               Hides Otto from every conformant capturer, including <strong className="text-th-text-secondary">browser screen sharing</strong> (CoderPad, Google Meet) and ScreenCaptureKit apps (Zoom, Teams, OBS). Apple's own <strong className="text-th-text-secondary">QuickTime</strong> and a few blessed conferencing partners can still capture the window. Uses a private macOS API, so behavior may change with future macOS updates. While on, there's no menu bar or Dock icon until you turn it off.
@@ -6053,7 +6057,7 @@ function PrivacyTab({ settings, setSettings }: {
       <Card title="Compact mode" dot={compactMode ? "bg-emerald-500" : "bg-th-text-muted"}>
         <div className="space-y-4">
           {!hideFromShare && (
-            <div className="flex items-start gap-2 text-[11px] text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
+            <div className="flex items-start gap-2 text-2xs text-th-text-muted leading-relaxed rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
               <ShieldAlert size={12} className="shrink-0 mt-0.5" />
               <span>Turn on Stealth mode above first — compact only makes sense once Otto is already hidden from capture.</span>
             </div>
@@ -6099,9 +6103,9 @@ function PrivacyTab({ settings, setSettings }: {
             </button>
           </div>
           {hideFromShare && (
-            <div className="flex items-center gap-2 text-[11px] text-th-text-muted rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
+            <div className="flex items-center gap-2 text-2xs text-th-text-muted rounded-lg border border-th-border bg-th-inset-bg px-3 py-2">
               <span>Toggle the panels anytime with</span>
-              <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded-md border border-th-border-strong bg-th-bg text-th-text-secondary">&#8984;&#8679;\</kbd>
+              <kbd className="font-mono text-2xs px-1.5 py-0.5 rounded-md border border-th-border-strong bg-th-bg text-th-text-secondary">&#8984;&#8679;\</kbd>
             </div>
           )}
         </div>
@@ -6192,34 +6196,34 @@ function PrivacyTab({ settings, setSettings }: {
               {/* Install command */}
               <div className="rounded-lg border border-th-border bg-th-inset-bg">
                 <div className="flex items-center justify-between px-3 py-1.5 border-b border-th-border">
-                  <span className="text-[10px] font-medium text-th-text-muted uppercase tracking-wide">Install command (run in Terminal)</span>
+                  <span className="text-2xs font-medium text-th-text-muted uppercase tracking-wide">Install command (run in Terminal)</span>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1 text-[10px] text-th-text-muted hover:text-th-text-secondary"
+                    className="inline-flex items-center gap-1 text-2xs text-th-text-muted hover:text-th-text-secondary"
                     onClick={() => copyText(pfTemplate.install_command, "cmd")}
                   >
                     {copied === "cmd" ? <ClipboardCheck size={11} className="text-emerald-400" /> : <Copy size={11} />}
                     {copied === "cmd" ? "Copied" : "Copy"}
                   </button>
                 </div>
-                <pre className="px-3 py-2 text-[11px] font-mono text-th-text-secondary overflow-x-auto whitespace-pre-wrap">{pfTemplate.install_command}</pre>
+                <pre className="px-3 py-2 text-2xs font-mono text-th-text-secondary overflow-x-auto whitespace-pre-wrap">{pfTemplate.install_command}</pre>
               </div>
               {/* Rules preview */}
               <div className="rounded-lg border border-th-border bg-th-inset-bg">
                 <div className="flex items-center justify-between px-3 py-1.5 border-b border-th-border">
-                  <span className="text-[10px] font-medium text-th-text-muted uppercase tracking-wide">Generated pf rules</span>
+                  <span className="text-2xs font-medium text-th-text-muted uppercase tracking-wide">Generated pf rules</span>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1 text-[10px] text-th-text-muted hover:text-th-text-secondary"
+                    className="inline-flex items-center gap-1 text-2xs text-th-text-muted hover:text-th-text-secondary"
                     onClick={() => copyText(pfTemplate.pf_template, "template")}
                   >
                     {copied === "template" ? <ClipboardCheck size={11} className="text-emerald-400" /> : <Copy size={11} />}
                     {copied === "template" ? "Copied" : "Copy"}
                   </button>
                 </div>
-                <pre className="px-3 py-2 text-[11px] font-mono text-th-text-tertiary overflow-x-auto max-h-64 overflow-y-auto leading-relaxed whitespace-pre-wrap">{pfTemplate.pf_template}</pre>
+                <pre className="px-3 py-2 text-2xs font-mono text-th-text-tertiary overflow-x-auto max-h-64 overflow-y-auto leading-relaxed whitespace-pre-wrap">{pfTemplate.pf_template}</pre>
               </div>
-              <p className="text-[10px] text-th-text-muted leading-relaxed">
+              <p className="text-2xs text-th-text-muted leading-relaxed">
                 Verify after install: <code className="font-mono">sudo pfctl -a otto.privacy -s rules</code>.
                 Remove: <code className="font-mono">sudo pfctl -a otto.privacy -F all</code>.
               </p>
@@ -6249,7 +6253,7 @@ function PrivacyTab({ settings, setSettings }: {
               <p className="text-xs text-th-text-muted italic">No audit events yet.</p>
             ) : (
               <div className="rounded-lg border border-th-border overflow-hidden">
-                <table className="w-full text-[11px]">
+                <table className="w-full text-2xs">
                   <thead>
                     <tr className="border-b border-th-border bg-th-inset-bg">
                       <th className="text-left px-3 py-1.5 font-medium text-th-text-muted">Time</th>

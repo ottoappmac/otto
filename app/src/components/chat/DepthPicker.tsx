@@ -22,7 +22,7 @@ export function DepthPicker({ value, onChange }: DepthPickerProps) {
             type="button"
             title={option.title}
             onClick={() => onChange(option.id)}
-            className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
+            className={`px-1.5 py-0.5 text-2xs rounded transition-colors ${
               selected
                 ? "bg-th-tab-active-bg text-th-tab-active-fg"
                 : "text-th-text-muted hover:text-th-text-primary"

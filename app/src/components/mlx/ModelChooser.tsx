@@ -123,7 +123,7 @@ function FitBadge({ fits }: { fits: MlxCatalogRow["fits"] }) {
   };
   const v = map[fits];
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${v.cls}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium ${v.cls}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />
       {v.label}
     </span>
@@ -134,27 +134,27 @@ function CapabilitiesBar({ caps }: { caps: MlxCapabilities | null }) {
   if (!caps) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-[11px]">
+      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-2xs">
         <Cpu size={11} className="text-th-text-muted shrink-0" />
         <span className="font-semibold text-th-text-primary">{caps.chip || "Unknown"}</span>
       </span>
-      <span className="inline-flex items-center px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-[11px] text-th-text-secondary">
+      <span className="inline-flex items-center px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-2xs text-th-text-secondary">
         {caps.ram_gb.toFixed(0)} GB RAM
       </span>
       {caps.apple_silicon && (
         <span
-          className="inline-flex items-center px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-[11px] text-th-text-secondary"
+          className="inline-flex items-center px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-2xs text-th-text-secondary"
           title="Approximate GPU wired-memory ceiling for MLX"
         >
           {caps.wired_limit_gb.toFixed(0)} GB GPU ceiling
         </span>
       )}
-      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-[11px] text-th-text-secondary">
+      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-th-inset-bg border border-th-border text-2xs text-th-text-secondary">
         <HardDrive size={11} className="text-th-text-muted shrink-0" />
         {caps.free_disk_gb.toFixed(0)} GB free
       </span>
       {caps.models_cached > 0 && (
-        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-500 font-medium">
+        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-2xs text-emerald-500 font-medium">
           {caps.models_cached} cached ({caps.models_cached_size_gb.toFixed(1)} GB)
         </span>
       )}
@@ -183,7 +183,7 @@ function DownloadProgress({
           <p className="text-xs font-medium text-th-text-primary truncate">
             {job.repo_id}
           </p>
-          <p className="text-[11px] text-th-text-muted truncate">
+          <p className="text-2xs text-th-text-muted truncate">
             {job.status === "done"
               ? "Download complete"
               : job.status === "error"
@@ -229,7 +229,7 @@ function DownloadProgress({
         )}
       </div>
 
-      <div className="flex items-center justify-between text-[11px] text-th-text-muted font-mono">
+      <div className="flex items-center justify-between text-2xs text-th-text-muted font-mono">
         <span>
           {bytesToHuman(job.bytes_done)} / {job.bytes_total > 0 ? bytesToHuman(job.bytes_total) : "?"}
           {!indeterminate && job.bytes_total > 0 && <span className="ml-1">· {pct}%</span>}
@@ -304,24 +304,24 @@ function ModelRow({
               {row.display_name}
             </span>
             {row.featured && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-[10px] font-semibold ring-1 ring-amber-500/25">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-2xs font-semibold ring-1 ring-amber-500/25">
                 <Sparkles size={9} />
                 featured
               </span>
             )}
             {row.source === "distill" && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 text-[10px] font-semibold ring-1 ring-violet-500/25">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 text-2xs font-semibold ring-1 ring-violet-500/25">
                 distilled
               </span>
             )}
             {isCached && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-[10px] font-semibold ring-1 ring-emerald-500/25">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-2xs font-semibold ring-1 ring-emerald-500/25">
                 <CheckCircle2 size={9} />
                 cached
               </span>
             )}
             {isIncomplete && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-[10px] font-semibold ring-1 ring-amber-500/25">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-2xs font-semibold ring-1 ring-amber-500/25">
                 <AlertTriangle size={9} />
                 incomplete
               </span>
@@ -332,14 +332,14 @@ function ModelRow({
 
         {/* Row 2: blurb */}
         {row.blurb && (
-          <p className="text-[11px] text-th-text-tertiary line-clamp-1 leading-relaxed mb-2.5 pr-2">
+          <p className="text-2xs text-th-text-tertiary line-clamp-1 leading-relaxed mb-2.5 pr-2">
             {row.blurb}
           </p>
         )}
 
         {/* Row 3: stats + tags | action */}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-th-text-muted min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-th-text-muted min-w-0">
             <span title={breakdownTitle} className="cursor-help font-mono shrink-0">
               {row.weights_gb.toFixed(1)} GB · {row.params_b.toFixed(1)}B · {row.quant}
             </span>
@@ -349,7 +349,7 @@ function ModelRow({
             {row.capability_tags.slice(0, 3).map((t) => (
               <span
                 key={t}
-                className="px-1.5 py-0.5 rounded-md bg-th-inset-bg border border-th-border/50 text-th-text-secondary text-[10px] font-medium"
+                className="px-1.5 py-0.5 rounded-md bg-th-inset-bg border border-th-border/50 text-th-text-secondary text-2xs font-medium"
               >
                 {t}
               </span>
@@ -361,7 +361,7 @@ function ModelRow({
               <>
                 <button
                   type="button"
-                  className="px-3 py-1.5 text-[11px] font-semibold rounded-md bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+                  className="px-3 py-1.5 text-2xs font-semibold rounded-md bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
                   onClick={onUseCached}
                 >
                   Use this model
@@ -381,7 +381,7 @@ function ModelRow({
             ) : isIncomplete ? (
               <button
                 type="button"
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-md bg-amber-500/15 text-amber-500 ring-1 ring-amber-500/30 hover:bg-amber-500/25 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-2xs font-semibold rounded-md bg-amber-500/15 text-amber-500 ring-1 ring-amber-500/30 hover:bg-amber-500/25 disabled:opacity-50 transition-colors"
                 onClick={onDownload}
                 disabled={!!activeJob || dlBlocked}
                 title="Resume the interrupted download"
@@ -391,7 +391,7 @@ function ModelRow({
               </button>
             ) : activeJob ? (
               <span
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-th-inset-bg text-th-text-tertiary"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-2xs font-medium rounded-md bg-th-inset-bg text-th-text-tertiary"
                 title="Already downloading — see progress card above."
               >
                 <Loader2 size={11} className="animate-spin" />
@@ -402,7 +402,7 @@ function ModelRow({
             ) : (
               <button
                 type="button"
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-50 hover:opacity-90 transition-opacity"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-2xs font-semibold rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-50 hover:opacity-90 transition-opacity"
                 onClick={onDownload}
                 disabled={dlBlocked}
                 title={
@@ -422,13 +422,13 @@ function ModelRow({
 
         {/* Warning rows */}
         {!row.disk_ok && (
-          <p className="text-[11px] text-rose-400 inline-flex items-center gap-1 mt-2">
+          <p className="text-2xs text-rose-400 inline-flex items-center gap-1 mt-2">
             <AlertTriangle size={11} />
             Not enough free disk for {row.weights_gb.toFixed(1)} GB.
           </p>
         )}
         {row.requires_token && (
-          <p className="text-[11px] text-amber-400 mt-1.5">Needs an HF token (gated repo).</p>
+          <p className="text-2xs text-amber-400 mt-1.5">Needs an HF token (gated repo).</p>
         )}
       </div>
     </div>
@@ -766,7 +766,7 @@ export default function ModelChooser({
         }`}>
           <CheckCircle2 size={13} className={`${distillActive ? "text-violet-400" : "text-emerald-400"} shrink-0`} />
           <div className="min-w-0 flex-1">
-            <p className={`text-[10px] font-medium uppercase tracking-wide leading-none mb-0.5 ${
+            <p className={`text-2xs font-medium uppercase tracking-wide leading-none mb-0.5 ${
               distillActive ? "text-violet-400" : "text-emerald-400"
             }`}>
               {distillActive ? "Active distilled model" : "Active model"}
@@ -780,13 +780,13 @@ export default function ModelChooser({
                 onClick={onUnload}
                 disabled={unloading}
                 title="Evict the in-process MLX model and free Metal GPU memory"
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium border border-rose-500/30 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-2xs font-medium border border-rose-500/30 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 disabled:opacity-50 transition-colors"
               >
                 {unloading ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
                 Unload
               </button>
               {unloadMsg && (
-                <span className={`text-[10px] ${unloadMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
+                <span className={`text-2xs ${unloadMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
                   {unloadMsg.text}
                 </span>
               )}
@@ -803,7 +803,7 @@ export default function ModelChooser({
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
-              className={`flex-1 px-3 py-2 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors
+              className={`flex-1 px-3 py-2 text-2xs font-medium flex items-center justify-center gap-1.5 transition-colors
                 ${tab === t.id
                   ? "bg-th-tab-active-bg text-white"
                   : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover/20"}`}
@@ -825,26 +825,26 @@ export default function ModelChooser({
                 placeholder="Search cached models…"
                 value={librarySearch}
                 onChange={(e) => setLibrarySearch(e.target.value)}
-                className="w-full pl-7 pr-3 py-1.5 text-[11px] rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
+                className="w-full pl-7 pr-3 py-1.5 text-2xs rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
               />
             </div>
             <div className="space-y-2 max-h-72 overflow-y-auto">
             {loadingLocal && (
-              <div className="flex items-center gap-2 text-[11px] text-th-text-muted py-4 justify-center">
+              <div className="flex items-center gap-2 text-2xs text-th-text-muted py-4 justify-center">
                 <Loader2 size={12} className="animate-spin" />
                 Scanning HF cache…
               </div>
             )}
             {localError && (
-              <p className="text-[10px] text-red-400">{localError}</p>
+              <p className="text-2xs text-red-400">{localError}</p>
             )}
             {!loadingLocal && (() => {
               const hubModels = (localModels ?? []).filter((m) => m.source !== "distill");
               if (hubModels.length === 0) {
                 return (
                   <div className="py-4 text-center space-y-1">
-                    <p className="text-[11px] text-th-text-secondary">No models found in your HF cache.</p>
-                    <p className="text-[10px] text-th-text-muted">
+                    <p className="text-2xs text-th-text-secondary">No models found in your HF cache.</p>
+                    <p className="text-2xs text-th-text-muted">
                       Switch to <strong>Discover</strong> to download a model, or <strong>Distilled</strong> for trained LoRAs.
                     </p>
                   </div>
@@ -856,7 +856,7 @@ export default function ModelChooser({
               );
               if (visible.length === 0 && s) {
                 return (
-                  <p className="text-[11px] text-th-text-muted text-center py-4">
+                  <p className="text-2xs text-th-text-muted text-center py-4">
                     No models match "{librarySearch}".
                   </p>
                 );
@@ -873,26 +873,26 @@ export default function ModelChooser({
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-medium text-th-text-primary truncate">
+                      <p className="text-2xs font-medium text-th-text-primary truncate">
                         {m.source === "distill" ? (m.name || m.repo_id) : m.repo_id}
                       </p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[9px] text-th-text-muted">
+                        <span className="text-2xs text-th-text-muted">
                           {m.source === "distill"
                             ? `${m.size_mb.toFixed(1)} MB`
                             : `${(m.size_mb / 1024).toFixed(1)} GB`}
                         </span>
                         {m.source === "distill" ? (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-violet-500/15 text-violet-400 border border-violet-500/30">
+                          <span className="text-2xs font-semibold px-1 py-0.5 rounded bg-violet-500/15 text-violet-400 border border-violet-500/30">
                             distilled
                           </span>
                         ) : (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          <span className="text-2xs font-semibold px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                             MLX
                           </span>
                         )}
                         {isActive && (
-                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-0.5">
+                          <span className="text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-0.5">
                             <CheckCircle2 size={8} />
                             active
                           </span>
@@ -908,7 +908,7 @@ export default function ModelChooser({
                           ? { repo_id: m.repo_id, display_name: m.name, source: "distill", adapter_path: m.adapter_path, base_repo_id: m.base_repo_id } as MlxCatalogRow
                           : undefined,
                       )}
-                      className={`shrink-0 px-2.5 py-1 rounded-md text-[10px] font-medium transition-colors inline-flex items-center gap-1 ${
+                      className={`shrink-0 px-2.5 py-1 rounded-md text-2xs font-medium transition-colors inline-flex items-center gap-1 ${
                         isActive
                           ? "bg-emerald-700/50 text-emerald-200 cursor-default"
                           : "bg-emerald-600 text-white hover:bg-emerald-500"
@@ -924,7 +924,7 @@ export default function ModelChooser({
             </div>
             <button
               type="button"
-              className="w-full text-[10px] text-th-text-muted hover:text-th-text-secondary transition-colors pt-1 inline-flex items-center justify-center gap-1"
+              className="w-full text-2xs text-th-text-muted hover:text-th-text-secondary transition-colors pt-1 inline-flex items-center justify-center gap-1"
               onClick={() => { setLocalModels(null); void fetchLocalModels(); }}
             >
               <RefreshCw size={10} />
@@ -938,12 +938,12 @@ export default function ModelChooser({
           <div className="p-3 space-y-3">
             {/* Header: Refresh */}
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] text-th-text-tertiary">
+              <p className="text-2xs text-th-text-tertiary">
                 Hardware-scored catalog — models ranked by fit for your Mac.
               </p>
               <button
                 type="button"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50 transition-colors shrink-0"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50 transition-colors shrink-0"
                 onClick={() => void refresh(true)}
                 disabled={loading}
                 title="Force-refresh download counts from Hugging Face"
@@ -961,7 +961,7 @@ export default function ModelChooser({
             )}
 
             {enriching && (
-              <p className="text-[11px] text-th-text-tertiary inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-th-inset-bg border border-th-border">
+              <p className="text-2xs text-th-text-tertiary inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-th-inset-bg border border-th-border">
                 <Loader2 size={11} className="animate-spin text-th-text-muted shrink-0" />
                 Fetching full model list from HuggingFace… list will update automatically.
               </p>
@@ -996,7 +996,7 @@ export default function ModelChooser({
                     <button
                       key={f}
                       type="button"
-                      className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${
+                      className={`px-2.5 py-1 text-2xs font-medium rounded-md transition-all ${
                         filter === f
                           ? "bg-th-surface border border-th-border shadow-sm text-th-text-primary"
                           : "text-th-text-tertiary hover:text-th-text-secondary"
@@ -1016,7 +1016,7 @@ export default function ModelChooser({
                   placeholder="Search by name, family, or tag…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-7 pr-3 py-1.5 text-[11px] rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
+                  className="w-full pl-7 pr-3 py-1.5 text-2xs rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:ring-1 focus:ring-th-tab-active-bg/40 focus:border-th-tab-active-bg/50 transition-shadow"
                 />
               </div>
             </div>
@@ -1042,7 +1042,7 @@ export default function ModelChooser({
 
             {pageCount > 1 && (
               <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[11px] text-th-text-muted">
+                <span className="text-2xs text-th-text-muted">
                   {filtered.length} models · page {safePage} of {pageCount}
                 </span>
                 <div className="flex items-center gap-1">
@@ -1068,13 +1068,13 @@ export default function ModelChooser({
                     }
                     return pages.map((p, i) =>
                       p === "…" ? (
-                        <span key={`ellipsis-${i}`} className="px-1 text-[11px] text-th-text-muted select-none">…</span>
+                        <span key={`ellipsis-${i}`} className="px-1 text-2xs text-th-text-muted select-none">…</span>
                       ) : (
                         <button
                           key={p}
                           type="button"
                           onClick={() => setPage(p as number)}
-                          className={`min-w-[26px] px-1.5 py-0.5 text-[11px] font-medium rounded border ${
+                          className={`min-w-[26px] px-1.5 py-0.5 text-2xs font-medium rounded border ${
                             p === safePage
                               ? "border-th-tab-active-bg bg-th-tab-active-bg/15 text-th-text-primary"
                               : "border-th-border bg-th-surface text-th-text-tertiary hover:text-th-text-primary"
@@ -1113,7 +1113,7 @@ export default function ModelChooser({
         {/* ── Custom tab ── */}
         {tab === "custom" && (
           <div className="p-3 space-y-3">
-            <p className="text-[11px] text-th-text-secondary leading-relaxed">
+            <p className="text-2xs text-th-text-secondary leading-relaxed">
               Download any Hugging Face repo not shown in Discover. Uses the same
               pipeline (safetensors-only filter, hf_transfer acceleration, real progress bar).
             </p>
@@ -1137,7 +1137,7 @@ export default function ModelChooser({
                 placeholder="Display name (optional)"
                 value={advancedLabel}
                 onChange={(e) => setAdvancedLabel(e.target.value)}
-                className="w-full px-2.5 py-1.5 text-[11px] rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted"
+                className="w-full px-2.5 py-1.5 text-2xs rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted"
               />
               <div className="flex gap-2">
                 <input
@@ -1145,11 +1145,11 @@ export default function ModelChooser({
                   placeholder="mlx-community/your-model or /path/to/model"
                   value={advancedRepo}
                   onChange={(e) => setAdvancedRepo(e.target.value)}
-                  className="flex-1 px-2.5 py-1.5 text-[11px] rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted font-mono"
+                  className="flex-1 px-2.5 py-1.5 text-2xs rounded-lg border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted font-mono"
                 />
                 <button
                   type="button"
-                  className="shrink-0 px-3 py-1.5 rounded-lg bg-th-tab-active-bg text-white text-[10px] font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
+                  className="shrink-0 px-3 py-1.5 rounded-lg bg-th-tab-active-bg text-white text-2xs font-medium disabled:opacity-50 inline-flex items-center gap-1.5"
                   disabled={!advancedRepo.trim() || activeJobsByRepo.has(advancedRepo.trim())}
                   onClick={() => {
                     const r = advancedRepo.trim();

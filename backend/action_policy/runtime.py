@@ -47,6 +47,8 @@ class RunScope:
     attended: bool
     allowlist: frozenset[str]
     agent_name: str | None = None
+    # agent | plan | debug. Plan denies every category that changes something.
+    mode: str = "agent"
 
 
 def current_scope() -> RunScope | None:

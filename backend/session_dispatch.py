@@ -32,11 +32,10 @@ async def kick_off_message(session_id: str, prompt: str) -> None:
     that's accumulated by the time the user navigates over.
     """
     from backend.routes.sessions import _run_agent_stream
-    from backend.state import message_queues, running_tasks
+    from backend.session_events import get_hub
+    from backend.state import running_tasks
 
-    if session_id not in message_queues:
-        message_queues[session_id] = asyncio.Queue()
-    queue = message_queues[session_id]
+    queue = get_hub(session_id)
 
     prev = running_tasks.get(session_id)
     if prev and not prev.done():

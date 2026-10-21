@@ -339,9 +339,11 @@ class ClaudeHookConfig(BaseModel):
 class EvaluationConfig(BaseModel):
     """End-of-run evaluation of OTTO's own sessions.
 
-    When ``auto_evaluate`` is on, each completed run is scored once at the
-    end: an LLM auto-selects appropriate DeepEval metrics for the task and
-    runs them in-process via ``tools.evaluation.evaluators``.  A manual
+    When ``auto_evaluate`` is on, an LLM auto-selects appropriate DeepEval
+    metrics and runs them in-process via ``tools.evaluation.evaluators``.
+    Interactive chats wait about two minutes after the last turn, since a
+    chat has no end. Schedule, trigger, and other non-chat runs are scored
+    as soon as they finish.  A manual
     "Evaluate" button in the UI runs the same flow on demand, but is only
     surfaced as enabled when ``auto_evaluate`` is off.
 
@@ -1376,6 +1378,7 @@ class ActionPolicyConfig(BaseModel):
         "pim_write": "ask",
         "work_tools_write": "ask",
         "browser_automation": "allow",
+        "workspace_write": "allow",
         "unclassified": "ask",
     })
     agent_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
@@ -1403,6 +1406,7 @@ class ActionPolicyConfig(BaseModel):
             "pim_write": "ask",
             "work_tools_write": "ask",
             "browser_automation": "allow",
+            "workspace_write": "allow",
             "unclassified": "ask",
         }
         merged = dict(defaults)

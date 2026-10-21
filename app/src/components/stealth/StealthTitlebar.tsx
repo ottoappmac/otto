@@ -142,7 +142,7 @@ export default function StealthTitlebar({ kind }: StealthTitlebarProps) {
         />
         <span
           data-tauri-drag-region
-          className="truncate text-[11px] font-medium tracking-tight text-th-text-secondary"
+          className="truncate text-2xs font-medium tracking-tight text-th-text-secondary"
         >
           {label}
         </span>

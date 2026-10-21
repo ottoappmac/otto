@@ -623,11 +623,11 @@ export default function ScheduleRunsPage() {
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 z-10 bg-th-bg-secondary/80 backdrop-blur-xl">
               <tr className="border-b border-th-border">
-                <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Status</th>
-                <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Started</th>
-                <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Duration</th>
-                <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Msgs</th>
-                <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Eval</th>
+                <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Status</th>
+                <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Started</th>
+                <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Duration</th>
+                <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Msgs</th>
+                <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Eval</th>
                 <th className="px-2 py-2 w-px" aria-label="Actions" />
               </tr>
             </thead>
@@ -645,14 +645,14 @@ export default function ScheduleRunsPage() {
                     >
                       <td className={`px-3 ${rowPad} whitespace-nowrap`}>
                         <div className="flex items-center gap-1.5">
-                          <span className={`inline-flex items-center gap-1 font-medium text-[11px] ${meta.textCls}`}>
+                          <span className={`inline-flex items-center gap-1 font-medium text-2xs ${meta.textCls}`}>
                             <meta.Icon size={11} className={meta.iconCls} aria-hidden />
                             {meta.label}
                           </span>
                           {hasError && (
                             <button
                               onClick={(e) => { e.stopPropagation(); setExpandedErrorId(isErrorExpanded ? null : run.id); }}
-                              className={`flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium transition-colors ${
+                              className={`flex items-center gap-0.5 rounded px-1 py-0.5 text-2xs font-medium transition-colors ${
                                 isErrorExpanded
                                   ? "text-red-400 bg-red-500/10"
                                   : "text-th-text-muted/60 hover:text-red-400 hover:bg-red-500/10"
@@ -684,7 +684,7 @@ export default function ScheduleRunsPage() {
                       <td className={`px-3 ${rowPad} whitespace-nowrap`}>
                         {run.eval_status === "done" && run.eval_overall_score != null ? (
                           <button
-                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[10px] font-bold hover:opacity-80 transition-opacity ${evalChipClasses(run.eval_overall_score)}`}
+                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-2xs font-bold hover:opacity-80 transition-opacity ${evalChipClasses(run.eval_overall_score)}`}
                             title={`${run.eval_pass_count ?? 0}/${run.eval_total ?? 0} metrics passed — click to view`}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -695,9 +695,9 @@ export default function ScheduleRunsPage() {
                             {Math.round(run.eval_overall_score * 100)}%
                           </button>
                         ) : run.eval_status === "running" ? (
-                          <span className="text-[10px] text-blue-400 animate-pulse">…</span>
+                          <span className="text-2xs text-blue-400 animate-pulse">…</span>
                         ) : (
-                          <span className="text-[10px] text-th-text-muted/30">—</span>
+                          <span className="text-2xs text-th-text-muted/30">—</span>
                         )}
                       </td>
                       <td className={`px-2 ${rowPad} whitespace-nowrap w-px`} onClick={(e) => e.stopPropagation()}>
@@ -707,13 +707,13 @@ export default function ScheduleRunsPage() {
                     {isErrorExpanded && (
                       <tr className="border-b border-th-border/40">
                         <td colSpan={6} className="px-3 pb-2.5 pt-0">
-                          <div className="flex items-start gap-2 text-[11px] text-red-400/90 bg-red-500/[0.06] border border-red-500/15 rounded-md px-3 py-2 leading-relaxed">
+                          <div className="flex items-start gap-2 text-2xs text-red-400/90 bg-red-500/[0.06] border border-red-500/15 rounded-md px-3 py-2 leading-relaxed">
                             <AlertCircle size={12} className="shrink-0 mt-0.5" aria-hidden />
                             <p className="flex-1 min-w-0 break-words whitespace-pre-wrap">{run.error}</p>
                             {run.session_id && (
                               <button
                                 onClick={() => navigate(`/runs/${run.session_id}`)}
-                                className="shrink-0 text-[10px] font-medium text-red-400 hover:text-red-300 underline-offset-2 hover:underline"
+                                className="shrink-0 text-2xs font-medium text-red-400 hover:text-red-300 underline-offset-2 hover:underline"
                               >
                                 View run
                               </button>

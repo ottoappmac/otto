@@ -24,14 +24,14 @@ export function StatCard({
         <Icon size={17} className={iconClassName} aria-hidden />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] text-th-text-muted font-medium uppercase tracking-wider truncate">{label}</p>
+        <p className="text-2xs text-th-text-muted font-medium uppercase tracking-wider truncate">{label}</p>
         {loading ? (
           <div className="mt-1 h-6 w-16 rounded bg-th-inset-bg animate-pulse" />
         ) : (
           <p className="text-xl font-semibold tracking-tight text-th-text-primary leading-tight mt-0.5 tabular-nums">{value}</p>
         )}
         {subValue && !loading && (
-          <p className="text-[11px] text-th-text-muted mt-0.5 truncate">{subValue}</p>
+          <p className="text-2xs text-th-text-muted mt-0.5 truncate">{subValue}</p>
         )}
       </div>
     </div>

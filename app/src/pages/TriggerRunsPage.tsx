@@ -325,10 +325,10 @@ export default function TriggerRunsPage() {
               {/* Column headers */}
               <div className="grid grid-cols-[20px_1fr_80px_70px_80px_80px] gap-3 px-4 py-2.5 border-b border-th-border/50">
                 <div />
-                <div className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider">Started</div>
-                <div className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider">Duration</div>
-                <div className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider">Msgs</div>
-                <div className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider">Status</div>
+                <div className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">Started</div>
+                <div className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">Duration</div>
+                <div className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">Msgs</div>
+                <div className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">Status</div>
                 <div />
               </div>
 
@@ -375,7 +375,7 @@ export default function TriggerRunsPage() {
                         {run.session_id && (
                           <button
                             onClick={() => navigate(`/runs/${run.session_id}`)}
-                            className={`text-[11px] font-medium px-2 py-0.5 rounded transition-colors ${
+                            className={`text-2xs font-medium px-2 py-0.5 rounded transition-colors ${
                               run.status === "running"
                                 ? "text-emerald-400 hover:text-emerald-300"
                                 : "text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
@@ -389,7 +389,7 @@ export default function TriggerRunsPage() {
 
                     {run.error && (
                       <div className="px-4 pb-2.5 pl-11">
-                        <p className="text-[11px] text-red-400/80 bg-red-500/[0.06] border border-red-500/15 rounded-md px-3 py-1.5 leading-relaxed break-words">
+                        <p className="text-2xs text-red-400/80 bg-red-500/[0.06] border border-red-500/15 rounded-md px-3 py-1.5 leading-relaxed break-words">
                           {run.error}
                         </p>
                       </div>
@@ -423,7 +423,7 @@ export default function TriggerRunsPage() {
             )}
             {/* Bottom range summary */}
             {total > 0 && (
-              <p className="text-center text-[11px] text-th-text-muted/70 mt-2 tabular-nums">
+              <p className="text-center text-2xs text-th-text-muted/70 mt-2 tabular-nums">
                 Showing {rangeStart}–{rangeEnd} of {total} run{total !== 1 ? "s" : ""}
               </p>
             )}

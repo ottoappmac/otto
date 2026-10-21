@@ -95,7 +95,7 @@ function FitBadge({ fits }: { fits: DecisionModelRow["fits"] }) {
   };
   const v = map[fits] ?? map.unknown;
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${v.cls}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium ${v.cls}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />
       {v.label}
     </span>
@@ -121,7 +121,7 @@ function DownloadProgress({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium text-th-text-primary truncate">{job.repo_id}</p>
-          <p className="text-[11px] text-th-text-muted truncate">
+          <p className="text-2xs text-th-text-muted truncate">
             {job.status === "done"
               ? "Download complete"
               : job.status === "error"
@@ -163,7 +163,7 @@ function DownloadProgress({
           />
         )}
       </div>
-      <div className="flex items-center justify-between text-[11px] text-th-text-muted font-mono">
+      <div className="flex items-center justify-between text-2xs text-th-text-muted font-mono">
         <span>
           {bytesToHuman(job.bytes_done)} / {job.bytes_total > 0 ? bytesToHuman(job.bytes_total) : "?"}
           {!indeterminate && job.bytes_total > 0 && <span className="ml-1">· {pct}%</span>}
@@ -222,19 +222,19 @@ function ModelRow({
           <div className="flex items-center gap-1.5 flex-wrap min-w-0">
             <span className="text-sm font-semibold text-th-text-primary leading-snug">{row.display_name}</span>
             {row.featured && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-[10px] font-semibold ring-1 ring-amber-500/25">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-2xs font-semibold ring-1 ring-amber-500/25">
                 <Sparkles size={9} />
                 featured
               </span>
             )}
             {isCached && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-[10px] font-semibold ring-1 ring-emerald-500/25">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-2xs font-semibold ring-1 ring-emerald-500/25">
                 <CheckCircle2 size={9} />
                 cached
               </span>
             )}
             {isIncomplete && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-[10px] font-semibold ring-1 ring-amber-500/25">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 text-2xs font-semibold ring-1 ring-amber-500/25">
                 <AlertTriangle size={9} />
                 incomplete
               </span>
@@ -243,14 +243,14 @@ function ModelRow({
           <FitBadge fits={row.fits} />
         </div>
         {row.blurb && (
-          <p className="text-[11px] text-th-text-tertiary line-clamp-1 leading-relaxed mb-2.5 pr-2">{row.blurb}</p>
+          <p className="text-2xs text-th-text-tertiary line-clamp-1 leading-relaxed mb-2.5 pr-2">{row.blurb}</p>
         )}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-th-text-muted min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-th-text-muted min-w-0">
             <span className="font-mono shrink-0" title={`About ${row.resident_gb.toFixed(0)} GB resident while running`}>
               {row.weights_gb.toFixed(1)} GB · {row.quant}
             </span>
-            <span className="px-1.5 py-0.5 rounded-md bg-th-inset-bg border border-th-border/50 text-th-text-secondary text-[10px] font-medium">
+            <span className="px-1.5 py-0.5 rounded-md bg-th-inset-bg border border-th-border/50 text-th-text-secondary text-2xs font-medium">
               {row.license}
             </span>
           </div>
@@ -259,7 +259,7 @@ function ModelRow({
               <>
                 <button
                   type="button"
-                  className="px-3 py-1.5 text-[11px] font-semibold rounded-md bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 text-2xs font-semibold rounded-md bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-50"
                   onClick={onUse}
                   disabled={row.fits === "over"}
                   title={row.fits === "over" ? blockTitle : "Use this model for jev"}
@@ -279,7 +279,7 @@ function ModelRow({
             ) : isIncomplete ? (
               <button
                 type="button"
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-md bg-amber-500/15 text-amber-500 ring-1 ring-amber-500/30 hover:bg-amber-500/25 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-2xs font-semibold rounded-md bg-amber-500/15 text-amber-500 ring-1 ring-amber-500/30 hover:bg-amber-500/25 disabled:opacity-50 transition-colors"
                 onClick={onDownload}
                 disabled={!!activeJob || dlBlocked}
                 title="Resume the interrupted download"
@@ -288,7 +288,7 @@ function ModelRow({
                 Continue download
               </button>
             ) : activeJob ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium rounded-md bg-th-inset-bg text-th-text-tertiary">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-2xs font-medium rounded-md bg-th-inset-bg text-th-text-tertiary">
                 <Loader2 size={11} className="animate-spin" />
                 {activeJob.bytes_total > 0
                   ? `${Math.min(100, Math.round((activeJob.bytes_done / activeJob.bytes_total) * 100))}%`
@@ -297,7 +297,7 @@ function ModelRow({
             ) : (
               <button
                 type="button"
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-50 hover:opacity-90 transition-opacity"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-2xs font-semibold rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-50 hover:opacity-90 transition-opacity"
                 onClick={onDownload}
                 disabled={dlBlocked}
                 title={blockTitle}
@@ -309,7 +309,7 @@ function ModelRow({
           </div>
         </div>
         {!row.disk_ok && (
-          <p className="text-[11px] text-rose-400 inline-flex items-center gap-1 mt-2">
+          <p className="text-2xs text-rose-400 inline-flex items-center gap-1 mt-2">
             <AlertTriangle size={11} />
             Not enough free disk for {row.weights_gb.toFixed(1)} GB.
           </p>
@@ -575,7 +575,7 @@ export default function DecisionPanel({
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-emerald-500/30 bg-emerald-500/[0.08]">
             <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-medium uppercase tracking-wide leading-none mb-0.5 text-emerald-400">
+              <p className="text-2xs font-medium uppercase tracking-wide leading-none mb-0.5 text-emerald-400">
                 Selected model
               </p>
               <p className="text-xs font-semibold text-th-text-primary truncate font-mono">{decision.model_repo}</p>
@@ -677,7 +677,7 @@ export default function DecisionPanel({
             />
           </label>
         </div>
-        <p className="text-[11px] text-th-text-muted">
+        <p className="text-2xs text-th-text-muted">
           Confidence is how peaked the answer is, not a calibrated probability. Keep these conservative.
         </p>
         <label className="block text-xs text-th-text-tertiary">
@@ -692,7 +692,7 @@ export default function DecisionPanel({
             className="mt-1 w-full px-3 py-2 bg-th-input-bg border border-th-input-border rounded-lg text-sm text-th-text-primary"
           />
         </label>
-        <p className="text-[11px] text-th-text-muted">
+        <p className="text-2xs text-th-text-muted">
           The chance that something is unsafe, as Jev estimates it. Lower stops more runs, including some that are fine.
         </p>
       </section>

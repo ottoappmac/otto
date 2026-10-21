@@ -104,7 +104,7 @@ function StepHeader({
     <div className="flex items-center gap-2">
       <div
         className={classNames(
-          "w-5 h-5 rounded-full border text-[10px] font-semibold flex items-center justify-center transition-colors",
+          "w-5 h-5 rounded-full border text-2xs font-semibold flex items-center justify-center transition-colors",
           done && "bg-emerald-500/20 border-emerald-500/60 text-emerald-500",
           !done && active && "bg-blue-500/20 border-blue-500/60 text-blue-500",
           !done && !active && "bg-th-surface border-th-border text-th-text-muted",
@@ -134,7 +134,7 @@ function TrafficLight({ ok, label, hint }: { ok: boolean | null; label: string; 
   return (
     <span
       className={classNames(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 border text-[11px]",
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 border text-2xs",
         cls,
       )}
       title={hint}
@@ -452,7 +452,7 @@ export default function ExoSetupSteps(props: Props) {
       </div>
 
       {error && (
-        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-500 flex items-start gap-2">
+        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-2xs text-rose-500 flex items-start gap-2">
           <AlertTriangle size={12} className="mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>
@@ -474,7 +474,7 @@ export default function ExoSetupSteps(props: Props) {
               && (h.thunderbolt_addresses || []).some((a) => tbAddrSet.has(a)),
             )?.hostname || "";
             return (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11px] flex items-start gap-2">
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-2xs flex items-start gap-2">
                 <Cpu size={14} className="text-amber-500 mt-0.5 shrink-0" />
                 <div className="flex-1">
                   <div className="font-medium text-amber-500">
@@ -534,7 +534,7 @@ export default function ExoSetupSteps(props: Props) {
 
           {(sshHosts.length > 0 || lanHosts.length > 0) && (
             <div className="space-y-1.5">
-              <p className="text-[11px] font-medium text-th-text-secondary uppercase tracking-wide">
+              <p className="text-2xs font-medium text-th-text-secondary uppercase tracking-wide">
                 Quick pick
               </p>
               <div className="flex flex-wrap gap-1.5">
@@ -550,7 +550,7 @@ export default function ExoSetupSteps(props: Props) {
                         if (h.user) setUser(h.user);
                         if (h.port) setPort(h.port);
                       }}
-                      className="text-[11px] rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover px-2 py-1"
+                      className="text-2xs rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover px-2 py-1"
                       title={`from ~/.ssh/config (${h.source_file})`}
                     >
                       <span className="font-mono">{h.alias}</span>
@@ -578,12 +578,12 @@ export default function ExoSetupSteps(props: Props) {
                       key={`l-${h.name}`}
                       type="button"
                       onClick={() => { if (picked) setHost(picked); }}
-                      className="text-[11px] rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover px-2 py-1"
+                      className="text-2xs rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover px-2 py-1"
                       title={`Other addresses: ${[tb, ipv4].filter(Boolean).join(", ") || "(none)"}`}
                     >
                       <Wifi size={10} className="inline mr-1 -mt-0.5" />
                       <span className="font-mono">{h.name}</span>
-                      <span className={classNames("ml-1 px-1 rounded-sm text-[9px] font-semibold uppercase", tag.cls)}>
+                      <span className={classNames("ml-1 px-1 rounded-sm text-2xs font-semibold uppercase", tag.cls)}>
                         {tag.label}
                       </span>
                       <span className="text-th-text-muted ml-1 font-mono">→ {picked}</span>
@@ -596,7 +596,7 @@ export default function ExoSetupSteps(props: Props) {
 
           <div className="grid grid-cols-2 gap-2">
             <div className="col-span-2">
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1">
                 Host or IP
               </label>
               <input
@@ -607,7 +607,7 @@ export default function ExoSetupSteps(props: Props) {
               />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1">
                 Username
               </label>
               <input
@@ -618,7 +618,7 @@ export default function ExoSetupSteps(props: Props) {
               />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1">
                 Port
               </label>
               <input
@@ -690,13 +690,13 @@ export default function ExoSetupSteps(props: Props) {
                 <TrafficLight ok={probe.key_auth_ok ? probe.has_uv : null} label="uv installed" />
                 <TrafficLight ok={probe.key_auth_ok ? probe.has_exo : null} label="exo installed" />
                 {probe.os_name && (
-                  <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border border-th-border bg-th-surface text-[11px] text-th-text-secondary">
+                  <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 border border-th-border bg-th-surface text-2xs text-th-text-secondary">
                     {probe.os_name} {probe.arch}
                   </span>
                 )}
               </div>
               {probe.hint && (
-                <p className="text-[11px] text-th-text-secondary">{probe.hint}</p>
+                <p className="text-2xs text-th-text-secondary">{probe.hint}</p>
               )}
               <div className="flex justify-between gap-2 pt-1">
                 <button
@@ -733,7 +733,7 @@ export default function ExoSetupSteps(props: Props) {
       {/* ---------- Step 3: keypair ---------- */}
       {step === 3 && (
         <div className="space-y-3">
-          <p className="text-[11px] text-th-text-secondary">
+          <p className="text-2xs text-th-text-secondary">
             Pick a local private key whose public counterpart we'll install on
             the remote, or generate a fresh ED25519 key dedicated to cluster
             use.
@@ -741,7 +741,7 @@ export default function ExoSetupSteps(props: Props) {
 
           {keypairs.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-[11px] font-medium text-th-text-secondary">
+              <p className="text-2xs font-medium text-th-text-secondary">
                 Found in ~/.ssh
               </p>
               <div className="rounded-md border border-th-border bg-th-bg divide-y divide-th-border">
@@ -765,7 +765,7 @@ export default function ExoSetupSteps(props: Props) {
                       <div className="text-xs font-mono text-th-text-primary truncate">
                         {k.private_path.replace(/^.*\/\.ssh\//, "~/.ssh/")}
                       </div>
-                      <div className="text-[10px] text-th-text-muted truncate">
+                      <div className="text-2xs text-th-text-muted truncate">
                         {k.key_type.toUpperCase()} · {k.bits} · {k.fingerprint}
                         {k.comment ? ` · ${k.comment}` : ""}
                       </div>
@@ -777,7 +777,7 @@ export default function ExoSetupSteps(props: Props) {
           )}
 
           <div className="rounded-md border border-th-border bg-th-bg p-3 space-y-2">
-            <p className="text-[11px] font-medium text-th-text-secondary">
+            <p className="text-2xs font-medium text-th-text-secondary">
               Or generate a fresh ED25519 key
             </p>
             <div className="flex items-center gap-2">
@@ -797,7 +797,7 @@ export default function ExoSetupSteps(props: Props) {
                 Generate
               </button>
             </div>
-            <p className="text-[10px] text-th-text-muted leading-relaxed">
+            <p className="text-2xs text-th-text-muted leading-relaxed">
               Generated with <code className="font-mono">ssh-keygen -t ed25519 -N ""</code>.
               No passphrase — safe on a FileVault-encrypted Mac.
             </p>
@@ -827,13 +827,13 @@ export default function ExoSetupSteps(props: Props) {
       {step === 4 && (
         <div className="space-y-3">
           {chosenKeypair && (
-            <div className="rounded-md border border-th-border bg-th-bg p-2.5 text-[11px] text-th-text-secondary flex items-start gap-2">
+            <div className="rounded-md border border-th-border bg-th-bg p-2.5 text-2xs text-th-text-secondary flex items-start gap-2">
               <KeyRound size={12} className="text-th-text-tertiary mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <div className="font-mono text-th-text-primary truncate">
                   {chosenKeypair.private_path}
                 </div>
-                <div className="text-[10px] text-th-text-muted">
+                <div className="text-2xs text-th-text-muted">
                   Will install <code className="font-mono">{chosenKeypair.public_path.split("/").pop()}</code> →
                   <code className="font-mono"> ~/.ssh/authorized_keys</code> on the remote.
                 </div>
@@ -843,7 +843,7 @@ export default function ExoSetupSteps(props: Props) {
 
           {!showManualFallback ? (
             <>
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-[11px] text-th-text-secondary">
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-2xs text-th-text-secondary">
                 <div className="font-medium text-amber-500 mb-1">
                   One-shot password (not stored, not logged, never sent to the LLM)
                 </div>
@@ -856,7 +856,7 @@ export default function ExoSetupSteps(props: Props) {
               </div>
 
               <div>
-                <label className="block text-[11px] font-medium text-th-text-tertiary mb-1">
+                <label className="block text-2xs font-medium text-th-text-tertiary mb-1">
                   Password
                 </label>
                 <input
@@ -901,12 +901,12 @@ export default function ExoSetupSteps(props: Props) {
             </>
           ) : (
             <div className="space-y-2">
-              <p className="text-[11px] text-th-text-secondary">
+              <p className="text-2xs text-th-text-secondary">
                 Run one of these on the remote, then come back and re-probe:
               </p>
               <div className="rounded-md border border-th-border bg-th-bg p-3">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] font-medium text-th-text-secondary">
+                  <span className="text-2xs font-medium text-th-text-secondary">
                     From this Mac
                   </span>
                   {chosenKeypair && (
@@ -918,19 +918,19 @@ export default function ExoSetupSteps(props: Props) {
                         setCopied(true);
                         setTimeout(() => setCopied(false), 1500);
                       }}
-                      className="text-[10px] inline-flex items-center gap-1 text-th-text-muted hover:text-th-text-primary"
+                      className="text-2xs inline-flex items-center gap-1 text-th-text-muted hover:text-th-text-primary"
                     >
                       {copied ? <ClipboardCheck size={10} /> : <Clipboard size={10} />}
                       {copied ? "Copied" : "Copy"}
                     </button>
                   )}
                 </div>
-                <pre className="text-[11px] font-mono text-th-text-primary overflow-x-auto whitespace-pre-wrap">
+                <pre className="text-2xs font-mono text-th-text-primary overflow-x-auto whitespace-pre-wrap">
 {chosenKeypair ? `ssh-copy-id -i ${chosenKeypair.public_path} ${user}@${host}${port !== 22 ? ` -p ${port}` : ""}` : ""}
                 </pre>
               </div>
               {chosenKeypair && (
-                <p className="text-[10px] text-th-text-muted leading-relaxed">
+                <p className="text-2xs text-th-text-muted leading-relaxed">
                   Public key path: <code className="font-mono">{chosenKeypair.public_path}</code> · fingerprint{" "}
                   <code className="font-mono">{chosenKeypair.fingerprint}</code>
                 </p>
@@ -955,17 +955,17 @@ export default function ExoSetupSteps(props: Props) {
           )}
 
           {installResult && (
-            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-500 flex items-start gap-2">
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-2xs text-emerald-500 flex items-start gap-2">
               <CheckCircle2 size={12} className="mt-0.5 shrink-0" />
               <div>
                 <div className="font-medium">
                   {installResult.already_present ? "Key already authorized" : "Key installed"}
                 </div>
-                <div className="text-[10px]">
+                <div className="text-2xs">
                   {installResult.key_type.toUpperCase()} · {installResult.bits} · {installResult.fingerprint}
                 </div>
                 {installResult.host_swapped_from && installResult.host_used && (
-                  <div className="text-[10px] mt-1 text-amber-500">
+                  <div className="text-2xs mt-1 text-amber-500">
                     Connected via <code className="font-mono">{installResult.host_used}</code>{" "}
                     after <code className="font-mono">{installResult.host_swapped_from}</code> was unroutable.
                     This is what we'll save into ssh-config.
@@ -982,7 +982,7 @@ export default function ExoSetupSteps(props: Props) {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1">
                 Alias (~/.ssh/config)
               </label>
               <input
@@ -992,7 +992,7 @@ export default function ExoSetupSteps(props: Props) {
               />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1">
                 Label (optional)
               </label>
               <input
@@ -1006,20 +1006,20 @@ export default function ExoSetupSteps(props: Props) {
 
           <div className="rounded-md border border-th-border bg-th-bg p-3">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-medium text-th-text-secondary">
+              <span className="text-2xs font-medium text-th-text-secondary">
                 Block to append to ~/.ssh/config
               </span>
-              <span className="text-[10px] text-th-text-muted">
+              <span className="text-2xs text-th-text-muted">
                 A timestamped backup will be written first.
               </span>
             </div>
-            <pre className="text-[11px] font-mono text-th-text-primary whitespace-pre overflow-x-auto">
+            <pre className="text-2xs font-mono text-th-text-primary whitespace-pre overflow-x-auto">
 {previewBlock}
             </pre>
           </div>
 
           {appendResult && (
-            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-500">
+            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-2xs text-emerald-500">
               Wrote {appendResult.config_path}
               {appendResult.backup_path && (
                 <> · backup at <code className="font-mono">{appendResult.backup_path}</code></>
@@ -1052,7 +1052,7 @@ export default function ExoSetupSteps(props: Props) {
       {step === 6 && (
         <div className="space-y-3">
           <div className="rounded-md border border-th-border bg-th-bg p-3">
-            <div className="text-[11px] text-th-text-secondary mb-1">
+            <div className="text-2xs text-th-text-secondary mb-1">
               Verifying alias …
             </div>
             <div className="flex items-center gap-2">

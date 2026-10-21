@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   MessageSquare,
+  Code2,
   LayoutDashboard,
   Settings,
   Workflow,
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/runs", icon: Activity, label: "Runs" },
   { to: "/chat", icon: MessageSquare, label: "Chat" },
+  { to: "/code", icon: Code2, label: "Code" },
   { to: "/transcribe", icon: Radio, label: "Capture" },
   { to: "/watch", icon: Video, label: "Watch" },
   { to: "/ambient", icon: Sparkles, label: "Suggestions" },
@@ -162,15 +164,17 @@ export default function Sidebar() {
     : null;
 
   return (
-    <aside className={`bg-th-sidebar-bg border-l border-th-sidebar-border flex flex-col shrink-0 transition-all duration-200 ${collapsed ? "w-[60px]" : "w-56"}`}>
+    <aside aria-label="Sidebar" className={`bg-th-sidebar-bg border-l border-th-sidebar-border flex flex-col shrink-0 transition-all duration-200 ${collapsed ? "w-[60px]" : "w-56"}`}>
       {/* Navigation */}
-      <nav className="flex flex-col gap-1 px-2 py-4">
+      <nav aria-label="Main" className="flex flex-col gap-1 px-2 py-4">
         <div className={`flex items-center mb-2 ${collapsed ? "flex-col gap-2" : "justify-between px-3"}`}>
           <NotificationCenter collapsed={collapsed} />
           <button
             onClick={toggleCollapsed}
             className="p-1 rounded text-th-text-muted hover:text-th-text-secondary hover:bg-th-surface-hover transition-all"
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!collapsed}
           >
             {collapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
           </button>
@@ -192,6 +196,8 @@ export default function Sidebar() {
                     : "text-th-text-tertiary hover:bg-th-surface-hover hover:text-th-text-primary"
                 }`}
                 title={collapsed ? label : undefined}
+                aria-label={label}
+                aria-pressed={transcribeOpen}
               >
                 <Icon size={18} className="shrink-0" />
                 {!collapsed && label}
@@ -213,6 +219,8 @@ export default function Sidebar() {
                     : "text-th-text-tertiary hover:bg-th-surface-hover hover:text-th-text-primary"
                 }`}
                 title={collapsed ? label : undefined}
+                aria-label={label}
+                aria-pressed={watchOpen}
               >
                 <Icon size={18} className="shrink-0" />
                 {!collapsed && label}
@@ -239,11 +247,12 @@ export default function Sidebar() {
                 }`
               }
               title={collapsed ? label : undefined}
+              aria-label={collapsed ? label : undefined}
             >
               <span className="relative shrink-0">
                 <Icon size={18} />
                 {label === "Suggestions" && ambientPending > 0 && (
-                  <span className="absolute -top-1 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full border-2 border-th-sidebar-bg bg-blue-500 text-[9px] font-bold text-white px-0.5">
+                  <span className="absolute -top-1 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full border-2 border-th-sidebar-bg bg-blue-500 text-2xs font-bold text-white px-0.5">
                     {ambientPending > 9 ? "9+" : ambientPending}
                   </span>
                 )}
@@ -284,7 +293,7 @@ export default function Sidebar() {
               </span>
               {!collapsed && label}
               {!collapsed && label === "Suggestions" && suggestionsRunning && (
-                <span className="ml-auto flex items-center gap-1 text-[9px] font-semibold text-th-text-muted bg-th-surface-hover border border-th-border rounded-full px-1.5 py-0.5">
+                <span className="ml-auto flex items-center gap-1 text-2xs font-semibold text-th-text-muted bg-th-surface-hover border border-th-border rounded-full px-1.5 py-0.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-th-text-muted animate-pulse shrink-0" />
                   Running
                 </span>
@@ -295,6 +304,7 @@ export default function Sidebar() {
                 onClick={handleNewChat}
                 className="p-1.5 rounded-md text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover transition-all duration-150"
                 title={`New chat (${isMac ? "⌘N" : "Ctrl+N"})`}
+                aria-label="New chat"
               >
                 <Plus size={14} />
               </button>
@@ -307,12 +317,12 @@ export default function Sidebar() {
       {/* Recent sessions — hidden when collapsed */}
       {!collapsed && (
         <div className="flex flex-col flex-1 min-h-0 border-t border-th-sidebar-border/50 mt-1 pt-2">
-          <p className="px-3 pb-1.5 text-[10px] uppercase tracking-wider text-th-text-muted font-semibold shrink-0">
+          <p className="px-3 pb-1.5 text-2xs uppercase tracking-wider text-th-text-muted font-semibold shrink-0">
             Recent sessions
           </p>
           <div className="overflow-y-auto px-2 pb-2 flex-1 min-h-0">
             {recentSessions.length === 0 ? (
-              <p className="text-[11px] text-th-text-muted px-3 pt-1">No recent sessions</p>
+              <p className="text-2xs text-th-text-muted px-3 pt-1">No recent sessions</p>
             ) : (
               <div className="flex flex-col gap-0.5">
                 {recentSessions.map((s) => {
@@ -343,16 +353,16 @@ export default function Sidebar() {
                               }`}
                             />
                           )}
-                          <p className={`text-[11px] truncate ${isActive ? "text-th-text-primary font-medium" : "text-th-text-tertiary group-hover:text-th-text-secondary"}`}>
+                          <p className={`text-2xs truncate ${isActive ? "text-th-text-primary font-medium" : "text-th-text-tertiary group-hover:text-th-text-secondary"}`}>
                             {s.title || s.agent_name || "New Session"}
                           </p>
                         </div>
-                        <p className="text-[10px] text-th-text-muted mt-0.5 truncate flex items-center gap-1">
+                        <p className="text-2xs text-th-text-muted mt-0.5 truncate flex items-center gap-1">
                           <span className="truncate">{s.agent_name || "General"}</span>
                           {(() => {
                             const meta = triggerMeta(s.trigger_source);
                             return meta && (
-                              <span className={`inline-flex items-center gap-0.5 shrink-0 px-1 py-px rounded-full text-[9px] font-medium border ${meta.color}`}>
+                              <span className={`inline-flex items-center gap-0.5 shrink-0 px-1 py-px rounded-full text-2xs font-medium border ${meta.color}`}>
                                 {s.trigger_source === "voice" ? <Mic size={7} /> : <Zap size={7} />}
                                 {meta.label}
                               </span>
@@ -441,14 +451,14 @@ export default function Sidebar() {
             {!collapsed && <span className="text-[12px] text-red-500">Quit app?</span>}
             <button
               onClick={handleQuit}
-              className="px-2 py-1 rounded text-[11px] font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-all"
+              className="px-2 py-1 rounded text-2xs font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-all"
               title="Confirm quit"
             >
               {collapsed ? <Power size={14} /> : "Yes"}
             </button>
             <button
               onClick={() => setConfirmQuit(false)}
-              className="px-2 py-1 rounded text-[11px] font-medium text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover transition-all"
+              className="px-2 py-1 rounded text-2xs font-medium text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover transition-all"
               title="Cancel"
             >
               {collapsed ? <X size={14} /> : "No"}

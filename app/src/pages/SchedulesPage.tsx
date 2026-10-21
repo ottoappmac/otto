@@ -173,7 +173,7 @@ export default function SchedulesPage() {
       {label}
       <ArrowUpDown size={11} className={sortField === field ? "opacity-100" : "opacity-40"} />
       {sortField === field && (
-        <span className="text-[10px] opacity-70">{sortDir === "asc" ? "↑" : "↓"}</span>
+        <span className="text-2xs opacity-70">{sortDir === "asc" ? "↑" : "↓"}</span>
       )}
     </button>
   );
@@ -346,7 +346,7 @@ function ScheduleCard({
                 <StatusDot status={schedule.last_status} enabled={schedule.enabled} />
                 <h3 className="font-semibold text-th-text-primary truncate">{schedule.id}</h3>
                 {isRunning && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 animate-pulse shrink-0">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 animate-pulse shrink-0">
                     Running
                   </span>
                 )}
@@ -361,7 +361,7 @@ function ScheduleCard({
                 <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   <span className="text-xs text-th-text-muted">Last run: {formatRelative(schedule.last_run)}</span>
                   {schedule.last_status && (
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-semibold border ${
                       schedule.last_status === "success"
                         ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                         : schedule.last_status === "error"
@@ -376,7 +376,7 @@ function ScheduleCard({
                 </div>
               )}
               {schedule.last_error && (
-                <p className="text-[11px] text-red-400/80 mt-1 line-clamp-2 break-words">{schedule.last_error}</p>
+                <p className="text-2xs text-red-400/80 mt-1 line-clamp-2 break-words">{schedule.last_error}</p>
               )}
             </div>
           </div>
@@ -430,7 +430,7 @@ function ScheduleCard({
           {evalSuggestion ? (
             <button
               onClick={() => navigate(`/ambient?highlight=${encodeURIComponent(evalSuggestion.id)}`)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 transition-all"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-2xs font-medium text-amber-300 hover:bg-amber-500/20 transition-all"
               title="An improved prompt was suggested for this schedule"
             >
               <Sparkles size={11} aria-hidden />
@@ -444,7 +444,7 @@ function ScheduleCard({
             className="flex items-center gap-2 group"
             title={schedule.enabled ? "Disable schedule" : "Enable schedule"}
           >
-            <span className="text-[11px] text-th-text-muted group-hover:text-th-text-tertiary transition-colors">
+            <span className="text-2xs text-th-text-muted group-hover:text-th-text-tertiary transition-colors">
               {schedule.enabled ? "Enabled" : "Disabled"}
             </span>
             <div className={`w-8 h-[18px] rounded-full relative transition-colors duration-200 ${schedule.enabled ? "bg-emerald-500" : "bg-neutral-700"}`}>
@@ -622,12 +622,12 @@ function ScheduleDialog({
                 placeholder="0 9 * * 1-5"
               />
             )}
-            <p className="text-[11px] text-th-text-muted mt-1.5">Cron: {cron}</p>
+            <p className="text-2xs text-th-text-muted mt-1.5">Cron: {cron}</p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-th-text-tertiary mb-2">Attachments</label>
-            <p className="text-[11px] text-th-text-muted mb-2">
+            <p className="text-2xs text-th-text-muted mb-2">
               Files attached here are stored once per schedule and made available read-only to every run under <code className="font-mono">/attachments/</code>.
             </p>
             {(attachments.length > 0 || pendingFiles.length > 0) && (
@@ -636,7 +636,7 @@ function ScheduleDialog({
                   <div key={a.path} className="flex items-center gap-2 px-3 py-1.5 bg-th-inset-bg border border-th-border rounded-lg text-sm">
                     <Paperclip size={13} className="text-th-text-muted shrink-0" />
                     <span className="text-th-text-secondary truncate flex-1">{a.path}</span>
-                    <span className="text-[11px] text-th-text-muted shrink-0">{formatBytes(a.size)}</span>
+                    <span className="text-2xs text-th-text-muted shrink-0">{formatBytes(a.size)}</span>
                     <button
                       type="button"
                       onClick={() => removeExistingAttachment(a.path)}
@@ -651,8 +651,8 @@ function ScheduleDialog({
                   <div key={`pending-${i}`} className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border border-blue-500/20 rounded-lg text-sm">
                     <Paperclip size={13} className="text-blue-400 shrink-0" />
                     <span className="text-th-text-secondary truncate flex-1">{f.name}</span>
-                    <span className="text-[11px] text-th-text-muted shrink-0">{formatBytes(f.size)}</span>
-                    <span className="text-[10px] text-blue-400 shrink-0">pending</span>
+                    <span className="text-2xs text-th-text-muted shrink-0">{formatBytes(f.size)}</span>
+                    <span className="text-2xs text-blue-400 shrink-0">pending</span>
                     <button
                       type="button"
                       onClick={() => removePendingFile(i)}

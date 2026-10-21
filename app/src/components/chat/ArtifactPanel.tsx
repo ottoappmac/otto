@@ -350,7 +350,7 @@ export function ArtifactPanel({ artifact, onClose }: ArtifactPanelProps) {
           {filename}
         </span>
         {artifact.diff && (
-          <div className="flex items-center rounded-md border border-th-border text-[10px] font-medium overflow-hidden shrink-0">
+          <div className="flex items-center rounded-md border border-th-border text-2xs font-medium overflow-hidden shrink-0">
             <button
               type="button"
               onClick={() => setViewMode("file")}

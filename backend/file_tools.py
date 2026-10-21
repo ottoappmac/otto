@@ -9,7 +9,9 @@ import ipaddress
 import json
 import logging
 import mimetypes
+import shutil
 import socket
+import subprocess
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -24,6 +26,8 @@ from backend.utils import is_resolved_path_allowed, remap_to_virtual_path
 logger = logging.getLogger(__name__)
 
 _IMAGE_MIMES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+_HEIC_SUFFIXES = frozenset({".heic", ".heif", ".heics"})
+_HEIC_MIMES = frozenset({"image/heic", "image/heif", "image/heic-sequence"})
 _MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20 MB
 _FETCH_TIMEOUT = 15.0  # seconds
 
@@ -87,6 +91,38 @@ def _desc_cache_key(resolved: Path) -> str:
     return hashlib.sha1(f"{resolved}:{mtime}".encode()).hexdigest()
 
 
+def _is_heic(path: Path, mime: str | None) -> bool:
+    return path.suffix.lower() in _HEIC_SUFFIXES or (mime or "").lower() in _HEIC_MIMES
+
+
+def _heic_to_jpeg(source: Path, files_dir: Path) -> bytes:
+    """Convert a HEIC/HEIF file to JPEG bytes the vision path can read.
+
+    ``sips`` runs in the backend process, outside the shell sandbox. The
+    JPEG is cached next to the session files so a second view skips the
+    conversion. The cache key includes mtime, so a replaced upload is redone.
+    """
+    sips = shutil.which("sips")
+    if not sips:
+        raise RuntimeError("sips is not available, so this HEIC file cannot be viewed")
+    cache = files_dir / ".heic-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    dest = cache / f"{source.stem}-{source.stat().st_mtime_ns}.jpg"
+    if not dest.is_file():
+        proc = subprocess.run(
+            [sips, "-s", "format", "jpeg", str(source), "--out", str(dest)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if proc.returncode != 0 or not dest.is_file():
+            detail = (proc.stderr or proc.stdout or "sips failed").strip()
+            dest.unlink(missing_ok=True)
+            raise RuntimeError(detail or "sips failed")
+    return dest.read_bytes()
+
+
 def _load_desc_cache(files_dir: Path) -> dict[str, str]:
     try:
         return json.loads(_desc_cache_path(files_dir).read_text(encoding="utf-8"))
@@ -103,7 +139,13 @@ def _save_desc_cache(files_dir: Path, cache: dict[str, str]) -> None:
         logger.debug("Could not persist image-description cache: %s", exc)
 
 
-def build_file_tools(files_dir: Path, vision_llm: Optional[BaseChatModel] = None) -> list:
+def build_file_tools(
+    files_dir: Path,
+    vision_llm: Optional[BaseChatModel] = None,
+    *,
+    grant_roots: list[Path] | None = None,
+    linked_files: list[Path] | None = None,
+) -> list:
     """Build tools that let the agent view uploaded images in the session.
 
     Args:
@@ -149,7 +191,11 @@ def build_file_tools(files_dir: Path, vision_llm: Optional[BaseChatModel] = None
         full = files_dir / vpath.lstrip("/")
         # Containment allows user-dropped images under /links/ to resolve
         # outside the session root, while blocking symlink escapes elsewhere.
-        if not is_resolved_path_allowed(full, files_dir, vpath):
+        if not is_resolved_path_allowed(
+            full, files_dir, vpath,
+            grant_roots=grant_roots,
+            linked_files=linked_files,
+        ):
             return [create_text_block(text="Error: path is outside the session directory.")]
 
         resolved = full.resolve()
@@ -157,29 +203,36 @@ def build_file_tools(files_dir: Path, vision_llm: Optional[BaseChatModel] = None
             return [create_text_block(text=f"Error: file not found: {file_path}")]
 
         mime, _ = mimetypes.guess_type(str(resolved))
-        if mime not in _IMAGE_MIMES:
-            hint = "Use read_file or shell tools for non-image files."
-            if mime in ("application/pdf",) or resolved.suffix.lower() in (
-                ".pdf", ".docx", ".pptx",
-            ):
-                hint = (
-                    "This is a document, not an image. Use doc_reader or "
-                    "doc_research on it first — they extract embedded images "
-                    "and return their /doc_images/... paths, which you then "
-                    "pass to view_image."
-                )
-            return [create_text_block(
-                text=f"Error: not a supported image type ({mime}). {hint}"
-            )]
+        if _is_heic(resolved, mime):
+            try:
+                raw = _heic_to_jpeg(resolved, files_dir)
+            except RuntimeError as exc:
+                return [create_text_block(text=f"Error: could not convert HEIC image ({exc}).")]
+            mime = "image/jpeg"
+            size = len(raw)
+        else:
+            if mime not in _IMAGE_MIMES:
+                hint = "Use read_file or shell tools for non-image files."
+                if mime in ("application/pdf",) or resolved.suffix.lower() in (
+                    ".pdf", ".docx", ".pptx",
+                ):
+                    hint = (
+                        "This is a document, not an image. Use doc_reader or "
+                        "doc_research on it first — they extract embedded images "
+                        "and return their /doc_images/... paths, which you then "
+                        "pass to view_image."
+                    )
+                return [create_text_block(
+                    text=f"Error: not a supported image type ({mime}). {hint}"
+                )]
+            size = resolved.stat().st_size
+            raw = resolved.read_bytes()
 
-        size = resolved.stat().st_size
         if size > _MAX_IMAGE_SIZE:
             return [create_text_block(
                 text=f"Error: image is too large ({size / 1024 / 1024:.1f} MB, "
                      f"max {_MAX_IMAGE_SIZE / 1024 / 1024:.0f} MB)."
             )]
-
-        raw = resolved.read_bytes()
         q = question.strip()
 
         if vision_llm is not None:
@@ -309,4 +362,38 @@ def build_file_tools(files_dir: Path, vision_llm: Optional[BaseChatModel] = None
             create_image_block(base64=data, mime_type=content_type),
         ]
 
-    return [view_image, load_image_from_url]
+    @tool
+    def request_folder_access(path: str, reason: str = "") -> str:
+        """Ask the user to allow a project folder.
+
+        Use this when the user wants work done in a folder that is not
+        already allowed. This does not grant access by itself. Tell the
+        user the app will ask them to confirm the real path.
+
+        Args:
+            path: Absolute path or ``~`` path of the folder.
+            reason: Short reason to show the user.
+        """
+        from backend.workspace_grants import find_by_realpath
+        from backend.workspace_policy import GrantRejected, validate_grantable
+
+        try:
+            real = validate_grantable(path)
+        except (GrantRejected, FileNotFoundError, NotADirectoryError, OSError) as exc:
+            return f"That folder cannot be allowed: {exc}"
+        existing = find_by_realpath(str(real))
+        if existing is not None:
+            return (
+                f"Already allowed ({existing.mode}): {existing.realpath}. "
+                "The user can open it from the Code tab."
+            )
+        why = reason.strip()
+        return (
+            "NEEDS_GRANT\n"
+            f"path: {real}\n"
+            + (f"reason: {why}\n" if why else "")
+            + "The user has to confirm this folder in Otto before you can read or edit it. "
+            "Do not claim it is allowed yet."
+        )
+
+    return [view_image, load_image_from_url, request_folder_access]

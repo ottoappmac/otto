@@ -388,7 +388,7 @@ export default function RunsPage() {
               <span className="text-xs text-th-text-muted tabular-nums">{total} total</span>
             )}
             {runningCount > 0 && (
-              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-semibold text-emerald-400">
+              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-2xs font-semibold text-emerald-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 {runningCount} running
               </span>

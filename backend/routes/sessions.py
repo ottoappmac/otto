@@ -60,7 +60,7 @@ ws_router = APIRouter(tags=["websocket"])
 
 
 @router.get("")
-async def api_list_sessions():
+async def api_list_sessions(workspace_grant_id: str | None = None):
     active = session_mgr.list_active()
     history = await asyncio.to_thread(session_mgr.list_history)
     seen = {s.id for s in active}
@@ -74,6 +74,11 @@ async def api_list_sessions():
         if d.get("status") == "idle" and (d.get("message_count") or 0) > 0:
             d["status"] = "completed"
         combined.append(d)
+    if workspace_grant_id:
+        combined = [
+            item for item in combined
+            if ((item.get("workspace") or {}).get("grant_id") == workspace_grant_id)
+        ]
     return combined
 
 
@@ -359,6 +364,9 @@ async def api_session_status(session_id: str):
             awaiting_input = meta.get("status") == "awaiting_input"
         except Exception:
             logger.debug("status meta read failed for %s", session_id, exc_info=True)
+    # A resumed run is running even if a stale "awaiting_input" is still on
+    # disk, so a live task always wins.
+    awaiting_input = awaiting_input and not running
     return {"active": active or has_meta, "running": running, "awaiting_input": awaiting_input}
 
 
@@ -595,7 +603,13 @@ async def api_download_session_file(session_id: str, file_path: str):
     files_dir = _session_files_dir(session_id)
     full = files_dir / file_path
     vpath = "/" + file_path.lstrip("/")
-    if not is_resolved_path_allowed(full, files_dir, vpath):
+    from backend.workspace_policy import allowance_for_session
+    grant_roots, linked_files = allowance_for_session(session_id)
+    if not is_resolved_path_allowed(
+        full, files_dir, vpath,
+        grant_roots=grant_roots,
+        linked_files=linked_files,
+    ):
         return JSONResponse(status_code=400, content={"error": "Invalid path"})
     resolved = full.resolve()
     if not resolved.is_file():
@@ -603,10 +617,14 @@ async def api_download_session_file(session_id: str, file_path: str):
     media_type, _ = mimetypes.guess_type(str(resolved))
     if not media_type:
         media_type = "application/octet-stream"
+    # ``<img>`` and ``<video>`` in the chat preview will not paint a
+    # response marked as a download. Inline is what a preview needs.
+    inline = media_type.startswith(("image/", "video/", "audio/")) or media_type == "application/pdf"
     return FileResponse(
         path=resolved,
         filename=Path(file_path).name,
         media_type=media_type,
+        content_disposition_type="inline" if inline else "attachment",
         headers={"Cache-Control": "no-store"},
     )
 
@@ -688,37 +706,88 @@ async def api_create_session_link(
     }
 
 
-@router.post("/{session_id}/workspace")
-async def api_set_session_workspace(session_id: str, body: dict = Body(...)):
-    """Map a host directory as this session's coding workspace."""
+async def _bind_workspace(session_id: str, real: Path, grant):
+    """Point the session at a grant and mount it under /links/<name>."""
     from backend.workspace import ensure_workspace_link, remove_workspace_link
-
-    src_raw = body.get("source", "")
-    if not isinstance(src_raw, str) or not src_raw:
-        return JSONResponse(status_code=400, content={"error": "source is required"})
-
-    src = Path(src_raw).expanduser().resolve()
-    if not src.exists():
-        return JSONResponse(status_code=404, content={"error": f"source not found: {src_raw}"})
-    if not src.is_dir():
-        return JSONResponse(status_code=400, content={"error": "workspace must be a directory"})
+    from backend.workspace_grants import touch_grant
 
     files_dir = _session_files_dir(session_id)
     previous = _read_workspace_meta(session_id)
-    if previous is not None and previous.host_path != str(src):
+    if previous is not None and previous.host_path != str(real):
         await asyncio.to_thread(remove_workspace_link, files_dir, previous)
+    workspace = await asyncio.to_thread(ensure_workspace_link, files_dir, real)
+    workspace.grant_id = grant.id
+    workspace.mode = grant.mode
+    await asyncio.to_thread(touch_grant, grant.id)
+    return await session_mgr.set_workspace(session_id, workspace)
+
+
+@router.post("/{session_id}/workspace")
+async def api_set_session_workspace(session_id: str, body: dict = Body(...)):
+    """Map an allowed folder as this session's coding workspace.
+
+    ``source`` is validated and stored as a grant. ``grant_id`` binds an
+    existing grant. Arbitrary paths that fail the grant checks are rejected.
+    """
+    from backend.workspace_grants import get_grant, upsert_grant
+    from backend.workspace_policy import GrantRejected, validate_grantable
+
+    grant_id = body.get("grant_id") or ""
+    mode = body.get("mode") or "write"
+    if mode not in ("read", "write"):
+        return JSONResponse(status_code=400, content={"error": "mode must be read or write"})
 
     try:
-        workspace = await asyncio.to_thread(ensure_workspace_link, files_dir, src)
-    except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+        if isinstance(grant_id, str) and grant_id:
+            grant = get_grant(grant_id)
+            if grant is None:
+                return JSONResponse(status_code=404, content={"error": "Allowed folder not found"})
+            real = Path(grant.realpath)
+            if not real.is_dir():
+                return JSONResponse(status_code=404, content={"error": "Allowed folder is missing"})
+        else:
+            src_raw = body.get("source", "")
+            if not isinstance(src_raw, str) or not src_raw:
+                return JSONResponse(status_code=400, content={"error": "source or grant_id is required"})
+            real = await asyncio.to_thread(validate_grantable, src_raw)
+            grant = await asyncio.to_thread(
+                upsert_grant, real, mode=mode, source="user",
+            )
+        session = await _bind_workspace(session_id, real, grant)
+    except GrantRejected as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
-
-    try:
-        session = await session_mgr.set_workspace(session_id, workspace)
-    except RuntimeError as exc:
-        return JSONResponse(status_code=409, content={"error": str(exc)})
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"error": str(exc)})
+    except NotADirectoryError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
+    except OSError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    return session.to_info().model_dump()
+
+
+@router.put("/{session_id}/workspace")
+async def api_bind_session_workspace(session_id: str, body: dict = Body(...)):
+    """Bind the session to an existing allowed folder."""
+    body = dict(body)
+    if not body.get("grant_id"):
+        return JSONResponse(status_code=400, content={"error": "grant_id is required"})
+    return await api_set_session_workspace(session_id, body)
+
+
+@router.patch("/{session_id}/mode")
+async def api_set_session_mode(session_id: str, body: dict = Body(...)):
+    """Switch a session between agent, plan, and debug."""
+    mode = str((body or {}).get("mode") or "").strip().lower()
+    try:
+        session = await session_mgr.set_mode(session_id, mode)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
     return session.to_info().model_dump()
 
 
@@ -765,14 +834,43 @@ async def api_workspace_tree(session_id: str, path: str = ""):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
+@router.get("/{session_id}/workspace/search")
+async def api_workspace_search(session_id: str, q: str = "", limit: int = 20):
+    from backend.workspace import search_paths
+
+    workspace = _read_workspace_meta(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    try:
+        rows = await asyncio.to_thread(search_paths, workspace, q, limit)
+    except FileNotFoundError as exc:
+        return JSONResponse(status_code=404, content={"error": str(exc)})
+    return {"paths": rows}
+
+
 @router.get("/{session_id}/workspace/file")
 async def api_workspace_file(session_id: str, path: str):
-    from backend.workspace import read_file
+    import mimetypes
+
+    from backend.workspace import read_file, resolve_workspace_child
     from fastapi.responses import PlainTextResponse
 
     workspace = _read_workspace_meta(session_id)
     if workspace is None:
         return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    try:
+        target = resolve_workspace_child(workspace, path)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    media_type, _ = mimetypes.guess_type(str(target))
+    if target.is_file() and media_type and media_type.startswith(("image/", "video/", "audio/")):
+        return FileResponse(
+            path=target,
+            filename=target.name,
+            media_type=media_type,
+            content_disposition_type="inline",
+            headers={"Cache-Control": "no-store"},
+        )
     try:
         result = await asyncio.to_thread(read_file, workspace, path)
     except FileNotFoundError as exc:
@@ -786,6 +884,124 @@ async def api_workspace_file(session_id: str, path: str):
         media_type="text/plain; charset=utf-8",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.put("/{session_id}/workspace/file")
+async def api_write_workspace_file(session_id: str, body: dict = Body(...)):
+    """Save a text file the user edited in the Code view.
+
+    This is the user's edit, so it is not recorded as an Otto write and
+    Undo all will not revert it.
+    """
+    from backend.workspace import resolve_workspace_child
+    from backend.workspace_policy import active_workspace, protected_workspace_reason
+
+    rel = str((body or {}).get("path") or "").strip()
+    content = (body or {}).get("content")
+    if not rel:
+        return JSONResponse(status_code=400, content={"error": "path is required"})
+    if not isinstance(content, str):
+        return JSONResponse(status_code=400, content={"error": "content must be text"})
+    reason = protected_workspace_reason(rel)
+    if reason:
+        return JSONResponse(status_code=400, content={"error": reason})
+    workspace = active_workspace(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No allowed folder is mapped"})
+    if workspace.mode == "read":
+        return JSONResponse(status_code=403, content={"error": "This folder is read-only."})
+    try:
+        target = resolve_workspace_child(workspace, rel)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    if target.exists() and not target.is_file():
+        return JSONResponse(status_code=400, content={"error": "Not a file"})
+
+    def _write() -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    try:
+        await asyncio.to_thread(_write)
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    return {"path": rel, "bytes": len(content.encode("utf-8"))}
+
+
+def _workspace_or_404(session_id: str):
+    from backend.workspace_policy import active_workspace
+    workspace = active_workspace(session_id)
+    if workspace is None:
+        return None, JSONResponse(status_code=404, content={"error": "No allowed folder is mapped"})
+    return workspace, None
+
+
+@router.get("/{session_id}/workspace/git")
+async def api_workspace_git(session_id: str):
+    from backend.workspace_git import git_status
+    workspace, err = _workspace_or_404(session_id)
+    if err is not None:
+        return err
+    return await asyncio.to_thread(git_status, workspace)
+
+
+@router.get("/{session_id}/workspace/changes")
+async def api_workspace_changes(session_id: str, turn: int | None = None):
+    from backend.workspace_git import list_changes
+    workspace, err = _workspace_or_404(session_id)
+    if err is not None:
+        return err
+    return await asyncio.to_thread(list_changes, workspace, session_id, turn)
+
+
+@router.get("/{session_id}/workspace/diff")
+async def api_workspace_diff(session_id: str, path: str, turn: int | None = None):
+    from backend.workspace_git import file_diff
+    workspace, err = _workspace_or_404(session_id)
+    if err is not None:
+        return err
+    if not path:
+        return JSONResponse(status_code=400, content={"error": "path is required"})
+    return await asyncio.to_thread(file_diff, workspace, session_id, path, turn)
+
+
+@router.post("/{session_id}/workspace/revert")
+async def api_workspace_revert(session_id: str, body: dict = Body(...)):
+    from backend.workspace_git import revert
+    workspace, err = _workspace_or_404(session_id)
+    if err is not None:
+        return err
+    session = session_mgr.get_session(session_id)
+    if session is not None and session.status == "running":
+        return JSONResponse(status_code=409, content={"error": "Wait until the run finishes before reverting"})
+    paths = body.get("paths")
+    if paths is not None and not isinstance(paths, list):
+        return JSONResponse(status_code=400, content={"error": "paths must be a list"})
+    turn = body.get("turn")
+    hunk = body.get("hunk")
+    if isinstance(hunk, int):
+        if not paths or len(paths) != 1 or not isinstance(paths[0], str):
+            return JSONResponse(status_code=400, content={"error": "hunk undo needs one path"})
+        from backend.workspace_git import revert_hunk
+        result = await asyncio.to_thread(
+            revert_hunk,
+            workspace,
+            session_id,
+            path=paths[0],
+            hunk=hunk,
+            turn=turn if isinstance(turn, int) else None,
+        )
+    else:
+        result = await asyncio.to_thread(
+            revert,
+            workspace,
+            session_id,
+            paths=paths,
+            turn=turn if isinstance(turn, int) else None,
+        )
+    if result.get("conflicts") and not result.get("restored"):
+        return JSONResponse(status_code=409, content=result)
+    return result
 
 
 @router.delete("/{session_id}/files/{file_path:path}")
@@ -938,6 +1154,8 @@ class _PersistingSubagentQueue:
         self._session_id = session_id
 
     async def put(self, item: dict) -> None:
+        if hasattr(self._inner, "stamp"):
+            self._inner.stamp(item)
         await _append_message_async(self._session_id, item)
         await _persist_subagent_to_transcript(self._session_id, item)
         await self._inner.put(item)
@@ -957,11 +1175,12 @@ class _LazyPersistingSubagentQueue:
         self._session_id = session_id
 
     async def put(self, item: dict) -> None:
+        from backend.session_events import get_hub
+        hub = get_hub(self._session_id)
+        hub.stamp(item)
         await _append_message_async(self._session_id, item)
         await _persist_subagent_to_transcript(self._session_id, item)
-        queue = message_queues.get(self._session_id)
-        if queue is not None:
-            await queue.put(item)
+        await hub.put(item)
 
 
 async def _run_agent_stream_loop(
@@ -1023,6 +1242,9 @@ async def _run_agent_stream_loop(
             ctx_q = context_queues.get(session_id)
             has_pending_context = bool(ctx_q and not ctx_q.empty())
         if not sent_terminal and not was_cancelled and not has_pending_context:
+            from backend.workspace_policy import active_workspace
+            if active_workspace(session_id) is not None:
+                await queue.put({"type": "workspace_changed", "content": ""})
             await queue.put({"type": "done", "content": ""})
         running_tasks.pop(session_id, None)
         hitl_resume_inflight.discard(session_id)
@@ -1046,6 +1268,29 @@ async def _run_agent_stream_loop(
                 running_tasks[session_id] = new_task
 
 
+async def _checkpoint_workspace(session_id: str, queue: asyncio.Queue) -> None:
+    """Snapshot the allowed folder before a turn. A failed snapshot does not stop the turn."""
+    from backend.workspace_git import snapshot_before_turn
+    from backend.workspace_policy import active_workspace
+
+    workspace = active_workspace(session_id)
+    if workspace is None or workspace.mode == "read":
+        return
+    if session_mgr._mode_for(session_id) in ("plan", "ask"):
+        # Nothing in the project can change, so there is nothing to undo.
+        return
+    try:
+        result = await asyncio.to_thread(snapshot_before_turn, workspace, session_id)
+    except Exception as exc:
+        logger.warning("workspace checkpoint failed for %s: %s", session_id, exc)
+        result = {"ok": False, "reason": "checkpoint failed"}
+    await queue.put({
+        "type": "workspace_checkpoint",
+        "content": "" if result.get("ok") else (result.get("reason") or "No checkpoint for this turn."),
+        "metadata": result,
+    })
+
+
 async def _run_agent_stream(
     session_id: str,
     query: str,
@@ -1059,6 +1304,7 @@ async def _run_agent_stream(
     # lazily created when context first arrives, which is *after* this task
     # starts), silently disabling Level 2 injection.
     ctx_q = context_queues.setdefault(session_id, asyncio.Queue())
+    await _checkpoint_workspace(session_id, queue)
     await _run_agent_stream_loop(
         session_id,
         session_mgr.stream_message(session_id, query, context_queue=ctx_q, depth=depth),
@@ -1075,6 +1321,7 @@ async def _run_agent_edit(
     depth: str | None = None,
 ) -> None:
     """Edit a user message and replay the agent from that checkpoint."""
+    await _checkpoint_workspace(session_id, queue)
     await _run_agent_stream_loop(
         session_id,
         session_mgr.stream_edit(session_id, message_index, new_content, depth=depth),
@@ -1115,11 +1362,27 @@ async def _run_agent_resume(
 async def websocket_chat(websocket: WebSocket, session_id: str):
     await websocket.accept()
 
-    if session_id not in message_queues:
-        message_queues[session_id] = asyncio.Queue()
-    queue = message_queues[session_id]
+    from backend.session_events import get_hub
+    queue = get_hub(session_id)
+    subscription = queue.subscribe()
+    since_raw = websocket.query_params.get("since")
+    if since_raw not in (None, "", "live"):
+        try:
+            since = int(since_raw)
+        except (TypeError, ValueError):
+            since = 0
+        status, frames = queue.replay(since)
+        if status == "gap":
+            await websocket.send_json({
+                "type": "resync",
+                "content": "Event history is incomplete. Reload messages.",
+                "seq": queue.seq,
+            })
+        else:
+            for frame in frames:
+                await websocket.send_json(frame)
 
-    # Re-emit any pending interrupt on (re)connect.  In-memory queues are
+    # Re-emit any pending interrupt on (re)connect, to this socket only.  In-memory queues are
     # lost on backend restart and individual messages can be lost if WS
     # send fails mid-flight, so the LangGraph checkpoint is the single
     # source of truth for "is the agent waiting on the user?".  If the
@@ -1146,12 +1409,12 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             logger.debug("history check failed for %s", session_id, exc_info=True)
         if not already_persisted:
             await _append_message_async(session_id, pending_msg)
-        await queue.put(pending_msg)
+        await websocket.send_json(pending_msg)
 
     try:
         while True:
             ws_task = asyncio.create_task(websocket.receive_text())
-            queue_task = asyncio.create_task(queue.get())
+            queue_task = asyncio.create_task(subscription.get())
 
             done, pending = await asyncio.wait(
                 {ws_task, queue_task},
@@ -1249,6 +1512,16 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
                         except (asyncio.CancelledError, Exception):
                             pass
 
+                    # The client sends its current mode with each turn. Apply it
+                    # before the turn starts so the guards see the right one.
+                    requested_mode = msg.get("mode")
+                    if isinstance(requested_mode, str) and requested_mode:
+                        try:
+                            await session_mgr.set_mode(session_id, requested_mode)
+                        except (ValueError, FileNotFoundError) as exc:
+                            await websocket.send_json({"type": "error", "content": str(exc)})
+                            continue
+
                     if msg_type == "edit":
                         agent_task = asyncio.create_task(
                             _run_agent_edit(
@@ -1273,12 +1546,14 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: %s (agent continues in background)", session_id)
-        task = running_tasks.get(session_id)
-        if not task or task.done():
-            message_queues.pop(session_id, None)
     except Exception as exc:
         logger.exception("WebSocket error: %s", exc)
         try:
             await websocket.send_json({"type": "error", "content": str(exc)})
         except Exception:
             pass
+    finally:
+        queue.unsubscribe(subscription)
+        task = running_tasks.get(session_id)
+        if (not task or task.done()) and not queue.subscribers:
+            message_queues.pop(session_id, None)

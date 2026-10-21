@@ -131,15 +131,15 @@ function LiveRunCard({ run, now, onChanged }: { run: RunInfo; now: number; onCha
           {awaiting ? (
             <>
               <MessageCircleQuestion size={12} className="text-amber-400 animate-pulse shrink-0" aria-hidden />
-              <span className="text-[11px] font-semibold text-amber-400">Needs feedback</span>
+              <span className="text-2xs font-semibold text-amber-400">Needs feedback</span>
             </>
           ) : (
             <>
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <span className="text-[11px] font-semibold text-emerald-400">Running</span>
+              <span className="text-2xs font-semibold text-emerald-400">Running</span>
             </>
           )}
-          <span className="ml-auto flex items-center gap-1 text-[10px] text-th-text-muted shrink-0">
+          <span className="ml-auto flex items-center gap-1 text-2xs text-th-text-muted shrink-0">
             <SrcIcon size={10} className={srcCls} aria-hidden />
             {getSourceLabel(run.trigger_source)}
           </span>
@@ -147,10 +147,10 @@ function LiveRunCard({ run, now, onChanged }: { run: RunInfo; now: number; onCha
         <p className="text-sm font-semibold text-th-text-primary truncate group-hover:text-blue-400 transition-colors">
           {run.title || "Untitled"}
         </p>
-        <p className="text-[11px] text-th-text-tertiary mt-0.5 truncate">
+        <p className="text-2xs text-th-text-tertiary mt-0.5 truncate">
           {run.agent_name || "General Purpose"}
         </p>
-        <div className="mt-2 flex items-center gap-2 text-[10px] text-th-text-muted">
+        <div className="mt-2 flex items-center gap-2 text-2xs text-th-text-muted">
           {awaiting ? (
             <>
               <span className="tabular-nums">{run.message_count} msgs</span>
@@ -185,7 +185,7 @@ function LiveRunCard({ run, now, onChanged }: { run: RunInfo; now: number; onCha
       <div className="px-3 py-2 border-t border-th-border/40 bg-th-inset-bg/30 flex items-center justify-between gap-2">
         <button
           onClick={(e) => { e.stopPropagation(); navigate(`/chat/${sid}`); }}
-          className={`text-[10px] flex items-center gap-1 ${
+          className={`text-2xs flex items-center gap-1 ${
             awaiting ? "text-amber-400 hover:text-amber-300 font-semibold" : "text-blue-400 hover:text-blue-300"
           }`}
         >
@@ -196,7 +196,7 @@ function LiveRunCard({ run, now, onChanged }: { run: RunInfo; now: number; onCha
           <button
             onClick={handleStop}
             disabled={stopping}
-            className="text-[10px] flex items-center gap-1 text-th-text-muted hover:text-orange-400 transition-colors disabled:opacity-50"
+            className="text-2xs flex items-center gap-1 text-th-text-muted hover:text-orange-400 transition-colors disabled:opacity-50"
             title="Stop this run"
             aria-label="Stop this run"
           >
@@ -343,7 +343,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3">
             <h1 className="text-[19px] font-semibold tracking-tight text-th-text-primary">Overview</h1>
             {runningNow > 0 && (
-              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-semibold text-emerald-400">
+              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-2xs font-semibold text-emerald-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 {runningNow} running
               </span>
@@ -351,7 +351,7 @@ export default function DashboardPage() {
             {awaitingRuns.length > 0 && (
               <button
                 onClick={() => navigate("/runs?status=awaiting_input")}
-                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[11px] font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors"
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-2xs font-semibold text-amber-400 hover:bg-amber-500/20 transition-colors"
               >
                 <MessageCircleQuestion size={11} className="animate-pulse" aria-hidden />
                 {awaitingRuns.length} need{awaitingRuns.length === 1 ? "s" : ""} feedback
@@ -474,7 +474,7 @@ export default function DashboardPage() {
             icon={TrendingUp}
             iconClassName="text-blue-400"
             legend={
-              <div className="flex items-center gap-3 text-[10px] text-th-text-muted">
+              <div className="flex items-center gap-3 text-2xs text-th-text-muted">
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400/70" />Completed</span>
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400/70" />Error</span>
               </div>
@@ -492,7 +492,7 @@ export default function DashboardPage() {
             icon={Gauge}
             iconClassName="text-violet-400"
             legend={
-              <div className="flex items-center gap-3 text-[10px] text-th-text-muted">
+              <div className="flex items-center gap-3 text-2xs text-th-text-muted">
                 {evalScorePct != null && (
                   <span className="flex items-center gap-1.5">
                     <span className={`text-sm font-bold ${evalColor}`}>{evalScorePct}%</span>
@@ -594,7 +594,7 @@ export default function DashboardPage() {
                         style={{ width: `${Math.round((m.cost_usd / totalCost) * 100)}%` }}
                       />
                     </div>
-                    <span className="text-[11px] text-th-text-muted w-16 text-right shrink-0 tabular-nums">{formatCost(m.cost_usd)}</span>
+                    <span className="text-2xs text-th-text-muted w-16 text-right shrink-0 tabular-nums">{formatCost(m.cost_usd)}</span>
                   </div>
                 ))}
               </div>

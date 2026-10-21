@@ -13,6 +13,18 @@ export function getApiToken() {
   return apiToken;
 }
 
+/** Attach the launch token for requests the browser makes itself.
+
+img, video, and iframe loads skip the fetch patch, so a file preview
+401s unless the token rides on the URL. The backend already accepts
+?token= for WebSockets.
+*/
+export function withApiToken(url: string): string {
+  if (!apiToken || !url || /[?&]token=/.test(url)) return url;
+  const join = url.includes("?") ? "&" : "?";
+  return `${url}${join}token=${encodeURIComponent(apiToken)}`;
+}
+
 /** WebSocket URL with the launch token, if the backend is requiring one. */
 export function wsUrl(path: string): string {
   const base = `${WS_BASE}${path}`;

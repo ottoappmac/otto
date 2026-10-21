@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import Layout from "./components/Layout";
 import ChatPage from "./pages/ChatPage";
+import CodePage from "./pages/CodePage";
 import SettingsPage from "./pages/SettingsPage";
 import AgentsPage from "./pages/AgentsPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -251,6 +252,8 @@ export default function App() {
           <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/chat" element={<ChatPage />} />
           <Route path="/chat/:sessionId" element={<ChatPage />} />
+          <Route path="/code" element={<CodePage />} />
+          <Route path="/code/:sessionId" element={<CodePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/tools" element={<Navigate to="/agents" replace />} />
           <Route path="/agents" element={<AgentsPage />} />

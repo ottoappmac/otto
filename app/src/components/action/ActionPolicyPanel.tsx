@@ -150,7 +150,7 @@ export function ActionPolicyPanel({
           <div key={row.id} className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <div className="text-sm text-th-text-primary">{row.title.replace(/\?$/, "")}</div>
-              {row.blurb && <div className="text-[11px] text-th-text-muted">{row.blurb}</div>}
+              {row.blurb && <div className="text-2xs text-th-text-muted">{row.blurb}</div>}
             </div>
             <select
               className="text-xs bg-th-input-bg border border-th-input-border rounded-md px-2 py-1 text-th-text-primary"
@@ -205,7 +205,7 @@ export function ActionPolicyPanel({
 
       <div className="space-y-2 border-t border-th-border pt-4">
         <div className="text-sm font-medium text-th-text-primary">Session limits</div>
-        <p className="text-[11px] text-th-text-muted">How many of these one chat may do. 0 means no cap.</p>
+        <p className="text-2xs text-th-text-muted">How many of these one chat may do. 0 means no cap.</p>
         {(["email_send", "message_send", "destructive"] as const).map((key) => (
           <label key={key} className="flex items-center justify-between text-sm text-th-text-secondary">
             <span>{key.replace(/_/g, " ")}</span>
@@ -224,7 +224,7 @@ export function ActionPolicyPanel({
 
       <div className="space-y-2 border-t border-th-border pt-4">
         <div className="text-sm font-medium text-th-text-primary">Stricter rules for one agent</div>
-        <p className="text-[11px] text-th-text-muted">
+        <p className="text-2xs text-th-text-muted">
           An agent can only be tighter than the policy above. A looser override is ignored.
         </p>
         <div className="flex flex-wrap gap-2 items-center">
@@ -297,7 +297,7 @@ export function ActionPolicyPanel({
           <ul className="mt-2 space-y-1 max-h-48 overflow-y-auto">
             {audit.length === 0 && <li className="text-xs text-th-text-muted">No decisions recorded yet.</li>}
             {audit.map((entry, index) => (
-              <li key={index} className="text-[11px] text-th-text-tertiary font-mono">
+              <li key={index} className="text-2xs text-th-text-tertiary font-mono">
                 {(entry.ts ?? "").slice(0, 19)} {entry.effect} {entry.category} {entry.tool}
                 {entry.reason ? ` — ${entry.reason}` : ""}
               </li>

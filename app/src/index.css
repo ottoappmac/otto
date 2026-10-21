@@ -128,6 +128,12 @@ html.stealth-capture:not(.stealth-capture-expanded) [data-capture-region="feed"]
     --color-inset-bg: 245 245 247;
     --color-tab-active-bg: 29 29 31;
     --color-tab-active-fg: 255 255 255;
+    --color-accent: 0 113 227;
+    --color-success: 5 150 105;
+    --color-danger: 220 38 38;
+    --color-warning: 180 83 9;
+    --color-diff-add: 16 185 129;
+    --color-diff-del: 239 68 68;
   }
 
   /* Monochrome dark mode (black + dark grey) */
@@ -157,6 +163,12 @@ html.stealth-capture:not(.stealth-capture-expanded) [data-capture-region="feed"]
     --color-inset-bg: 20 20 20;
     --color-tab-active-bg: 60 60 60;
     --color-tab-active-fg: 255 255 255;
+    --color-accent: 10 132 255;
+    --color-success: 52 211 153;
+    --color-danger: 248 113 113;
+    --color-warning: 251 191 36;
+    --color-diff-add: 52 211 153;
+    --color-diff-del: 248 113 113;
   }
 
   html {
@@ -169,6 +181,25 @@ html.stealth-capture:not(.stealth-capture-expanded) [data-capture-region="feed"]
     background-color: rgb(var(--color-bg));
     color: rgb(var(--color-text-primary));
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* One keyboard focus ring for every control. Mouse clicks never show it. */
+  :where(button, a, input, select, textarea, summary, [role="tab"], [role="radio"], [role="separator"], [tabindex]):focus-visible {
+    outline: 2px solid rgb(var(--color-accent) / 0.65);
+    outline-offset: 1px;
+    border-radius: 6px;
+  }
+
+  /* Honour the OS "reduce motion" setting everywhere. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   ::selection {

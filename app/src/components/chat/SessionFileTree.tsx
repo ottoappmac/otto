@@ -105,10 +105,10 @@ export default function SessionFileTree({
             <span className="text-xs text-th-text-secondary truncate flex-1 font-mono">
               {node.name}
             </span>
-            <span className="text-[10px] text-th-text-muted shrink-0">
+            <span className="text-2xs text-th-text-muted shrink-0">
               {node.count} {node.count === 1 ? "file" : "files"}
             </span>
-            <span className="text-[10px] text-th-text-muted shrink-0">
+            <span className="text-2xs text-th-text-muted shrink-0">
               {formatFileSize(node.size)}
             </span>
             <button
@@ -145,11 +145,11 @@ export default function SessionFileTree({
         <span className="text-xs text-th-text-secondary truncate flex-1 font-mono">
           {node.name}
         </span>
-        <span className="text-[10px] text-th-text-muted shrink-0">
+        <span className="text-2xs text-th-text-muted shrink-0">
           {formatFileSize(file.size)}
         </span>
         {type && (
-          <span className="text-[10px] text-th-text-muted group-hover:text-blue-400 transition-colors shrink-0 font-medium">
+          <span className="text-2xs text-th-text-muted group-hover:text-blue-400 transition-colors shrink-0 font-medium">
             Open ↗
           </span>
         )}
@@ -164,7 +164,7 @@ export default function SessionFileTree({
           <FolderOpen size={12} />
         </button>
         {downloadedFile === file.path ? (
-          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium shrink-0">
+          <span className="inline-flex items-center gap-1 text-2xs text-emerald-400 font-medium shrink-0">
             <CheckCircle2 size={12} /> Downloaded
           </span>
         ) : (

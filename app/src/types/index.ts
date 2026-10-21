@@ -18,13 +18,17 @@ export type WSMessageType =
   | "done"
   | "stopped"
   | "context_received"
-  | "run_depth";
+  | "run_depth"
+  | "workspace_checkpoint"
+  | "workspace_changed"
+  | "resync";
 
 export interface WSMessage {
   type: WSMessageType;
   content: string;
   metadata?: Record<string, unknown>;
   timestamp?: string;
+  seq?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +203,69 @@ export interface SessionWorkspace {
   host_path: string;
   virtual_path: string;
   name: string;
+  grant_id?: string;
+  mode?: "read" | "write" | string;
+}
+
+export interface FolderGrant {
+  id: string;
+  realpath: string;
+  label: string;
+  mode: "read" | "write" | string;
+  created_at: string;
+  last_used?: string | null;
+  source: string;
+  network?: boolean;
+  network_hosts?: string[];
+  shell_allow?: string[];
+}
+
+export interface FolderGrantPreview {
+  ok: boolean;
+  realpath: string;
+  label: string;
+  existing_id: string | null;
+  existing_mode: string | null;
+  coverage: string;
+}
+
+export type SessionMode = "agent" | "ask" | "plan" | "debug";
+
+export interface WorkspaceChange {
+  path: string;
+  added: number | null;
+  deleted: number | null;
+  status: string;
+  /** ``otto`` when a file tool or shell command in this turn touched the file. */
+  origin?: "otto" | "outside";
+  /** Lines in this file that still carry the otto-debug marker. */
+  debug_markers?: number;
+}
+
+export interface WorkspaceCheckpoint {
+  id: string;
+  turn: number;
+  ref?: string;
+  commit?: string;
+  kind?: string;
+  /** User-message ordinal this snapshot was taken before. */
+  user_index?: number | null;
+}
+
+export interface WorkspaceChanges {
+  git: boolean;
+  checkpoint: WorkspaceCheckpoint | null;
+  checkpoints?: WorkspaceCheckpoint[];
+  files: WorkspaceChange[];
+  message?: string;
+  /** Total leftover otto-debug lines across the changed files. */
+  debug_markers?: number;
+}
+
+export interface WorkspaceGitStatus {
+  git: boolean;
+  branch: string | null;
+  dirty: number;
 }
 
 export interface WorkspaceTreeEntry {
@@ -220,6 +287,8 @@ export interface SessionInfo extends ThroughputStats {
   agent_name: string | null;
   title: string;
   workspace?: SessionWorkspace | null;
+  /** agent | plan | debug. Plan is read-only in the project. */
+  mode?: SessionMode;
   message_count: number;
   tools_used: string[];
   schedule_id: string | null;
