@@ -49,3 +49,17 @@ def test_live_subscribe_does_not_require_replay():
         return frame["content"]
 
     assert asyncio.run(_run()) == "after"
+
+
+def test_a_full_subscriber_gets_resync_instead_of_a_hole():
+    hub = SessionEventHub()
+
+    async def _run():
+        sub = hub.subscribe(maxsize=1)
+        await hub.put({"type": "agent", "content": "one"})
+        await hub.put({"type": "agent", "content": "two"})
+        return await sub.get()
+
+    frame = asyncio.run(_run())
+    assert frame["type"] == "resync"
+    assert "dropped" in frame["content"]

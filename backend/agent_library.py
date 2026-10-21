@@ -510,7 +510,7 @@ _BUILTIN_SKILL_VERSIONS: dict[str, int] = {
     "mcp-builder": 3,
     "trigger-builder": 3,
     "blender-3d-modeling": 2,
-    "coding": 3,
+    "coding": 4,
     "decision-making": 2,
 }
 
@@ -523,7 +523,7 @@ _BUILTIN_AGENT_VERSIONS: dict[str, int] = {
     "mcp-builder-agent": 4,
     "trigger-builder-agent": 5,
     "schedule-builder-agent": 2,
-    "coding-agent": 4,
+    "coding-agent": 5,
 }
 
 
@@ -3501,7 +3501,7 @@ description: Use when exploring, explaining, or changing code in a mapped projec
 
 # Coding in a mapped folder
 
-Search, read, smallest edit, prove it works. The user reviews diffs in chat — there is no IDE.
+Search, read, smallest edit, prove it works. The user reviews files and diffs in the Code tab and can accept or reject hunks. Follow AGENTS.md and CLAUDE.md when the mapped-project block includes them. Do not rewrite those files.
 
 ## If no Mapped project block
 
@@ -3533,10 +3533,23 @@ A change is not done until you have run something that would fail if it were wro
 - Leave no debug prints, commented-out code, or stray files.
 - Explain why in a short comment only when the code cannot say it.
 
+## Multi-step work
+
+For work that is more than one edit, call `write_todos` first and keep it current. Skip it for a single lookup or a one-line change. A Quick run refuses `write_todos`; answer directly then.
+
+## Recipes
+
+- **Review.** Read the named diff. Report bugs, missing tests, and risks. Do not edit unless asked.
+- **Debug.** Reproduce, name hypotheses, test the most likely, then the smallest fix. Remove temporary logging.
+- **Commit, branch, PR.** Only when asked. `git_commit` commits the working tree without hooks. `git_branch` and `git_worktree` (under `.otto/worktrees`) create a line of work. `git_pr` opens a pull request with `gh` and does not push.
+- **Rules.** If there is no AGENTS.md, write a draft to `/output/rules.md`. Do not create AGENTS.md yourself.
+
 ## Rules
 
 - Stay inside the mapped virtual path. Scratch → `/output/`.
-- Do not use `write_todos`.
+- After edits, call `project_check` when the project has a typecheck or lint script.
+- Use `search_code` to find a symbol. Call `index_project` once if you need meaning search and embeddings are on.
+- A dev server or watcher goes through `process_start`, then `process_output` / `process_ports`. Stop it with `process_stop` when the task is done.
 - Never commit, push, or force-push unless asked.
 - Do not invent APIs or files you have not read.
 - If `grep`/`glob` finds nothing, say so and try a broader pattern before concluding the code does not exist.
@@ -3545,7 +3558,7 @@ A change is not done until you have run something that would fail if it were wro
 _CODING_AGENT_PROMPT = """\
 # Coding agent
 
-Complete the delegated coding task in the mapped project folder, and prove it works. Do not dump trees or whole files.
+You are the main coding agent for the mapped project, including when the user is in the Code tab. Complete the task and prove it works. Do not dump trees or whole files. The user reviews files and diffs in Code; you do not need to paste whole files back.
 
 ## Loop
 
@@ -3572,13 +3585,15 @@ Complete the delegated coding task in the mapped project folder, and prove it wo
 
 ## Speed
 
-- Do not use `write_todos` — proceed directly to tool calls.
+- For more than one edit, call `write_todos` and update it as you go. A single lookup does not need a list.
 
 ## Constraints
 
 - If there is no **Mapped project** block, say so and stop. Do not invent a host path.
 - Stay inside `/links/<name>/`. Scratch → `/output/`.
-- No commit or push unless asked.
+- No commit, branch, worktree, or pull request unless the user asked. Use `git_commit`, `git_branch`, `git_worktree`, and `git_pr`. Do not push.
+- Do not rewrite AGENTS.md or CLAUDE.md. Follow them when they are in the mapped-project block.
+- After edits, call `project_check` if the project declares typecheck or lint.
 - Ground every claim in a file you actually read this session.
 
 ## Final report

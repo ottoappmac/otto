@@ -261,7 +261,11 @@ function FilesTab({
           const isOpen = previewPath === f.path;
           const imgStamp = isOpen && watchedStamp ? watchedStamp : `${f.modified_at}:${f.size}`;
           const imgUrl = isImage(f.path)
-            ? `${api.getSessionFileUrl(sessionId, f.path)}?v=${encodeURIComponent(imgStamp)}`
+            ? (() => {
+                const base = api.getSessionFileUrl(sessionId, f.path);
+                const sep = base.includes("?") ? "&" : "?";
+                return `${base}${sep}v=${encodeURIComponent(imgStamp)}`;
+              })()
             : null;
           const downloadUrl = api.getSessionFileUrl(sessionId, f.path);
 

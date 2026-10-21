@@ -74,6 +74,123 @@ class _LoopRecoveryChatOpenAI:
         return payload
 
 
+def _message_list(value: Any) -> list[Any]:
+    """Messages from a chat input, or an empty list when it has none."""
+    if isinstance(value, list):
+        return value
+    to_messages = getattr(value, "to_messages", None)
+    if callable(to_messages):
+        try:
+            return list(to_messages())
+        except Exception:
+            return []
+    messages = getattr(value, "messages", None)
+    if isinstance(messages, list):
+        return messages
+    return []
+
+
+def reasoning_text(message: Any) -> str:
+    """Reasoning carried on a LangChain message, if the provider split it out."""
+    kwargs = getattr(message, "additional_kwargs", None) or {}
+    raw = kwargs.get("reasoning_content") if isinstance(kwargs, dict) else None
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    content = getattr(message, "content", None)
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "reasoning":
+                text = block.get("reasoning") or block.get("text") or ""
+                if text:
+                    parts.append(str(text))
+        return "\n".join(parts)
+    return ""
+
+
+def stamp_omlx_replay(payload: dict, messages: Any) -> None:
+    """Keep Qwen thinking blocks stable across turns.
+
+    oMLX splits ``<think>`` into ``reasoning_content`` and the chat template
+    drops it on assistant turns before the latest user message unless
+    ``preserve_thinking`` is set. Sending both lets the next request share a
+    prefix with the one that generated the turn.
+    """
+    extra = payload.get("extra_body")
+    if not isinstance(extra, dict):
+        extra = {}
+        payload["extra_body"] = extra
+    kwargs = extra.get("chat_template_kwargs")
+    if not isinstance(kwargs, dict):
+        kwargs = {}
+        extra["chat_template_kwargs"] = kwargs
+    kwargs["preserve_thinking"] = True
+
+    sources = [
+        message
+        for message in _message_list(messages)
+        if getattr(message, "type", None) == "ai"
+        or getattr(message, "role", None) == "assistant"
+    ]
+    targets = [
+        message
+        for message in (payload.get("messages") or [])
+        if isinstance(message, dict) and message.get("role") == "assistant"
+    ]
+    for source, target in zip(sources, targets):
+        text = reasoning_text(source)
+        if text and not target.get("reasoning_content"):
+            target["reasoning_content"] = text
+
+
+def _choice_field(response: Any, field: str) -> Any:
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+    else:
+        choices = getattr(response, "choices", None) or []
+    if not choices:
+        return None
+    choice = choices[0]
+    if isinstance(choice, dict):
+        return choice.get(field)
+    return getattr(choice, field, None)
+
+
+def _api_reasoning(message: Any) -> str:
+    if message is None:
+        return ""
+    if isinstance(message, dict):
+        value = message.get("reasoning_content")
+        return value if isinstance(value, str) else ""
+    value = getattr(message, "reasoning_content", None)
+    if isinstance(value, str) and value:
+        return value
+    extra = getattr(message, "model_extra", None) or {}
+    if isinstance(extra, dict):
+        value = extra.get("reasoning_content")
+        if isinstance(value, str) and value:
+            return value
+    if hasattr(message, "model_dump"):
+        try:
+            dumped = message.model_dump()
+        except Exception:
+            dumped = None
+        if isinstance(dumped, dict):
+            value = dumped.get("reasoning_content")
+            if isinstance(value, str):
+                return value
+    return ""
+
+
+def _attach_reasoning(message: Any, text: str) -> None:
+    if not text or message is None or not hasattr(message, "additional_kwargs"):
+        return
+    current = message.additional_kwargs.get("reasoning_content")
+    if isinstance(current, str) and current:
+        return
+    message.additional_kwargs["reasoning_content"] = text
+
+
 # ── oMLX per-request throughput stats ────────────────────────────────────────
 #
 # oMLX's OpenAI-compatible ``usage`` object carries server-specific extension
@@ -648,6 +765,16 @@ def create_llm(provider: str) -> BaseChatModel:
             uses, so the session stats pipeline treats both identically.
             """
 
+            def _get_request_payload(  # type: ignore[override]
+                self, input_: Any, *, stop: list[str] | None = None, **kwargs: Any,
+            ) -> dict:
+                payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+                try:
+                    stamp_omlx_replay(payload, input_)
+                except Exception:  # noqa: BLE001
+                    logger.debug("oMLX reasoning replay stamp failed", exc_info=True)
+                return payload
+
             def _create_chat_result(self, response, generation_info=None):  # type: ignore[override]
                 result = super()._create_chat_result(response, generation_info)
                 try:
@@ -658,11 +785,14 @@ def create_llm(provider: str) -> BaseChatModel:
                         list(usage_raw.keys()) if usage_raw else [],
                         stats or "(none — no oMLX extras in response)",
                     )
-                    if stats:
-                        for gen in result.generations:
-                            msg = getattr(gen, "message", None)
-                            if msg is not None and hasattr(msg, "response_metadata"):
-                                msg.response_metadata.update(stats)
+                    reasoning = _api_reasoning(_choice_field(response, "message"))
+                    for gen in result.generations:
+                        msg = getattr(gen, "message", None)
+                        if msg is None:
+                            continue
+                        if stats and hasattr(msg, "response_metadata"):
+                            msg.response_metadata.update(stats)
+                        _attach_reasoning(msg, reasoning)
                 except Exception:  # noqa: BLE001
                     logger.warning(
                         "oMLX stats extraction failed", exc_info=True
@@ -694,6 +824,11 @@ def create_llm(provider: str) -> BaseChatModel:
                         stats = _map_omlx_usage(usage_raw) if usage_raw else {}
                         if stats:
                             generation_chunk.message.response_metadata.update(stats)
+                        # Deltas concatenate when LangChain merges chunks.
+                        _attach_reasoning(
+                            generation_chunk.message,
+                            _api_reasoning(_choice_field(chunk, "delta")),
+                        )
                     except Exception:  # noqa: BLE001
                         logger.warning(
                             "oMLX streaming stats extraction failed", exc_info=True
@@ -727,7 +862,12 @@ def create_llm(provider: str) -> BaseChatModel:
         # it explicitly (true *or* false) overrides the model's template
         # default so the Settings toggle is always authoritative.
         thinking = Environment.get_omlx_thinking()
-        extra_body = {"chat_template_kwargs": {"enable_thinking": thinking}}
+        extra_body = {
+            "chat_template_kwargs": {
+                "enable_thinking": thinking,
+                "preserve_thinking": True,
+            }
+        }
         # Cap generation length.  Without max_tokens the server falls back
         # to sampling.max_tokens (32768 by default), letting a model that
         # fails to emit a stop token run away to the full cap (a single

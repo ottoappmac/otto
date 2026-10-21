@@ -123,6 +123,35 @@ def validate_grantable(path: str | Path) -> Path:
     return resolved
 
 
+def protected_workspace_reason(rel: str) -> str | None:
+    """Why a project-relative path must not be written, or None when it is an ordinary file.
+
+    ``.git`` is where hooks and config live. ``.gitattributes`` selects clean
+    filters. ``.vscode``, ``.idea``, and ``.envrc`` can start a program when
+    the project is opened. ``AGENTS.md`` and ``CLAUDE.md`` are the project's
+    instructions; Otto loads them and does not let the agent rewrite them.
+    The shell sandbox denies the same paths.
+    """
+    text = rel.replace("\\", "/").strip("/")
+    if not text or ".." in Path(text).parts:
+        return None
+    parts = Path(text).parts
+    blocked_dirs = {".git": "Writes under .git are blocked.",
+                    ".vscode": "Writes under .vscode are blocked.",
+                    ".idea": "Writes under .idea are blocked."}
+    for part in parts:
+        reason = blocked_dirs.get(part.casefold())
+        if reason:
+            return reason
+    blocked_files = {
+        ".gitattributes": "Writes to .gitattributes are blocked.",
+        ".envrc": "Writes to .envrc are blocked.",
+        "agents.md": "Writes to AGENTS.md are blocked.",
+        "claude.md": "Writes to CLAUDE.md are blocked.",
+    }
+    return blocked_files.get(parts[-1].casefold())
+
+
 def path_inside(child: Path, root: Path) -> bool:
     try:
         child.resolve().relative_to(root.resolve())

@@ -29,6 +29,8 @@ import { useNotification } from "../context/NotificationContext";
 import { pickDirectory } from "../utils/pickFolder";
 import { FolderGrantDialog } from "../components/action/FolderGrantDialog";
 import { PatchView } from "../components/code/PatchView";
+import { FileEditor } from "../components/code/FileEditor";
+import { splitDroppedPaths } from "../utils/droppedPaths";
 import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
 import type {
   ChatMessage,
@@ -406,8 +408,8 @@ export default function CodePage() {
   const refreshChanges = useCallback(() => {
     if (!sessionId || !session?.workspace?.grant_id) return;
     const turn = changeTurn ?? undefined;
-    api.getWorkspaceChanges(sessionId, turn).then(setChanges).catch(() => setChanges(null));
-    api.getWorkspaceGit(sessionId).then(setGit).catch(() => setGit(null));
+    api.getWorkspaceChanges(sessionId, turn).then(setChanges).catch((e) => { setChanges(null); setError(apiMessage(e)); });
+    api.getWorkspaceGit(sessionId).then(setGit).catch((e) => { setGit(null); setError(apiMessage(e)); });
   }, [sessionId, session?.workspace?.grant_id, changeTurn]);
 
   // A finished tool call is folded into its row, so count them: an edit that
@@ -433,7 +435,7 @@ export default function CodePage() {
     api.getWorkspaceDiff(sessionId, diffPath, changeTurn ?? undefined).then((row) => {
       setDiff(row.diff || row.message || "");
       setDiffTruncated(Boolean(row.truncated));
-    }).catch(() => { setDiff(""); setDiffTruncated(false); });
+    }).catch((e) => { setDiff(""); setDiffTruncated(false); setError(apiMessage(e)); });
   }, [sessionId, diffPath, changeSig, changeTurn]);
 
   const onMessage = useCallback((msg: WSMessage) => {
@@ -566,11 +568,9 @@ export default function CodePage() {
     composerRef.current?.focus();
   }, [sessionId]);
 
-  useEffect(() => {
-    if (!sessionId || (!streaming && !awaitingPoll)) return;
-    const timer = setInterval(() => { void syncWithServer(); }, 2000);
-    return () => clearInterval(timer);
-  }, [sessionId, streaming, awaitingPoll, syncWithServer]);
+  // Frames carry a seq. A dropped frame arrives as `resync`, which reloads
+  // the transcript. The socket replay covers a reconnect. There is no
+  // full-transcript poll while a run is in progress.
 
   // After the socket comes back, frames sent while it was down are gone.
   const wasConnected = useRef(false);
@@ -619,14 +619,18 @@ export default function CodePage() {
   }, [messages, changes]);
   const reviewStats = useMemo(() => {
     const files = changes?.files || [];
+    const otto = files.filter((file) => file.origin !== "outside");
     return {
-      count: files.length,
-      added: files.reduce((sum, file) => sum + (file.added || 0), 0),
-      deleted: files.reduce((sum, file) => sum + (file.deleted || 0), 0),
+      count: otto.length,
+      outside: files.length - otto.length,
+      added: otto.reduce((sum, file) => sum + (file.added || 0), 0),
+      deleted: otto.reduce((sum, file) => sum + (file.deleted || 0), 0),
     };
   }, [changes]);
   const reviewKey = changes?.checkpoint?.turn != null ? String(changes.checkpoint.turn) : null;
-  const showReview = Boolean(sessionId && !streaming && reviewKey && keptKey !== reviewKey && reviewStats.count > 0);
+  const showReview = Boolean(
+    sessionId && !streaming && reviewKey && keptKey !== reviewKey && (reviewStats.count > 0 || reviewStats.outside > 0),
+  );
   const errorMessages = useMemo(() => messages.filter((m) => m.type === "error"), [messages]);
   const resolveSubagentModel = useCallback(
     () => ({ label: currentModel || "model", family: "inherit" }),
@@ -944,29 +948,23 @@ export default function CodePage() {
       blobs.push(file);
     }
     if (nativePaths.length) {
-      const folders: string[] = [];
-      const filePaths: string[] = [];
-      for (const path of nativePaths) {
-        const base = path.replace(/\\/g, "/").split("/").pop() ?? path;
-        if (base.includes(".")) filePaths.push(path);
-        else folders.push(path);
-      }
-      if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
-      if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+      addDroppedPaths(nativePaths);
     }
     if (blobs.length) setPendingFiles((prev) => [...prev, ...blobs]);
   }, []);
 
   const addDroppedPaths = useCallback((paths: string[]) => {
-    const folders: string[] = [];
-    const filePaths: string[] = [];
-    for (const path of paths) {
-      const base = path.replace(/\\/g, "/").split("/").pop() ?? path;
-      if (base.includes(".")) filePaths.push(path);
-      else folders.push(path);
-    }
-    if (filePaths.length) setPendingFilePaths((prev) => [...prev, ...filePaths]);
-    if (folders.length) setPendingFolders((prev) => [...prev, ...folders]);
+    void (async () => {
+      let kinds = null;
+      try {
+        kinds = (await api.pathKinds(paths)).paths;
+      } catch (e) {
+        setError(apiMessage(e));
+      }
+      const split = splitDroppedPaths(paths, kinds);
+      if (split.files.length) setPendingFilePaths((prev) => [...prev, ...split.files]);
+      if (split.folders.length) setPendingFolders((prev) => [...prev, ...split.folders]);
+    })();
   }, []);
 
   const tryNativeClipboardPaste = useCallback(async (fallbackFiles: File[] = []) => {
@@ -1079,8 +1077,26 @@ export default function CodePage() {
       });
   }, [sessionId, waitForConnection]);
 
+  const [planConfirm, setPlanConfirm] = useState(false);
+  const [planText, setPlanText] = useState("");
+
   const buildPlan = async () => {
     if (!sessionId) return;
+    setPlanText(planFromChat);
+    if (hasPlan) {
+      try {
+        const response = await fetch(api.getSessionFileUrl(sessionId, PLAN_PATH), { cache: "no-store" });
+        if (response.ok) setPlanText(await response.text());
+      } catch (e) {
+        setError(apiMessage(e));
+      }
+    }
+    setPlanConfirm(true);
+  };
+
+  const confirmBuild = async () => {
+    if (!sessionId) return;
+    setPlanConfirm(false);
     const request = hasPlan ? "Implement the plan in /output/plan.md." : "Implement the plan you just proposed.";
     await changeMode("agent");
     setInspector("changes");
@@ -1329,6 +1345,20 @@ export default function CodePage() {
           {git?.git && <span className="text-th-text-muted shrink-0">{git.branch}{git.dirty ? ` · ${git.dirty} dirty` : ""}</span>}
           {modeBadge(mode) && <span className={`shrink-0 ${modeBadge(mode)?.className}`}>{modeBadge(mode)?.label}</span>}
           {session?.workspace?.mode === "read" && <span className="text-sky-300 shrink-0">Read only</span>}
+          {selected && (
+            <button
+              type="button"
+              title={selected.network_hosts?.length ? `Hosts: ${selected.network_hosts.join(", ")}` : "Allow shell network for this project while the global switch is off"}
+              onClick={() => {
+                void api.updateFolderGrant(selected.id, { network: !selected.network }).then((grant) => {
+                  setGrants((prev) => prev.map((item) => item.id === grant.id ? grant : item));
+                }).catch((e) => setError(apiMessage(e)));
+              }}
+              className="text-th-text-muted hover:text-th-text-primary shrink-0"
+            >
+              {selected.network ? "Network on" : "Network off"}
+            </button>
+          )}
           {session?.workspace?.mode === "write" && mode === "agent" && <span className="text-th-text-muted shrink-0" title="Edits are checkpointed and can be reverted">Editable</span>}
           <span className="ml-auto flex items-center gap-2 shrink-0">
             <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => setProjectsOpen((open) => !open)} title="Show or hide projects">
@@ -1428,12 +1458,24 @@ export default function CodePage() {
         {showReview && sessionId && (
           <div className="px-4 py-2 border-t border-th-border flex items-center gap-3 text-xs bg-th-bg-secondary">
             <span className="text-th-text-secondary flex-1 min-w-0 truncate">
-              {reviewStats.count} file{reviewStats.count === 1 ? "" : "s"} changed
-              <span className="text-emerald-400"> +{reviewStats.added}</span>
-              <span className="text-red-300"> -{reviewStats.deleted}</span>
+              {reviewStats.count > 0 && (
+                <>
+                  {reviewStats.count} file{reviewStats.count === 1 ? "" : "s"} changed
+                  <span className="text-emerald-400"> +{reviewStats.added}</span>
+                  <span className="text-red-300"> -{reviewStats.deleted}</span>
+                </>
+              )}
+              {reviewStats.outside > 0 && (
+                <span className="text-th-text-muted">
+                  {reviewStats.count > 0 ? " · " : ""}
+                  {reviewStats.outside} changed outside Otto
+                </span>
+              )}
             </span>
             <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => { setInspector("changes"); setInspectorOpen(true); }}>Review</button>
-            <button type="button" className="text-th-text-tertiary hover:text-red-300" onClick={() => { setInspector("changes"); setInspectorOpen(true); setConfirmRevert(true); }}>Undo all</button>
+            {reviewStats.count > 0 && (
+              <button type="button" className="text-th-text-tertiary hover:text-red-300" onClick={() => { setInspector("changes"); setInspectorOpen(true); setConfirmRevert(true); }}>Undo all</button>
+            )}
             <button type="button" className="text-th-text-primary" onClick={() => setKeptKey(reviewKey)}>Keep</button>
           </div>
         )}
@@ -1694,10 +1736,10 @@ export default function CodePage() {
                 </label>
               )}
               {changes?.message && <p className="text-th-text-muted">{changes.message}</p>}
-              {sessionId && (changes?.files?.length || 0) > 0 && (
+              {sessionId && (changes?.files || []).some((file) => file.origin !== "outside") && (
                 confirmRevert ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-th-text-secondary">Revert this turn?</span>
+                    <span className="text-th-text-secondary">Revert Otto's changes? Edits made outside Otto stay.</span>
                     <button type="button" className="text-red-400" onClick={() => { void runRevert(undefined, changeTurn ?? undefined); }}>Revert</button>
                     <button type="button" className="text-th-text-muted" onClick={() => setConfirmRevert(false)}>Cancel</button>
                   </div>
@@ -1715,7 +1757,9 @@ export default function CodePage() {
               {(changes?.files || []).length === 0 && !changes?.message && (
                 <p className="text-th-text-muted">No changes since this checkpoint.</p>
               )}
-              {(changes?.files || []).map((file) => (
+              {(changes?.files || []).map((file) => {
+                const outside = file.origin === "outside";
+                return (
                 <div key={file.path} className="flex items-center gap-2">
                   <span className={`shrink-0 uppercase text-[10px] ${file.status === "added" ? "text-emerald-400" : file.status === "deleted" ? "text-red-300" : "text-amber-300"}`}>
                     {file.status === "added" ? "A" : file.status === "deleted" ? "D" : "M"}
@@ -1723,6 +1767,7 @@ export default function CodePage() {
                   <button type="button" className="truncate text-left flex-1 font-mono hover:text-th-text-primary text-th-text-secondary" onClick={() => setDiffPath(diffPath === file.path ? null : file.path)}>
                     {file.path}
                   </button>
+                  {outside && <span className="shrink-0 text-th-text-muted">outside</span>}
                   {file.added != null && <span className="shrink-0 text-emerald-400">+{file.added}</span>}
                   {file.deleted != null && <span className="shrink-0 text-red-300">-{file.deleted}</span>}
                   {file.status !== "deleted" && (
@@ -1730,27 +1775,38 @@ export default function CodePage() {
                       Open
                     </button>
                   )}
-                  <button
-                    type="button"
-                    title={`Revert ${file.path}`}
-                    aria-label={`Revert ${file.path}`}
-                    className="shrink-0 p-1 rounded text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
-                    onClick={() => { void runRevert([file.path], changeTurn ?? undefined); }}
-                  >
-                    <Undo2 size={13} />
-                  </button>
+                  {!outside && (
+                    <button
+                      type="button"
+                      title={`Revert ${file.path}`}
+                      aria-label={`Revert ${file.path}`}
+                      className="shrink-0 p-1 rounded text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
+                      onClick={() => { void runRevert([file.path], changeTurn ?? undefined); }}
+                    >
+                      <Undo2 size={13} />
+                    </button>
+                  )}
                 </div>
-              ))}
+                );
+              })}
               {diff && (
                 <PatchView
                   diff={diff}
                   truncated={diffTruncated}
-                  onUndoHunk={sessionId && diffPath && changes?.git ? (hunk) => { void runRevert([diffPath], changeTurn ?? undefined, hunk); } : undefined}
+                  onAcceptHunk={() => {}}
+                  onUndoHunk={
+                    sessionId && diffPath && changes?.git && !(changes.files || []).some((file) => file.path === diffPath && file.origin === "outside")
+                      ? (hunk) => { void runRevert([diffPath], changeTurn ?? undefined, hunk); }
+                      : undefined
+                  }
                 />
               )}
             </div>
           )}
-          {inspector === "files" && artifact && (
+          {inspector === "files" && artifact && sessionId && (artifact.type === "code" || artifact.type === "txt" || artifact.type === "md" || artifact.type === "json") && (
+            <FileEditor sessionId={sessionId} path={artifact.path} fileUrl={artifact.fileUrl} revision={artifact.revision} />
+          )}
+          {inspector === "files" && artifact && !(artifact.type === "code" || artifact.type === "txt" || artifact.type === "md" || artifact.type === "json") && (
             <ArtifactPanel artifact={artifact} onClose={() => setArtifact(null)} />
           )}
           {inspector === "files" && !artifact && (
@@ -1819,6 +1875,18 @@ export default function CodePage() {
           )}
         </div>
       </aside>}
+      {planConfirm && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-6">
+          <div className="w-full max-w-lg max-h-[70vh] flex flex-col rounded-xl border border-th-border bg-th-bg-secondary shadow-xl">
+            <div className="px-4 py-3 border-b border-th-border text-sm text-th-text-primary">Build this plan?</div>
+            <pre className="flex-1 overflow-auto px-4 py-3 text-[11px] whitespace-pre-wrap text-th-text-secondary">{planText || "The plan is in /output/plan.md."}</pre>
+            <div className="px-4 py-3 border-t border-th-border flex justify-end gap-2">
+              <button type="button" onClick={() => setPlanConfirm(false)} className="px-2 py-1 text-xs text-th-text-muted">Cancel</button>
+              <button type="button" onClick={() => { void confirmBuild(); }} className="px-2 py-1 text-xs rounded border border-th-border text-th-text-primary">Build</button>
+            </div>
+          </div>
+        </div>
+      )}
       {toast && (
         <div className="fixed bottom-4 right-4 z-30 max-w-sm rounded-lg border border-th-border bg-th-bg-secondary px-3 py-2 text-xs text-th-text-primary shadow-lg" role="status">
           {toast}

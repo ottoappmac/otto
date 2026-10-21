@@ -33,6 +33,17 @@ the orchestrator and to every sub-agent. Settings live on
   scrubbed of API keys either way. Shell reads are not limited to the
   allowed folder.
   If the sandbox is on and cannot be applied, the command does not run.
+  Inside a folder you allowed, the sandbox also denies writes to `.git`,
+  `.vscode`, `.idea`, `.gitattributes`, `.envrc`, `AGENTS.md`, and
+  `CLAUDE.md`. The file tools refuse those paths as well, including when
+  the sandbox is off. A hook, a task file, or a clean filter planted
+  there would run later, and the instruction files are loaded into the
+  prompt rather than rewritten by the agent.
+  Read-only commands (`git status`, `ls`, `cat`, and the same kind of
+  command) skip the shell approval card. A folder can also store command
+  prefixes, such as `npm test*`, that skip the card for that project.
+  The global network switch still defaults off. A folder can turn shell
+  network on for itself, and a host list limits that traffic to those hosts.
 - Ask and Plan mode (Code tab) are read-only. The policy denies
   sends, scheduling, desktop control, AppleScript, settings changes, and
   other writes while a session is in Ask or Plan, whatever the category

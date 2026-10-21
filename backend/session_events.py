@@ -45,14 +45,19 @@ class SessionEventHub:
             except asyncio.QueueFull:
                 stale.append(queue)
         for queue in stale:
+            # The subscriber missed a frame. Drop the oldest and tell it to
+            # reload instead of continuing with a hole.
+            notice = dict(frame)
+            notice["type"] = "resync"
+            notice["content"] = "The event stream dropped a frame. Reload this session."
             try:
                 queue.get_nowait()
-                queue.put_nowait(dict(frame))
+                queue.put_nowait(notice)
             except Exception:
                 self.unsubscribe(queue)
 
-    def subscribe(self) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE)
+    def subscribe(self, maxsize: int | None = None) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize or _QUEUE)
         self.subscribers.append(queue)
         return queue
 

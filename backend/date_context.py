@@ -86,12 +86,14 @@ def build_date_block(now: datetime | None = None) -> str:
     """Today's date plus a compact calendar covering the next 14 months.
 
     The block tells the model not to do weekday arithmetic itself.
+    The clock is left out: this text is appended on every model call, and a
+    changing minute rewrites the system prompt so local prefix caches
+    (oMLX) stop matching.
     """
     now = now or datetime.now().astimezone()
-    tz = now.tzname() or "local"
     lines = [
         _DATE_BLOCK_START,
-        f"Today is {now.strftime('%A, %B %d, %Y')} {now.strftime('%H:%M')} {tz}.",
+        f"Today is {now.strftime('%A, %B %d, %Y')}.",
         "Never compute weekdays mentally. Look them up in this calendar or call `check_dates`.",
         "When you name a weekday with a date, the weekday must be the one shown here.",
         "",

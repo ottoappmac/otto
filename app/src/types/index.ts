@@ -215,6 +215,9 @@ export interface FolderGrant {
   created_at: string;
   last_used?: string | null;
   source: string;
+  network?: boolean;
+  network_hosts?: string[];
+  shell_allow?: string[];
 }
 
 export interface FolderGrantPreview {
@@ -233,6 +236,8 @@ export interface WorkspaceChange {
   added: number | null;
   deleted: number | null;
   status: string;
+  /** ``otto`` when a file tool or shell command in this turn touched the file. */
+  origin?: "otto" | "outside";
   /** Lines in this file that still carry the otto-debug marker. */
   debug_markers?: number;
 }

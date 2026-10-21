@@ -201,6 +201,12 @@ class FolderGrant(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_used: Optional[datetime] = None
     source: str = "user"
+    # Opens shell network for this folder while the global switch stays off.
+    network: bool = False
+    # When set, shell network is limited to these hosts (``host`` or ``host:port``).
+    network_hosts: list[str] = Field(default_factory=list)
+    # Command prefixes that skip the shell approval card. ``npm test*`` is a prefix.
+    shell_allow: list[str] = Field(default_factory=list)
 
 
 class SessionWorkspace(BaseModel):

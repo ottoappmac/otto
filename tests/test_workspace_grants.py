@@ -9,7 +9,7 @@ import pytest
 
 from backend.exec_sandbox import ShellResult, render_profile
 from backend.workspace_grants import list_grants, revoke_grant, upsert_grant
-from backend.workspace_policy import GrantRejected, validate_grantable
+from backend.workspace_policy import GrantRejected, protected_workspace_reason, validate_grantable
 
 
 @pytest.fixture
@@ -160,6 +160,57 @@ def test_rejects_home_root_and_sensitive_parent(tmp_path: Path, monkeypatch):
     assert validate_grantable(project) == project.resolve()
 
 
+def test_concurrent_upserts_keep_every_grant(tmp_path: Path, grant_store):
+    import threading
+
+    folders = []
+    for index in range(8):
+        folder = tmp_path / f"p{index}"
+        folder.mkdir()
+        folders.append(folder)
+    errors: list[BaseException] = []
+
+    def worker(folder: Path) -> None:
+        try:
+            upsert_grant(folder, mode="write")
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(folder,)) for folder in folders]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert len(list_grants()) == len(folders)
+
+
+def test_bound_session_scan_leaves_the_event_loop(tmp_path: Path, monkeypatch):
+    import asyncio
+    import threading
+
+    from backend.routes import workspaces as routes
+
+    root = tmp_path / "sessions"
+    root.mkdir()
+    monkeypatch.setattr("backend.session_manager._sessions_dir", lambda: root)
+    seen: dict[str, int] = {}
+    real = routes._bound
+
+    def wrapped(grant_id: str):
+        seen["thread"] = threading.get_ident()
+        return real(grant_id)
+
+    monkeypatch.setattr(routes, "_bound", wrapped)
+
+    async def run() -> None:
+        seen["loop"] = threading.get_ident()
+        await routes._refresh_bound_sessions("missing", "read")
+
+    asyncio.run(run())
+    assert seen["thread"] != seen["loop"]
+
+
 def test_grant_round_trip(tmp_path: Path, grant_store, monkeypatch):
     project = tmp_path / "proj"
     project.mkdir()
@@ -174,3 +225,79 @@ def test_grant_round_trip(tmp_path: Path, grant_store, monkeypatch):
     assert revoke_grant(grant.id) is not None
     assert list_grants() == []
     assert grant_store.is_file()
+
+
+def test_protected_workspace_paths():
+    assert protected_workspace_reason(".git/config")
+    assert protected_workspace_reason(".GIT/hooks/pre-commit")
+    assert protected_workspace_reason("src/.gitattributes")
+    assert protected_workspace_reason("Pkg/.GitAttributes") is not None
+    assert protected_workspace_reason(".vscode/tasks.json")
+    assert protected_workspace_reason(".idea/workspace.xml")
+    assert protected_workspace_reason(".envrc")
+    assert protected_workspace_reason("AGENTS.md")
+    assert protected_workspace_reason("CLAUDE.md")
+    assert protected_workspace_reason("src/main.py") is None
+    assert protected_workspace_reason("not.git/main.py") is None
+
+
+def test_profile_denies_git_metadata_after_write_allow(tmp_path: Path):
+    project = tmp_path / "proj"
+    profile = render_profile(write_paths=[project])
+    real = str(project.resolve())
+    allow_at = profile.index(f'(allow file* (subpath "{real}"))')
+    deny_at = profile.index("[.][Gg][Ii][Tt]")
+    attr_at = profile.index("[Aa][Tt][Tt][Rr]")
+    assert deny_at > allow_at
+    assert attr_at > allow_at
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").exists(), reason="Seatbelt")
+def test_sandbox_cannot_write_git_metadata(tmp_path: Path):
+    import subprocess
+
+    project = tmp_path / "proj"
+    (project / ".git" / "hooks").mkdir(parents=True)
+    (project / "src").mkdir()
+    profile = tmp_path / "test.sb"
+    profile.write_text(render_profile(write_paths=[project]), encoding="utf-8")
+
+    def run(script: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/usr/bin/sandbox-exec", "-f", str(profile), "/bin/sh", "-c", script],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert run("echo pwned > .git/config").returncode != 0
+    assert not (project / ".git" / "config").exists()
+    assert run("echo pwned > .gitattributes").returncode != 0
+    assert not (project / ".gitattributes").exists()
+    assert run("echo pwned > src/.gitattributes").returncode != 0
+    assert not (project / "src" / ".gitattributes").exists()
+    assert run("mkdir -p .GIT/hooks && echo pwned > .GIT/hooks/pre-commit").returncode != 0
+    assert not (project / ".git" / "hooks" / "pre-commit").exists()
+    assert run("echo ok > ok.txt").returncode == 0
+    assert (project / "ok.txt").read_text(encoding="utf-8").strip() == "ok"
+
+
+def test_file_tools_refuse_git_metadata(tmp_path: Path):
+    from backend.session_manager import _make_backend
+
+    project = tmp_path / "proj"
+    (project / ".git").mkdir(parents=True)
+    (project / ".gitattributes").write_text("old\n", encoding="utf-8")
+    files = tmp_path / "files"
+    (files / "links").mkdir(parents=True)
+    (files / "links" / "proj").symlink_to(project, target_is_directory=True)
+    backend = _make_backend(files, project_root=project, grant_roots=[project])
+    written = backend.write("/links/proj/.git/config", "[core]\n")
+    assert written.error
+    edited = backend.edit("/links/proj/.gitattributes", "old", "new")
+    assert edited.error
+    assert (project / ".gitattributes").read_text(encoding="utf-8") == "old\n"
+    allowed = backend.write("/links/proj/main.py", "print(1)\n")
+    assert not getattr(allowed, "error", None)
+    assert (project / "main.py").read_text(encoding="utf-8") == "print(1)\n"

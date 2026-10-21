@@ -81,6 +81,14 @@ def test_calendar_contains_today_and_a_later_month():
     assert "Never compute weekdays mentally" in block
 
 
+def test_date_block_is_stable_within_a_day():
+    later = NOW.replace(hour=15, minute=58)
+    assert build_date_block(NOW) == build_date_block(later)
+    assert "09:00" not in build_date_block(NOW)
+    assert "15:58" not in build_date_block(later)
+    assert build_date_block(NOW) != build_date_block(NOW.replace(day=9))
+
+
 def test_describe_dates_relative_and_absolute():
     text = describe_dates("2026-11-07; next Friday; tomorrow", NOW)
     assert "2026-11-07 Saturday" in text

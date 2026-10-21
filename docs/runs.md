@@ -86,6 +86,6 @@ The body is split into six tabs, each deep-linkable with `?tab=`:
 
 ### Evaluation
 
-Shows the **Overall score**, pass count, and judge model, followed by a live **Evaluator activity** trace (reading the conversation, choosing metrics, then scoring each one) and per-metric cards (e.g. Answer Relevancy, Trajectory) with score bars, pass/fail badges, thresholds, and the judge's reasoning. When a run scores below threshold, a **Suggested prompt improvement** panel offers to re-run with the improved prompt, update the source schedule/trigger prompt, or view it in [Suggestions](suggestions.md). Failed runs show an **Error analysis** instead. Evaluation runs automatically when auto-evaluation is enabled, or on demand via the **Evaluate** button.
+Shows the **Overall score**, pass count, and judge model, followed by a live **Evaluator activity** trace (reading the conversation, choosing metrics, then scoring each one) and per-metric cards (e.g. Answer Relevancy, Trajectory) with score bars, pass/fail badges, thresholds, and the judge's reasoning. When a run scores below threshold, a **Suggested prompt improvement** panel offers to re-run with the improved prompt, update the source schedule/trigger prompt, or view it in [Suggestions](suggestions.md). Failed runs show an **Error analysis** instead. Chats are scored after about 2 minutes idle; schedule, trigger, and other non-chat runs are scored as soon as they finish. The **Evaluate** button still runs immediately.
 
 ![Run detail — Evaluation](screenshots/runs/run-evaluation.png)

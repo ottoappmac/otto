@@ -849,15 +849,52 @@ _METRIC_LABELS = {
 # Module-level task registry so fire-and-forget evals aren't garbage-collected
 # before they finish (asyncio only holds a weak reference to running tasks).
 _eval_tasks: set[Any] = set()
+# The in-flight evaluation for a session, so a new turn can cancel that one
+# without touching error-analysis tasks that share ``_eval_tasks``.
+_eval_by_session: dict[str, Any] = {}
+
+
+def _discard_running_eval(session_id: str) -> None:
+    """Remove a sidecar that is still ``running``. Leave a finished one."""
+    try:
+        path = _eval_path(session_id)
+    except Exception:
+        return
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if isinstance(data, dict) and data.get("status") == "running":
+        path.unlink(missing_ok=True)
+
+
+def cancel_evaluation(session_id: str) -> None:
+    """Cancel the eval task for one session and drop a half-written sidecar."""
+    task = _eval_by_session.pop(session_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+    _discard_running_eval(session_id)
 
 
 def launch_evaluation(session_id: str, *, manual: bool = False) -> Any:
     """Start an evaluation as a tracked background task and return it."""
     import asyncio
 
+    previous = _eval_by_session.get(session_id)
+    if previous is not None and not previous.done():
+        previous.cancel()
     task = asyncio.create_task(evaluate_session(session_id, manual=manual))
     _eval_tasks.add(task)
-    task.add_done_callback(_eval_tasks.discard)
+    _eval_by_session[session_id] = task
+
+    def _done(finished: asyncio.Task) -> None:
+        _eval_tasks.discard(finished)
+        if _eval_by_session.get(session_id) is finished:
+            _eval_by_session.pop(session_id, None)
+
+    task.add_done_callback(_done)
     return task
 
 
@@ -872,6 +909,23 @@ def launch_error_analysis(session_id: str, *, manual: bool = False) -> Any:
 
 
 async def evaluate_session(session_id: str, *, manual: bool = False) -> dict[str, Any]:
+    """Evaluate a completed session, emitting a live step-by-step trace.
+
+    Cancellation drops a sidecar that is still ``running`` so the UI does not
+    keep a half-finished evaluation. A finished sidecar is left in place.
+    """
+    try:
+        return await _evaluate_session(session_id, manual=manual)
+    except asyncio.CancelledError:
+        # A replacement launch owns the sidecar. Unlink only when this task
+        # is still the one on record, or the slot was cleared by cancel.
+        owner = _eval_by_session.get(session_id)
+        if owner is None or owner is asyncio.current_task():
+            _discard_running_eval(session_id)
+        raise
+
+
+async def _evaluate_session(session_id: str, *, manual: bool = False) -> dict[str, Any]:
     """Evaluate a completed session, emitting a live step-by-step trace.
 
     The evaluator's work (reading the conversation, choosing metrics and its

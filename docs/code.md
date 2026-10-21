@@ -23,15 +23,15 @@ Shell commands can still read most of the rest of the disk. The sandbox blocks t
 | --- | --- |
 | Projects | Allowed folders. **+** starts a coding session in the selected folder. **×** on the selected folder removes it. Sessions that used it lose the folder; the files on disk stay. |
 | Sessions | Chats already bound to the selected folder, with a dot while a run is in progress. The list updates on its own when a title or run changes, including a chat started from elsewhere. |
-| Files | The folder tree, in the project list and in the Files tab. It loads one level at a time, and skips heavy directories such as `node_modules` and `.git`. Click a file to open it in the Files tab; close it to go back to the tree. |
+| Files | The folder tree, in the project list and in the Files tab. It loads one level at a time, and skips heavy directories such as `node_modules` and `.git`. Click a text file to edit it; Save writes your edit, and Undo all will not revert it. Other files open as a preview. |
 | Conversation | The same transcript as Chat: collapsed thoughts, tool rows, sub-agent blocks, approval and question cards, a working indicator, and a Stop button while a run is going. A question from the agent (`ask_user`) appears as soon as it is asked. |
-| Changes | Files touched since a checkpoint, with added, modified, and deleted status, line counts, and a coloured diff. A turn menu switches checkpoints. Revert turn asks first. The undo icon on a file reverts that file, and Undo on a hunk reverts that hunk. Revert is refused while a run is in progress, and when the file changed after Otto's last edit in that turn. |
+| Changes | Files touched since a checkpoint, with added, modified, and deleted status, line counts, and a coloured diff. A file Otto did not change is marked as changed outside Otto and is not reverted. A turn menu switches checkpoints. Revert turn asks first and restores only Otto's files. The undo icon on a file reverts that file. On a hunk, Accept keeps it and Reject reverts it. Revert is refused while a run is in progress, when the file was changed outside Otto, and when the file changed after Otto's last edit in that turn. |
 | Output | Each command the agent ran, with its output and the exit code when the command failed. Running commands show live lines. |
 | Timeline | The run timeline. |
 
 Drag the edge of the project list or the inspector to change its width. Double-click the edge to put it back. The widths are remembered. On a narrow window both panes start collapsed; **Projects** and the panel icon in the header bring them back. **Chat** and **Run** in the header open the same session in those views. The **×** next to the project name removes that folder from this session. The folder stays in Allowed folders, and the conversation stays open. It is unavailable while a run is in progress.
 
-After a turn that changed files, a bar above the message box offers **Review**, **Undo all**, and **Keep**. **Keep** only dismisses the bar. Hover a message to edit and resend it, or to restore files to the checkpoint taken before that message. Editing can restore files as well. Type `@` to mention a project file. The **+** in the message box attaches files the same way Chat does: pick them, paste them, or drop them, including folders. They are sent with the next message. While a run is going, Enter adds the text as context instead of starting a new turn. Esc stops the run. ⌘⏎ allows the newest approval card and ⌘⌫ rejects it; high-risk cards still wait for a click.
+After a turn that changed files, a bar above the message box offers **Review**, **Undo all**, and **Keep**. **Undo all** restores files Otto changed and leaves edits made outside Otto. **Keep** only dismisses the bar. Hover a message to edit and resend it, or to restore files to the checkpoint taken before that message. Editing can restore files as well. Type `@` to mention a project file. The **+** in the message box attaches files the same way Chat does: pick them, paste them, or drop them, including folders. They are sent with the next message. While a run is going, Enter adds the text as context instead of starting a new turn. Esc stops the run. ⌘⏎ allows the newest approval card and ⌘⌫ rejects it; high-risk cards still wait for a click.
 
 If a checkpoint cannot be taken, the turn still runs and the header says there is no checkpoint. Folders that are not a git repository keep a private copy of files the agent overwrites with the file tools. Changes made only through the shell in a non-git folder are not covered.
 
@@ -43,13 +43,13 @@ With a project selected and no session open, you can type straight into the mess
 
 ## Modes
 
-The composer has four modes. Your last choice is remembered and applies to new sessions. The mode belongs to the session, so Chat, Run, and Code all see it. Chat and Run show a badge when it is Ask, Plan, or Debug. You change it only in Code. The switch is locked while a turn runs, and **Shift+Tab** in the message box cycles through the modes.
+The composer has four modes. Your last choice is remembered and applies to new sessions. The mode belongs to the session, so Chat, Run, and Code all see it. Chat and Run show a badge when it is Ask, Plan, or Debug. You change it only in Code. The switch is locked while a turn runs, and the server rejects a mode change until that turn finishes. **Shift+Tab** in the message box cycles through the modes.
 
 | Mode | What it does |
 | --- | --- |
 | Agent | Reads and edits the project and runs commands. This is the default. |
 | Ask | Read-only. The agent answers questions about the code. It cannot write or edit any file, including session output. |
-| Plan | Read-only in the project. The agent investigates and writes a plan. Otto saves that plan to `/output/plan.md`, creating the file the first time and replacing it when a later Plan turn revises it. When the turn ends, **Build this plan** switches to Agent and asks it to implement the plan. |
+| Plan | Read-only in the project. The agent investigates and writes a plan. Otto saves that plan to `/output/plan.md`, creating the file the first time and replacing it when a later Plan turn revises it. When the turn ends, **Build this plan** shows the plan and asks you to confirm before it switches to Agent and implements it. |
 | Debug | Same permissions as Agent. The agent is asked to reproduce the problem first, state hypotheses, add temporary log lines marked `otto-debug`, make the smallest fix, then remove the markers and re-run. If the project has tests, it is asked to add a regression test that fails without the fix. The Changes list warns while any `otto-debug` marker is left in a file. |
 
 Plan and Debug always run Deep, whatever the depth setting says. Runs that nobody is watching, such as schedules and triggers, always run as Agent.
@@ -58,7 +58,7 @@ Plan and Debug always run Deep, whatever the depth setting says. Runs that nobod
 
 **What is not.** What the model does with the instructions is not enforced. A local model can answer with questions instead of a plan; Code then shows that reply until a plan is saved, and **Build this plan** still works. Whether a Debug turn follows the order above, or cleans up its markers, depends on the model. The marker warning is how you catch a miss.
 
-**Shell limits.** The shell sandbox always allows writes to the system temp folders (`/tmp`, `/private/var/folders`) and to any extra write paths set in Settings. A project inside one of those cannot be made read-only for the shell. In that case Ask, Plan, and read-only folders refuse shell commands instead of pretending to protect the folder. On a system without Seatbelt, Ask and Plan refuse shell commands as well.
+**Shell limits.** The shell sandbox always allows writes to the system temp folders (`/tmp`, `/private/var/folders`) and to any extra write paths set in Settings. It does not allow writes under `.git` or to `.gitattributes`, and the file tools refuse those paths too. A project inside one of those cannot be made read-only for the shell. In that case Ask, Plan, and read-only folders refuse shell commands instead of pretending to protect the folder. On a system without Seatbelt, Ask and Plan refuse shell commands as well.
 
 ## Approvals
 

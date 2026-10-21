@@ -617,10 +617,14 @@ async def api_download_session_file(session_id: str, file_path: str):
     media_type, _ = mimetypes.guess_type(str(resolved))
     if not media_type:
         media_type = "application/octet-stream"
+    # ``<img>`` and ``<video>`` in the chat preview will not paint a
+    # response marked as a download. Inline is what a preview needs.
+    inline = media_type.startswith(("image/", "video/", "audio/")) or media_type == "application/pdf"
     return FileResponse(
         path=resolved,
         filename=Path(file_path).name,
         media_type=media_type,
+        content_disposition_type="inline" if inline else "attachment",
         headers={"Cache-Control": "no-store"},
     )
 
@@ -782,6 +786,8 @@ async def api_set_session_mode(session_id: str, body: dict = Body(...)):
         return JSONResponse(status_code=400, content={"error": str(exc)})
     except FileNotFoundError as exc:
         return JSONResponse(status_code=404, content={"error": str(exc)})
+    except RuntimeError as exc:
+        return JSONResponse(status_code=409, content={"error": str(exc)})
     return session.to_info().model_dump()
 
 
@@ -844,12 +850,27 @@ async def api_workspace_search(session_id: str, q: str = "", limit: int = 20):
 
 @router.get("/{session_id}/workspace/file")
 async def api_workspace_file(session_id: str, path: str):
-    from backend.workspace import read_file
+    import mimetypes
+
+    from backend.workspace import read_file, resolve_workspace_child
     from fastapi.responses import PlainTextResponse
 
     workspace = _read_workspace_meta(session_id)
     if workspace is None:
         return JSONResponse(status_code=404, content={"error": "No workspace mapped"})
+    try:
+        target = resolve_workspace_child(workspace, path)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    media_type, _ = mimetypes.guess_type(str(target))
+    if target.is_file() and media_type and media_type.startswith(("image/", "video/", "audio/")):
+        return FileResponse(
+            path=target,
+            filename=target.name,
+            media_type=media_type,
+            content_disposition_type="inline",
+            headers={"Cache-Control": "no-store"},
+        )
     try:
         result = await asyncio.to_thread(read_file, workspace, path)
     except FileNotFoundError as exc:
@@ -863,6 +884,48 @@ async def api_workspace_file(session_id: str, path: str):
         media_type="text/plain; charset=utf-8",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.put("/{session_id}/workspace/file")
+async def api_write_workspace_file(session_id: str, body: dict = Body(...)):
+    """Save a text file the user edited in the Code view.
+
+    This is the user's edit, so it is not recorded as an Otto write and
+    Undo all will not revert it.
+    """
+    from backend.workspace import resolve_workspace_child
+    from backend.workspace_policy import active_workspace, protected_workspace_reason
+
+    rel = str((body or {}).get("path") or "").strip()
+    content = (body or {}).get("content")
+    if not rel:
+        return JSONResponse(status_code=400, content={"error": "path is required"})
+    if not isinstance(content, str):
+        return JSONResponse(status_code=400, content={"error": "content must be text"})
+    reason = protected_workspace_reason(rel)
+    if reason:
+        return JSONResponse(status_code=400, content={"error": reason})
+    workspace = active_workspace(session_id)
+    if workspace is None:
+        return JSONResponse(status_code=404, content={"error": "No allowed folder is mapped"})
+    if workspace.mode == "read":
+        return JSONResponse(status_code=403, content={"error": "This folder is read-only."})
+    try:
+        target = resolve_workspace_child(workspace, rel)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    if target.exists() and not target.is_file():
+        return JSONResponse(status_code=400, content={"error": "Not a file"})
+
+    def _write() -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    try:
+        await asyncio.to_thread(_write)
+    except OSError as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    return {"path": rel, "bytes": len(content.encode("utf-8"))}
 
 
 def _workspace_or_404(session_id: str):

@@ -2,8 +2,10 @@
 
 The store lives in the Otto app-data directory, not inside a session, so
 a folder the user allows can be reused. Writes are atomic (temp file plus
-replace). Callers validate the path with :mod:`backend.workspace_policy`
-before inserting a user grant.
+replace) and serialized with a process lock, so a turn that touches
+``last_used`` cannot drop a grant another request is saving. Callers
+validate the path with :mod:`backend.workspace_policy` before inserting
+a user grant.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +21,10 @@ from pathlib import Path
 from backend.schemas import FolderGrant
 
 logger = logging.getLogger(__name__)
+
+# One process owns this file. The lock covers load-modify-save so two
+# turns cannot each write a stale copy and drop the other's grant.
+_LOCK = threading.RLock()
 
 
 class GrantStoreError(RuntimeError):
@@ -67,15 +74,17 @@ def _save(grants: list[FolderGrant]) -> None:
 
 
 def list_grants() -> list[FolderGrant]:
-    return _load()
+    with _LOCK:
+        return _load()
 
 
 def get_grant(grant_id: str) -> FolderGrant | None:
     if not grant_id:
         return None
-    for grant in _load():
-        if grant.id == grant_id:
-            return grant
+    with _LOCK:
+        for grant in _load():
+            if grant.id == grant_id:
+                return grant
     return None
 
 
@@ -83,13 +92,14 @@ def find_by_realpath(realpath: str) -> FolderGrant | None:
     target = str(Path(realpath).expanduser().resolve()) if realpath else ""
     if not target:
         return None
-    for grant in _load():
-        try:
-            if str(Path(grant.realpath).resolve()) == target:
-                return grant
-        except OSError:
-            if grant.realpath == target:
-                return grant
+    with _LOCK:
+        for grant in _load():
+            try:
+                if str(Path(grant.realpath).resolve()) == target:
+                    return grant
+            except OSError:
+                if grant.realpath == target:
+                    return grant
     return None
 
 
@@ -104,6 +114,17 @@ def upsert_grant(
     if mode not in ("read", "write"):
         raise GrantStoreError(f"mode must be read or write, got {mode!r}")
     resolved = realpath.expanduser().resolve()
+    with _LOCK:
+        return _upsert_locked(resolved, mode=mode, source=source, label=label)
+
+
+def _upsert_locked(
+    resolved: Path,
+    *,
+    mode: str,
+    source: str,
+    label: str | None,
+) -> FolderGrant:
     grants = _load()
     now = _now()
     for index, grant in enumerate(grants):
@@ -141,26 +162,41 @@ def update_grant(
     *,
     mode: str | None = None,
     label: str | None = None,
+    network: bool | None = None,
+    network_hosts: list[str] | None = None,
+    shell_allow: list[str] | None = None,
 ) -> FolderGrant | None:
-    grants = _load()
-    for index, grant in enumerate(grants):
-        if grant.id != grant_id:
-            continue
-        changes: dict = {"last_used": _now()}
-        if mode is not None:
-            if mode not in ("read", "write"):
-                raise GrantStoreError(f"mode must be read or write, got {mode!r}")
-            changes["mode"] = mode
-        if label is not None and label.strip():
-            changes["label"] = label.strip()
-        updated = grant.model_copy(update=changes)
-        grants[index] = updated
-        _save(grants)
-        return updated
-    return None
+    if mode is not None and mode not in ("read", "write"):
+        raise GrantStoreError(f"mode must be read or write, got {mode!r}")
+    with _LOCK:
+        grants = _load()
+        for index, grant in enumerate(grants):
+            if grant.id != grant_id:
+                continue
+            changes: dict = {"last_used": _now()}
+            if mode is not None:
+                changes["mode"] = mode
+            if label is not None and label.strip():
+                changes["label"] = label.strip()
+            if network is not None:
+                changes["network"] = bool(network)
+            if network_hosts is not None:
+                changes["network_hosts"] = [str(item).strip() for item in network_hosts if str(item).strip()]
+            if shell_allow is not None:
+                changes["shell_allow"] = [str(item).strip() for item in shell_allow if str(item).strip()]
+            updated = grant.model_copy(update=changes)
+            grants[index] = updated
+            _save(grants)
+            return updated
+        return None
 
 
 def touch_grant(grant_id: str) -> None:
+    with _LOCK:
+        _touch_locked(grant_id)
+
+
+def _touch_locked(grant_id: str) -> None:
     grants = _load()
     for index, grant in enumerate(grants):
         if grant.id != grant_id:
@@ -171,6 +207,11 @@ def touch_grant(grant_id: str) -> None:
 
 
 def revoke_grant(grant_id: str) -> FolderGrant | None:
+    with _LOCK:
+        return _revoke_locked(grant_id)
+
+
+def _revoke_locked(grant_id: str) -> FolderGrant | None:
     grants = _load()
     kept: list[FolderGrant] = []
     removed: FolderGrant | None = None

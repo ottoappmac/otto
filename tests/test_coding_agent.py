@@ -126,14 +126,17 @@ def test_seeded_coding_prompt_and_skill_are_light(isolated_app_data: Path):
     assert spec is not None
     assert spec.tools == []
     assert spec.skills == ["coding", "decision-making"]
-    assert "Do not use `write_todos`" in spec.system_prompt
+    assert "write_todos" in spec.system_prompt
+    assert "Do not use `write_todos`" not in spec.system_prompt
+    assert "Code tab" in spec.system_prompt
     assert "edit_file" in spec.system_prompt
     assert "/links/" in spec.system_prompt
     assert "general-purpose" in spec.description
 
     skill = agent_library.get_skill("coding")
     assert skill is not None
-    assert "Do not use `write_todos`" in skill.content
+    assert "write_todos" in skill.content
+    assert "there is no IDE" not in skill.content
     assert "1. `write_todos`" not in skill.content
     assert "edit_file" in skill.content
     assert "/links/" in skill.content

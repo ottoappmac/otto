@@ -167,6 +167,90 @@ def test_debug_mode_can_write(project_env):
     assert not backend.write("/links/proj/d.txt", "1").error
 
 
+def test_unknown_session_is_plan_and_a_session_being_created_is_agent(project_env, tmp_path, monkeypatch):
+    from backend.session_manager import SessionManager
+
+    monkeypatch.setattr("backend.session_manager._sessions_dir", lambda: tmp_path)
+    mgr = SessionManager()
+    files_dir, project = project_env
+
+    assert mgr._mode_for("missing") == "plan"
+    blocked = _make_backend(
+        files_dir,
+        project_root=project,
+        grant_roots=[project],
+        mode_getter=lambda: mgr._mode_for("missing"),
+    )
+    assert blocked.write("/links/proj/z.txt", "1").error
+    assert not (project / "z.txt").exists()
+
+    mgr._opening.add("creating")
+    assert mgr._mode_for("creating") == "agent"
+    allowed = _make_backend(
+        files_dir,
+        project_root=project,
+        grant_roots=[project],
+        mode_getter=lambda: mgr._mode_for("creating"),
+    )
+    assert not allowed.write("/links/proj/ok.txt", "1").error
+    assert (project / "ok.txt").read_text() == "1"
+
+    (tmp_path / "resumed.json").write_text('{"mode": "plan"}', encoding="utf-8")
+    mgr._opening.add("resumed")
+    assert mgr._mode_for("resumed") == "plan"
+
+    (tmp_path / "sched.json").write_text(
+        '{"mode": "plan", "trigger_source": "schedule"}',
+        encoding="utf-8",
+    )
+    mgr._opening.add("sched")
+    assert mgr._mode_for("sched") == "agent"
+
+    (tmp_path / "broken.json").write_text("{", encoding="utf-8")
+    mgr._opening.add("broken")
+    assert mgr._mode_for("broken") == "plan"
+
+    class _Live:
+        mode = "ask"
+        trigger_source = None
+
+    mgr._active["live"] = _Live()  # type: ignore[assignment]
+    assert mgr._mode_for("live") == "ask"
+
+    class _Unattended:
+        mode = "plan"
+        trigger_source = "trigger"
+
+    mgr._active["unattended"] = _Unattended()  # type: ignore[assignment]
+    assert mgr._mode_for("unattended") == "agent"
+
+
+def test_set_mode_rejects_a_running_turn(monkeypatch):
+    import asyncio
+
+    from backend.session_manager import SessionManager
+
+    mgr = SessionManager()
+
+    class _Live:
+        mode = "agent"
+        trigger_source = None
+
+    mgr._active["s"] = _Live()  # type: ignore[assignment]
+
+    async def go():
+        task = asyncio.create_task(asyncio.sleep(30))
+        monkeypatch.setattr("backend.state.running_tasks", {"s": task})
+        try:
+            with pytest.raises(RuntimeError, match="while a run is in progress"):
+                await mgr.set_mode("s", "plan")
+        finally:
+            task.cancel()
+
+    asyncio.run(go())
+    assert mgr._mode_for("s") == "agent"
+
+
 def test_plan_fails_closed_when_mode_cannot_be_read(project_env):
     files_dir, project = project_env
 

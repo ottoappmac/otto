@@ -4205,7 +4205,7 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <Toggle
                   label="Auto-evaluate completed runs"
-                  description="When a run finishes, an LLM picks suitable metrics and scores it automatically. Turn this off to evaluate runs manually with the Evaluate button on each run."
+                  description="Chats are scored after about 2 minutes idle. Schedule, trigger, and other non-chat runs are scored as soon as they finish. Turn this off to evaluate runs manually with the Evaluate button on each run."
                   checked={settings.evaluation?.auto_evaluate ?? false}
                   onChange={(v) => setSettings((s) => ({ ...s, evaluation: { ...s.evaluation, auto_evaluate: v } }))}
                 />

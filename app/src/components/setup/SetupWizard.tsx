@@ -2561,13 +2561,13 @@ function EvaluationScreen({
       <ScreenHeader
         icon={<TestTube size={18} />}
         title="Auto-evaluate runs"
-        subtitle="When a run finishes, Otto can automatically score it — an LLM picks suitable metrics and grades the result so you can spot regressions over time."
+        subtitle="Otto can score a run automatically — chats after about 2 minutes idle, and schedule, trigger, and other non-chat runs as soon as they finish."
       />
 
       <div className="rounded-2xl border border-th-border bg-th-surface p-5 space-y-5">
         <ToggleRow
           label="Auto-evaluate completed runs"
-          description="When a run finishes, an LLM picks suitable metrics and scores it automatically. Turn this off to evaluate runs manually with the Evaluate button on each run."
+          description="Chats are scored after about 2 minutes idle. Schedule, trigger, and other non-chat runs are scored as soon as they finish. Turn this off to evaluate runs manually with the Evaluate button on each run."
           checked={enabled}
           onChange={setEnabled}
         />

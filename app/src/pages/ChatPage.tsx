@@ -659,6 +659,23 @@ export default function ChatPage() {
 
   const handleMessage = useCallback((msg: WSMessage) => {
     const sid = sessionIdRef.current ?? "";
+    if (msg.type === "resync" && sid) {
+      void api.getSessionMessages(sid).then((msgs) => {
+        if (!msgs) return;
+        setMessages(mergeToolMessages(msgs.map((m, index) => ({
+          id: `resync-${index}`,
+          type: (m.type as ChatMessage["type"]) ?? "agent",
+          content: (m.content as string) ?? "",
+          metadata: m.metadata as Record<string, unknown> | undefined,
+          timestamp: new Date(),
+          sessionId: sid,
+        }))));
+      }).catch((e) => setLastError({
+        code: "resync_failed",
+        message: e instanceof Error ? e.message : "Could not reload this chat",
+      }));
+      return;
+    }
     if (msg.type === "done" || msg.type === "stopped" || msg.type === "hitl_request" || msg.type === "ask_user") {
       // The resume we were waiting on has ended or paused again.
       hitlResumeUntilRef.current = 0;

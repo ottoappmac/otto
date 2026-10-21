@@ -282,6 +282,17 @@ _read(
 # Tools that are not MCP servers. None = reviewed, not gated.
 _BARE_TOOLS: dict[str, str | None] = {
     "execute": "shell",
+    "git_commit": "shell",
+    "git_branch": "shell",
+    "git_worktree": "shell",
+    "git_pr": "shell",
+    "project_check": "shell",
+    "process_start": "shell",
+    "process_stop": "shell",
+    "search_code": None,
+    "index_project": None,
+    "process_output": None,
+    "process_ports": None,
     "write_file": "workspace_write",
     "edit_file": "workspace_write",
     "edit": "workspace_write",

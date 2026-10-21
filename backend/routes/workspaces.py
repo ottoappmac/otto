@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
@@ -67,6 +68,21 @@ async def api_preview_grant(body: dict = Body(...)):
     }
 
 
+@router.post("/kinds")
+async def api_path_kinds(body: dict = Body(...)):
+    """Say whether dropped paths are files or folders. Does not read them."""
+    raw_paths = body.get("paths") or []
+    if not isinstance(raw_paths, list) or len(raw_paths) > 50:
+        return _error(400, "paths must be a list of at most 50 paths")
+    rows = []
+    for raw in raw_paths:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        path = Path(raw).expanduser()
+        rows.append({"path": raw, "is_dir": path.is_dir(), "is_file": path.is_file()})
+    return {"paths": rows}
+
+
 @router.post("")
 async def api_create_grant(body: dict = Body(...)):
     raw = body.get("path") or body.get("source") or ""
@@ -93,10 +109,27 @@ async def api_create_grant(body: dict = Body(...)):
 async def api_update_grant(grant_id: str, body: dict = Body(...)):
     mode = body.get("mode")
     label = body.get("label")
+    network = body.get("network") if "network" in body else None
+    network_hosts = body.get("network_hosts") if "network_hosts" in body else None
+    shell_allow = body.get("shell_allow") if "shell_allow" in body else None
     if mode is not None and mode not in ("read", "write"):
         return _error(400, "mode must be read or write")
+    if network is not None and not isinstance(network, bool):
+        return _error(400, "network must be true or false")
+    if network_hosts is not None and not isinstance(network_hosts, list):
+        return _error(400, "network_hosts must be a list")
+    if shell_allow is not None and not isinstance(shell_allow, list):
+        return _error(400, "shell_allow must be a list")
     try:
-        grant = await asyncio.to_thread(update_grant, grant_id, mode=mode, label=label)
+        grant = await asyncio.to_thread(
+            update_grant,
+            grant_id,
+            mode=mode,
+            label=label,
+            network=network,
+            network_hosts=network_hosts,
+            shell_allow=shell_allow,
+        )
     except Exception as exc:
         return _error(400, str(exc))
     if grant is None:
@@ -121,7 +154,7 @@ async def api_revoke_grant(grant_id: str):
 async def _refresh_bound_sessions(grant_id: str, mode: str) -> None:
     from backend.state import session_mgr
 
-    for session_id, workspace in _bound(grant_id):
+    for session_id, workspace in await asyncio.to_thread(_bound, grant_id):
         workspace.mode = mode
         try:
             await session_mgr.set_workspace(session_id, workspace)
@@ -163,7 +196,7 @@ async def _unbind_sessions(grant_id: str) -> None:
 
     from backend.state import session_mgr
 
-    for session_id, workspace in _bound(grant_id):
+    for session_id, workspace in await asyncio.to_thread(_bound, grant_id):
         stop_requested.add(session_id)
         task = running_tasks.get(session_id)
         if task and not task.done():

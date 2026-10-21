@@ -76,6 +76,49 @@ def _escape(path: str) -> str:
     return path.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _regex_literal(path: str) -> str:
+    """Escape *path* for a Seatbelt ``#"..."`` regular expression."""
+    return re.sub(r"([.^$|?*+()\[\]{}\\])", r"\\\1", path).replace('"', '\\"')
+
+
+def _ci_token(name: str) -> str:
+    """A Seatbelt character-class spelling of *name*, case-insensitive."""
+    parts: list[str] = []
+    for char in name:
+        if char == ".":
+            parts.append("[.]")
+        elif char.isalpha():
+            parts.append(f"[{char.upper()}{char.lower()}]")
+        else:
+            parts.append(char)
+    return "".join(parts)
+
+
+def protected_write_denies(paths: list[Path]) -> list[str]:
+    """Deny writes to protected project paths under each write root.
+
+    The project is a write path, so without these rules a sandboxed command
+    can plant a hook or a clean filter. Matching is case-insensitive on the
+    filename because the volume may be too. Deny rules are emitted after the
+    write allows, and on macOS the later rule wins.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        real = _sb_path(path).rstrip("/")
+        if not real or real in seen:
+            continue
+        seen.add(real)
+        root = _regex_literal(real)
+        for name in (".git", ".vscode", ".idea"):
+            token = _ci_token(name)
+            lines.append(f'(deny file-write* (regex #"^{root}(/.*)?/{token}(/|$)"))')
+        for name in (".gitattributes", ".envrc", "AGENTS.md", "CLAUDE.md"):
+            token = _ci_token(name)
+            lines.append(f'(deny file-write* (regex #"^{root}(/.*)?/{token}$"))')
+    return lines
+
+
 def _sb_path(path: Path) -> str:
     """The path Seatbelt will see. ``/var`` is a symlink to ``/private/var``."""
     try:
@@ -104,11 +147,36 @@ def sensitive_read_denies(home: Path | None = None) -> list[Path]:
     ]
 
 
+def network_rules(*, allow_all: bool = False, hosts: list[str] | None = None) -> list[str]:
+    """Seatbelt lines for shell network. Hosts beat an all-allow."""
+    from backend.mcp_sandbox import _escape_sb_literal, _split_host_port
+
+    cleaned = [item.strip() for item in (hosts or []) if item and item.strip()]
+    if cleaned:
+        # ``system.sb`` can allow network. Deny first, then allow the hosts,
+        # because the later rule wins.
+        lines = ["(deny network*)", "(allow network-bind (local ip))"]
+        for raw in cleaned:
+            host, port = _split_host_port(raw)
+            host_esc = _escape_sb_literal(host)
+            if port is not None:
+                lines.append(f'(allow network-outbound (remote ip "{host_esc}:{port}"))')
+            else:
+                lines.append(f'(allow network-outbound (remote ip "{host_esc}:*"))')
+        lines.append('(allow network-outbound (remote udp "*:53"))')
+        lines.append('(allow network-outbound (remote tcp "*:53"))')
+        return lines
+    if allow_all:
+        return ["(allow network*)"]
+    return ["(deny network*)"]
+
+
 def render_profile(
     *,
     write_paths: list[Path],
     read_paths: list[Path] | None = None,
     network: bool = False,
+    network_hosts: list[str] | None = None,
     sensitive_paths: list[Path] | None = None,
     session_paths: list[Path] | None = None,
     session_write: bool = True,
@@ -162,10 +230,13 @@ def render_profile(
         lines.append(f'(allow file-read* (subpath "{escaped}"))')
         if session_write:
             lines.append(f'(allow file-write* (subpath "{escaped}"))')
-    if network:
-        lines.append("(allow network*)")
-    else:
-        lines.append("(deny network*)")
+    # After every file allow, including the session-directory reopen. A later
+    # allow would put .git back in reach.
+    covered = list(write_paths)
+    if session_write:
+        covered.extend(session_paths or [])
+    lines.extend(protected_write_denies(covered))
+    lines.extend(network_rules(allow_all=network, hosts=network_hosts))
     return "\n".join(lines) + "\n"
 
 
@@ -182,6 +253,7 @@ def run_shell(
     timeout: int,
     sandbox: bool,
     network: bool = False,
+    network_hosts: list[str] | None = None,
     write_paths: list[Path] | None = None,
     read_paths: list[Path] | None = None,
     session_paths: list[Path] | None = None,
@@ -221,6 +293,7 @@ def run_shell(
                     write_paths=list(write_paths or [cwd]),
                     read_paths=list(read_paths or []),
                     network=network,
+                    network_hosts=list(network_hosts or []),
                     session_paths=list(session_paths or []),
                     session_write=session_write,
                 ),

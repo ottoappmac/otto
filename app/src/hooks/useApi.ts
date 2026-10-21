@@ -61,7 +61,7 @@ import type {
   DistillUpload,
   DistillValidateReport,
 } from "../types";
-import { API_BASE } from "../config/apiBase";
+import { API_BASE, withApiToken } from "../config/apiBase";
 
 export interface MemoryHitsResponse {
   total_injections: number;
@@ -935,7 +935,9 @@ export const api = {
       `/api/sessions/${id}/files`,
     ),
   getSessionFileUrl: (id: string, filePath: string) =>
-    `${API_BASE}/api/sessions/${id}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
+    withApiToken(
+      `${API_BASE}/api/sessions/${id}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
+    ),
   deleteSessionFile: (id: string, filePath: string) =>
     request<{ status: string }>(`/api/sessions/${id}/files/${filePath}`, {
       method: "DELETE",
@@ -999,10 +1001,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path, mode }),
     }),
-  updateFolderGrant: (id: string, mode: "read" | "write") =>
+  updateFolderGrant: (id: string, patch: { mode?: "read" | "write"; network?: boolean; network_hosts?: string[]; shell_allow?: string[] }) =>
     request<FolderGrant>(`/api/workspace-grants/${id}`, {
       method: "PATCH",
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify(patch),
+    }),
+  pathKinds: (paths: string[]) =>
+    request<{ paths: { path: string; is_dir: boolean; is_file: boolean }[] }>("/api/workspace-grants/kinds", {
+      method: "POST",
+      body: JSON.stringify({ paths }),
+    }),
+  saveWorkspaceFile: (id: string, path: string, content: string) =>
+    request<{ path: string; bytes: number }>(`/api/sessions/${id}/workspace/file`, {
+      method: "PUT",
+      body: JSON.stringify({ path, content }),
     }),
   revokeFolderGrant: (id: string) =>
     request<{ status: string }>(`/api/workspace-grants/${id}`, { method: "DELETE" }),
@@ -1041,7 +1053,9 @@ export const api = {
       `/api/sessions/${id}/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ""}`,
     ),
   getWorkspaceFileUrl: (id: string, relPath: string) =>
-    `${API_BASE}/api/sessions/${id}/workspace/file?path=${encodeURIComponent(relPath)}`,
+    withApiToken(
+      `${API_BASE}/api/sessions/${id}/workspace/file?path=${encodeURIComponent(relPath)}`,
+    ),
 
   /**
    * The file or folder currently on the host OS clipboard, or an empty path
