@@ -1,7 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, FileText, Folder, FolderPlus, Hammer, MessageSquare, PanelRight, Plus, RotateCcw, Send, Square, Trash2, Undo2, X } from "lucide-react";
+import {
+  AlertTriangle, ArrowDown, Bot, Bug, Check, ClipboardList, Clock, Copy, ExternalLink, FileDiff, FileMinus2, FilePen, FilePlus2,
+  FileText, Folder, FolderPlus, GitBranch, Globe, Hammer, HelpCircle, Lock, MessageSquare, PanelLeft, PanelRight, Plus,
+  RotateCcw, SendHorizontal, Square, Terminal, Trash2, Undo2, X,
+} from "lucide-react";
+import { Badge, type BadgeTone } from "../components/ui/Badge";
+import { Button, IconButton } from "../components/ui/Button";
+import { Kbd } from "../components/ui/Kbd";
+import { Segmented } from "../components/ui/Segmented";
+import { Toast } from "../components/ui/Toast";
+import { fuzzyMatch } from "../utils/fuzzy";
 import { formatFileSize } from "../utils/formatFileSize";
 import { api } from "../hooks/useApi";
 import { usePolling } from "../hooks/usePolling";
@@ -66,22 +76,46 @@ function storedWidth(key: string, fallback: number, min: number, max: number): n
   return Math.min(max, Math.max(min, raw));
 }
 
-const MODES: { id: SessionMode; label: string; hint: string }[] = [
-  { id: "agent", label: "Agent", hint: "Reads and edits the project, runs commands." },
-  { id: "ask", label: "Ask", hint: "Read-only. Answers questions about the code and cannot change anything." },
-  { id: "plan", label: "Plan", hint: "Read-only in the project. Saves the plan to a markdown file, then you build it." },
-  { id: "debug", label: "Debug", hint: "Investigates first: reproduce, hypothesize, log, fix, clean up." },
+const MODES: { id: SessionMode; label: string; hint: string; icon: ReactNode }[] = [
+  { id: "agent", label: "Agent", hint: "Reads and edits the project, runs commands.", icon: <Bot size={12} /> },
+  { id: "ask", label: "Ask", hint: "Read-only. Answers questions about the code and cannot change anything.", icon: <HelpCircle size={12} /> },
+  { id: "plan", label: "Plan", hint: "Read-only in the project. Saves the plan to a markdown file, then you build it.", icon: <ClipboardList size={12} /> },
+  { id: "debug", label: "Debug", hint: "Investigates first: reproduce, hypothesize, log, fix, clean up.", icon: <Bug size={12} /> },
 ];
 
 function asMode(value: unknown): SessionMode {
   return value === "ask" || value === "plan" || value === "debug" ? value : "agent";
 }
 
-function modeBadge(mode: SessionMode): { label: string; className: string } | null {
-  if (mode === "ask") return { label: "Ask mode", className: "text-sky-300" };
-  if (mode === "plan") return { label: "Plan mode", className: "text-violet-300" };
-  if (mode === "debug") return { label: "Debug mode", className: "text-amber-300" };
+function modeBadge(mode: SessionMode): { label: string; tone: BadgeTone } | null {
+  if (mode === "ask") return { label: "Ask mode", tone: "accent" };
+  if (mode === "plan") return { label: "Plan mode", tone: "accent" };
+  if (mode === "debug") return { label: "Debug mode", tone: "warning" };
   return null;
+}
+
+function dayBucket(iso: string | undefined): string {
+  const then = iso ? new Date(iso) : null;
+  if (!then || Number.isNaN(then.getTime())) return "Earlier";
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const days = Math.floor((start.getTime() - new Date(then).setHours(0, 0, 0, 0)) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "This week";
+  return "Earlier";
+}
+
+function splitPath(path: string): { name: string; dir: string } {
+  const at = path.lastIndexOf("/");
+  return at < 0 ? { name: path, dir: "" } : { name: path.slice(at + 1), dir: path.slice(0, at) };
+}
+
+function highlightMatch(text: string, query: string): ReactNode {
+  const match = query ? fuzzyMatch(query, text) : null;
+  if (!match || match.indices.length === 0) return text;
+  const hit = new Set(match.indices);
+  return Array.from(text).map((ch, i) => (hit.has(i) ? <mark key={i} className="bg-transparent font-semibold text-th-accent">{ch}</mark> : ch));
 }
 
 const STARTERS: Record<SessionMode, string[]> = {
@@ -172,7 +206,6 @@ export default function CodePage() {
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [live, setLive] = useState<TimelineEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [preview, setPreview] = useState<FolderGrantPreview | null>(null);
   const [grantMode, setGrantMode] = useState<"read" | "write">("write");
   const [notice, setNotice] = useState<string | null>(null);
@@ -186,6 +219,10 @@ export default function CodePage() {
   const [confirmGrantId, setConfirmGrantId] = useState<string | null>(null);
   const [keptKey, setKeptKey] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [undoDelete, setUndoDelete] = useState<{ id: string; title: string } | null>(null);
+  const pendingDelete = useRef<{ id: string; timer: number } | null>(null);
+  const [showJump, setShowJump] = useState(false);
   const [narrow, setNarrow] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [projectsOpen, setProjectsOpen] = useState(true);
@@ -224,6 +261,7 @@ export default function CodePage() {
   const pendingSendRef = useRef<{ sid: string; text: string; mode: SessionMode } | null>(null);
   const [sessionAutoApprove, setSessionAutoApprove] = useState(false);
   const stickToBottomRef = useRef(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { notify, clearSession, watchSession, unwatchSession } = useNotification();
   const [leftWidth, setLeftWidth] = useState(() => storedWidth(LEFT_WIDTH_KEY, LEFT_DEFAULT, LEFT_MIN, LEFT_MAX));
@@ -1156,21 +1194,49 @@ export default function CodePage() {
     }
   };
 
-  const deleteSession = async (id: string) => {
-    setConfirmDeleteId(null);
+  const finishDelete = useCallback(async (id: string) => {
     try {
       await api.closeSession(id);
+      setSessions((prev) => prev.filter((item) => item.id !== id));
     } catch (e) {
       setError(apiMessage(e));
-      return;
     }
-    setSessions((prev) => prev.filter((item) => item.id !== id));
+    setHiddenIds((prev) => prev.filter((item) => item !== id));
+  }, []);
+
+  // Deleting hides the row at once and removes the session after a short undo window.
+  const deleteSession = (id: string) => {
+    const title = sessions.find((item) => item.id === id)?.title || "Untitled";
+    if (pendingDelete.current) {
+      window.clearTimeout(pendingDelete.current.timer);
+      void finishDelete(pendingDelete.current.id);
+    }
+    setHiddenIds((prev) => [...prev, id]);
+    setUndoDelete({ id, title });
+    pendingDelete.current = { id, timer: window.setTimeout(() => { pendingDelete.current = null; setUndoDelete(null); void finishDelete(id); }, 6000) };
     if (id === sessionIdRef.current) {
       setStreaming(false);
       setAwaitingPoll(false);
       navigate("/code");
     }
   };
+
+  const undoDeleteSession = () => {
+    const pending = pendingDelete.current;
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    pendingDelete.current = null;
+    setHiddenIds((prev) => prev.filter((item) => item !== pending.id));
+    setUndoDelete(null);
+  };
+
+  useEffect(() => () => {
+    const pending = pendingDelete.current;
+    if (pending) {
+      window.clearTimeout(pending.timer);
+      void api.closeSession(pending.id).catch(() => {});
+    }
+  }, []);
 
   const openFile = (rel: string) => {
     if (!sessionId) return;
@@ -1200,108 +1266,93 @@ export default function CodePage() {
   return (
     <div ref={shellRef} className="flex h-full min-h-0 min-w-0 overflow-hidden">
       {projectsOpen && <aside style={{ width: narrow ? 200 : leftWidth }} className="shrink-0 border-r border-th-border flex flex-col min-h-0 min-w-0 overflow-hidden bg-th-bg-secondary">
-        <div className="px-3 py-2 flex items-center justify-between">
-          <span className="text-[11px] uppercase tracking-wider text-th-text-muted">Projects</span>
-          <button type="button" title="Allow a folder" onClick={() => { void allowFolder(); }} className="text-th-text-muted hover:text-th-text-primary">
-            <FolderPlus size={14} />
-          </button>
+        <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-th-text-muted">Projects</span>
+          <IconButton label="Allow a folder" icon={<FolderPlus size={14} />} onClick={() => { void allowFolder(); }} />
         </div>
-        <div className="px-2 space-y-1 overflow-y-auto max-h-40">
+        <div className="px-2 space-y-0.5 overflow-y-auto max-h-[35%] shrink-0">
           {grants.map((grant) => (
             <div
               key={grant.id}
-              className={`flex items-center rounded ${grant.id === grantId ? "bg-th-surface-hover" : ""}`}
+              className={`group flex items-center rounded-lg transition-colors duration-fast ${grant.id === grantId ? "bg-th-surface-hover" : "hover:bg-th-surface-hover/60"}`}
             >
               <button
                 type="button"
                 onClick={() => setGrantId(grant.id)}
-                className={`flex-1 min-w-0 text-left px-2 py-1 text-xs truncate ${grant.id === grantId ? "text-th-text-primary" : "text-th-text-secondary"}`}
+                aria-current={grant.id === grantId ? "true" : undefined}
+                className={`flex-1 min-w-0 flex items-center gap-2 text-left px-2 py-1.5 text-xs ${grant.id === grantId ? "text-th-text-primary font-medium" : "text-th-text-secondary"}`}
                 title={grant.realpath}
               >
-                {grant.label}
-                <span className="text-th-text-muted"> {grant.mode === "read" ? "· read" : ""}</span>
+                <Folder size={13} className="shrink-0 text-th-text-muted" />
+                <span className="truncate">{grant.label}</span>
+                {grant.mode === "read" && <Lock size={10} className="shrink-0 text-th-text-muted" aria-label="Read only" />}
               </button>
               {grant.id === grantId && confirmGrantId === grant.id && (
-                <span className="shrink-0 flex items-center gap-1 pr-1 text-[10px]">
-                  <button type="button" className="text-red-400" onClick={() => { setConfirmGrantId(null); void removeProject(grant); }}>
+                <span className="shrink-0 flex items-center gap-1 pr-1.5 text-2xs">
+                  <button type="button" className="font-medium text-th-danger" onClick={() => { setConfirmGrantId(null); void removeProject(grant); }}>
                     Remove
                   </button>
                   <button type="button" className="text-th-text-muted" onClick={() => setConfirmGrantId(null)}>Keep</button>
                 </span>
               )}
               {grant.id === grantId && confirmGrantId !== grant.id && (
-                <button
-                  type="button"
-                  title="Remove this project. Sessions using it lose the folder. Files on disk stay."
-                  aria-label={`Remove ${grant.label}`}
+                <IconButton
+                  label="Remove this project. Sessions using it lose the folder. Files on disk stay."
+                  icon={<X size={12} />}
                   onClick={() => setConfirmGrantId(grant.id)}
-                  className="shrink-0 px-1.5 py-1 text-th-text-muted hover:text-red-400"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          ))}
-          {grants.length === 0 && <p className="px-2 text-[11px] text-th-text-muted">Allow a project folder to start.</p>}
-        </div>
-        <div className="px-3 py-2 flex items-center justify-between border-t border-th-border">
-          <span className="text-[11px] uppercase tracking-wider text-th-text-muted">Sessions</span>
-          <button type="button" title="New coding session" onClick={() => { void startSession(); }} disabled={!grantId} className="text-th-text-muted hover:text-th-text-primary disabled:opacity-40">
-            <Plus size={14} />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-2 space-y-1">
-          {sessions.map((item) => (
-            <div
-              key={item.id}
-              className={`group flex items-center rounded ${item.id === sessionId ? "bg-th-surface-hover" : ""}`}
-            >
-              <button
-                type="button"
-                onClick={() => navigate(`/code/${item.id}`)}
-                className={`flex-1 min-w-0 text-left px-2 py-1 text-xs truncate ${item.id === sessionId ? "text-th-text-primary" : "text-th-text-secondary"}`}
-              >
-                <span
-                  className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${item.status === "running" ? "bg-emerald-400" : "bg-th-text-muted"}`}
-                  title={item.status === "running" ? "Running" : "Idle"}
+                  className="mr-0.5 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:!text-th-danger"
                 />
-                <span className="sr-only">{item.status === "running" ? "Running. " : ""}</span>
-                {item.title || "Untitled"}
-                <span className="text-th-text-muted"> {item.mode && item.mode !== "agent" ? item.mode : ""} {relTime(item.updated_at)}</span>
-              </button>
-              {confirmDeleteId === item.id ? (
-                <div className="shrink-0 flex items-center gap-1 pr-1.5 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => { void deleteSession(item.id); }}
-                    className="text-red-400 hover:text-red-300"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDeleteId(null)}
-                    className="text-th-text-muted hover:text-th-text-primary"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  title="Delete this session"
-                  aria-label={`Delete ${item.title || "Untitled"}`}
-                  onClick={() => setConfirmDeleteId(item.id)}
-                  className="shrink-0 px-1.5 py-1 text-th-text-muted opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-400"
-                >
-                  <Trash2 size={12} />
-                </button>
               )}
             </div>
           ))}
+          {grants.length === 0 && <p className="px-2 text-2xs text-th-text-muted">Allow a project folder to start.</p>}
+        </div>
+        <div className="px-3 pt-3 pb-1 flex items-center justify-between border-t border-th-border mt-2">
+          <span className="text-2xs font-semibold uppercase tracking-wider text-th-text-muted">Sessions</span>
+          <IconButton label="New coding session" icon={<Plus size={14} />} onClick={() => { void startSession(); }} disabled={!grantId} />
+        </div>
+        <div className="flex-1 overflow-y-auto px-2 pb-2">
+          {(() => {
+            let lastBucket = "";
+            return sessions.filter((item) => !hiddenIds.includes(item.id)).map((item) => {
+              const bucket = dayBucket(item.updated_at);
+              const heading = bucket !== lastBucket ? bucket : null;
+              lastBucket = bucket;
+              const active = item.id === sessionId;
+              return (
+                <div key={item.id}>
+                  {heading && <p className="px-2 pt-2.5 pb-1 text-2xs font-medium text-th-text-faint">{heading}</p>}
+                  <div className={`group flex items-center rounded-lg transition-colors duration-fast ${active ? "bg-th-surface-hover" : "hover:bg-th-surface-hover/60"}`}>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/code/${item.id}`)}
+                      aria-current={active ? "page" : undefined}
+                      className={`flex-1 min-w-0 flex items-center gap-2 text-left px-2 py-1.5 text-xs ${active ? "text-th-text-primary font-medium" : "text-th-text-secondary"}`}
+                    >
+                      <span
+                        className={`shrink-0 w-1.5 h-1.5 rounded-full ${item.status === "running" ? "bg-th-success animate-pulse" : "bg-transparent border border-th-border-strong"}`}
+                        title={item.status === "running" ? "Running" : "Idle"}
+                      />
+                      <span className="sr-only">{item.status === "running" ? "Running. " : ""}</span>
+                      <span className="truncate flex-1">{item.title || "Untitled"}</span>
+                      {item.mode && item.mode !== "agent" && <Badge tone="neutral">{item.mode}</Badge>}
+                      <span className="shrink-0 text-2xs text-th-text-faint group-hover:hidden group-focus-within:hidden">{relTime(item.updated_at)}</span>
+                    </button>
+                    <IconButton
+                      label={`Delete ${item.title || "Untitled"}`}
+                      icon={<Trash2 size={12} />}
+                      onClick={() => deleteSession(item.id)}
+                      className="mr-0.5 hidden group-hover:inline-flex focus:inline-flex hover:!text-th-danger"
+                    />
+                  </div>
+                </div>
+              );
+            });
+          })()}
+          {sessions.length === 0 && <p className="px-2 pt-1 text-2xs text-th-text-muted">No sessions yet. Press + to start one.</p>}
         </div>
         {confirmGrantId && (
-          <p className="px-2 py-1 text-[10px] text-th-text-muted border-t border-th-border">
+          <p className="px-3 py-2 text-2xs text-th-text-muted border-t border-th-border">
             {sessions.length} session{sessions.length === 1 ? "" : "s"} will lose this folder.
             {sessions.some((item) => item.status === "running") ? " A running session will be stopped." : " Files on disk stay."}
           </p>
@@ -1327,81 +1378,97 @@ export default function CodePage() {
       />}
 
       <section className="flex-1 min-w-0 flex flex-col min-h-0 overflow-hidden">
-        <header className="px-4 py-2 border-b border-th-border flex items-center gap-3 text-xs min-w-0 overflow-hidden">
-          <span className="font-medium text-th-text-primary truncate min-w-[4rem]">
+        <header className="px-3 py-2 border-b border-th-border flex items-center gap-2 text-xs min-w-0 overflow-hidden">
+          <IconButton
+            label={projectsOpen ? "Hide projects" : "Show projects"}
+            icon={<PanelLeft size={15} />}
+            aria-pressed={projectsOpen}
+            onClick={() => setProjectsOpen((open) => !open)}
+          />
+          <span className="font-semibold text-sm text-th-text-primary truncate min-w-[4rem]">
             {sessionId && !session?.workspace ? "No project" : (session?.workspace?.name || selected?.label || "Code")}
           </span>
           {session?.workspace && (
-            <button
-              type="button"
-              title="Remove this project from the session"
+            <IconButton
+              label="Remove this project from the session"
+              icon={<X size={12} />}
               disabled={streaming}
               onClick={() => { void unmapProject(); }}
-              className="text-th-text-muted hover:text-th-text-primary disabled:opacity-40 shrink-0"
-            >
-              <X size={12} />
-            </button>
+            />
           )}
-          {git?.git && <span className="text-th-text-muted shrink-0">{git.branch}{git.dirty ? ` · ${git.dirty} dirty` : ""}</span>}
-          {modeBadge(mode) && <span className={`shrink-0 ${modeBadge(mode)?.className}`}>{modeBadge(mode)?.label}</span>}
-          {session?.workspace?.mode === "read" && <span className="text-sky-300 shrink-0">Read only</span>}
-          {selected && (
-            <button
-              type="button"
-              title={selected.network_hosts?.length ? `Hosts: ${selected.network_hosts.join(", ")}` : "Allow shell network for this project while the global switch is off"}
-              onClick={() => {
-                void api.updateFolderGrant(selected.id, { network: !selected.network }).then((grant) => {
-                  setGrants((prev) => prev.map((item) => item.id === grant.id ? grant : item));
-                }).catch((e) => setError(apiMessage(e)));
-              }}
-              className="text-th-text-muted hover:text-th-text-primary shrink-0"
-            >
-              {selected.network ? "Network on" : "Network off"}
-            </button>
+          {git?.git && (
+            <Badge title="Git branch">
+              <GitBranch size={11} />
+              <span className="max-w-[10rem] truncate">{git.branch}</span>
+              {git.dirty ? <span className="text-th-warning">· {git.dirty} dirty</span> : null}
+            </Badge>
           )}
-          {session?.workspace?.mode === "write" && mode === "agent" && <span className="text-th-text-muted shrink-0" title="Edits are checkpointed and can be reverted">Editable</span>}
-          <span className="ml-auto flex items-center gap-2 shrink-0">
-            <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => setProjectsOpen((open) => !open)} title="Show or hide projects">
-              Projects
-            </button>
-            <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => setInspectorOpen((open) => !open)} title="Show or hide the inspector">
-              <PanelRight size={13} />
-            </button>
-            <span className={connected ? "text-emerald-400" : "text-amber-400"}>{connected ? "Live" : "Connecting"}</span>
+          {modeBadge(mode) && <Badge tone={modeBadge(mode)!.tone}>{modeBadge(mode)!.label}</Badge>}
+          {session?.workspace?.mode === "read" && <Badge tone="accent"><Lock size={10} /> Read only</Badge>}
+          {session?.workspace?.mode === "write" && mode === "agent" && <Badge tone="success" title="Edits are checkpointed and can be reverted">Editable</Badge>}
+          <span className="ml-auto flex items-center gap-1 shrink-0">
+            {selected && (
+              <Button
+                variant="ghost"
+                aria-pressed={Boolean(selected.network)}
+                title={selected.network_hosts?.length ? `Hosts: ${selected.network_hosts.join(", ")}` : "Allow shell network for this project while the global switch is off"}
+                onClick={() => {
+                  void api.updateFolderGrant(selected.id, { network: !selected.network }).then((grant) => {
+                    setGrants((prev) => prev.map((item) => item.id === grant.id ? grant : item));
+                  }).catch((e) => setError(apiMessage(e)));
+                }}
+                className={selected.network ? "!text-th-success" : ""}
+              >
+                <Globe size={13} /> {selected.network ? "Network on" : "Network off"}
+              </Button>
+            )}
+            <span className="flex items-center gap-1.5 px-1.5 text-2xs text-th-text-muted" role="status">
+              <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-th-success" : "bg-th-warning animate-pulse"}`} />
+              {connected ? "Live" : "Connecting"}
+            </span>
             {sessionId && (
               <>
-                <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => navigate(`/chat/${sessionId}`)}>Chat</button>
-                <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => navigate(`/runs/${sessionId}`)}>Run</button>
+                <Button variant="ghost" onClick={() => navigate(`/chat/${sessionId}`)}>Chat</Button>
+                <Button variant="ghost" onClick={() => navigate(`/runs/${sessionId}`)}>Run</Button>
               </>
             )}
+            <IconButton
+              label={inspectorOpen ? "Hide inspector" : "Show inspector"}
+              icon={<PanelRight size={15} />}
+              aria-pressed={inspectorOpen}
+              onClick={() => setInspectorOpen((open) => !open)}
+            />
           </span>
         </header>
         {notice && (
-          <p className="px-4 py-1.5 text-[11px] bg-amber-500/10 text-amber-300 border-b border-amber-500/20">
+          <p className="px-4 py-1.5 text-2xs bg-th-warning/10 text-th-warning border-b border-th-warning/20">
             No checkpoint for this turn: {notice}
           </p>
         )}
         {error && (
-          <p className="px-4 py-1 text-xs text-red-400 flex items-center gap-2">
-            <span className="flex-1 min-w-0">{error}</span>
-            <button type="button" className="text-th-text-muted hover:text-th-text-primary" onClick={() => setError(null)} aria-label="Dismiss error">
-              <X size={12} />
-            </button>
-          </p>
+          <div role="alert" className="mx-4 mt-3 flex items-start gap-2 rounded-xl border border-th-danger/25 bg-th-danger/10 px-3 py-2 text-xs text-th-danger animate-panel-in">
+            <AlertTriangle size={14} className="mt-px shrink-0" />
+            <span className="flex-1 min-w-0 break-words">{error}</span>
+            <IconButton label="Dismiss error" icon={<X size={12} />} onClick={() => setError(null)} className="!h-5 !w-5" />
+          </div>
         )}
         <div className="sr-only" aria-live="polite">
           {streaming ? "Working" : awaitingPoll ? "Awaiting approval" : toast || revertNote || ""}
         </div>
         {(changes?.debug_markers ?? 0) > 0 && (
-          <p className="px-4 py-1.5 text-[11px] bg-amber-500/10 text-amber-300 border-b border-amber-500/20">
+          <p className="px-4 py-1.5 text-2xs bg-th-warning/10 text-th-warning border-b border-th-warning/20">
             {changes?.debug_markers} otto-debug log marker{changes?.debug_markers === 1 ? "" : "s"} still in your files. Remove them before you commit.
           </p>
         )}
+        <div className="relative flex-1 min-h-0 flex flex-col">
         <div
-          className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+          ref={scrollRef}
+          className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4"
           onScroll={(e) => {
             const el = e.currentTarget;
-            stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+            stickToBottomRef.current = gap < 80;
+            setShowJump(gap > 240);
           }}
         >
           {messages.length === 0 && (
@@ -1455,14 +1522,28 @@ export default function CodePage() {
           )}
           <div ref={messagesEndRef} />
         </div>
+        {showJump && (
+          <button
+            type="button"
+            onClick={() => {
+              stickToBottomRef.current = true;
+              messagesEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+            }}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full border border-th-border bg-th-dropdown-bg px-3 py-1.5 text-xs font-medium text-th-text-primary shadow-lg animate-toast-in hover:bg-th-surface-hover"
+          >
+            <ArrowDown size={12} /> {streaming ? "Jump to latest" : "Scroll to bottom"}
+          </button>
+        )}
+        </div>
         {showReview && sessionId && (
-          <div className="px-4 py-2 border-t border-th-border flex items-center gap-3 text-xs bg-th-bg-secondary">
+          <div className="mx-3 mb-2 flex items-center gap-3 rounded-xl border border-th-border bg-th-surface px-3 py-2 text-xs shadow-sm animate-panel-in">
+            <FileDiff size={15} className="shrink-0 text-th-text-muted" />
             <span className="text-th-text-secondary flex-1 min-w-0 truncate">
               {reviewStats.count > 0 && (
                 <>
-                  {reviewStats.count} file{reviewStats.count === 1 ? "" : "s"} changed
-                  <span className="text-emerald-400"> +{reviewStats.added}</span>
-                  <span className="text-red-300"> -{reviewStats.deleted}</span>
+                  <span className="font-medium text-th-text-primary">{reviewStats.count} file{reviewStats.count === 1 ? "" : "s"} changed</span>
+                  <span className="text-th-diff-add"> +{reviewStats.added}</span>
+                  <span className="text-th-diff-del"> −{reviewStats.deleted}</span>
                 </>
               )}
               {reviewStats.outside > 0 && (
@@ -1472,24 +1553,23 @@ export default function CodePage() {
                 </span>
               )}
             </span>
-            <button type="button" className="text-th-text-tertiary hover:text-th-text-primary" onClick={() => { setInspector("changes"); setInspectorOpen(true); }}>Review</button>
             {reviewStats.count > 0 && (
-              <button type="button" className="text-th-text-tertiary hover:text-red-300" onClick={() => { setInspector("changes"); setInspectorOpen(true); setConfirmRevert(true); }}>Undo all</button>
+              <Button variant="danger" onClick={() => { setInspector("changes"); setInspectorOpen(true); setConfirmRevert(true); }}>Undo all</Button>
             )}
-            <button type="button" className="text-th-text-primary" onClick={() => setKeptKey(reviewKey)}>Keep</button>
+            <Button variant="secondary" onClick={() => { setInspector("changes"); setInspectorOpen(true); }}>Review</Button>
+            <Button variant="primary" onClick={() => setKeptKey(reviewKey)}><Check size={12} /> Keep</Button>
           </div>
         )}
         {planReady && sessionId && (
-          <div className="px-4 py-2 border-t border-th-border flex items-center gap-3 text-xs bg-violet-500/5">
+          <div className="mx-3 mb-2 flex items-center gap-3 rounded-xl border border-th-accent/25 bg-th-accent/8 px-3 py-2 text-xs animate-panel-in">
+            <ClipboardList size={15} className="shrink-0 text-th-accent" />
             <span className="text-th-text-secondary flex-1 min-w-0 truncate">Plan ready. Review it, then build.</span>
-            <button type="button" onClick={() => setInspector("plan")} className="text-th-text-tertiary hover:text-th-text-primary">View plan</button>
-            <button type="button" onClick={() => { void buildPlan(); }} className="flex items-center gap-1 px-2 py-1 rounded-lg border border-th-border text-th-text-primary hover:bg-th-surface-hover">
-              <Hammer size={12} /> Build this plan
-            </button>
+            <Button variant="ghost" onClick={() => setInspector("plan")}>View plan</Button>
+            <Button variant="primary" onClick={() => { void buildPlan(); }}><Hammer size={12} /> Build this plan</Button>
           </div>
         )}
         <form
-          className={`p-3 border-t space-y-2 ${isDragging ? "border-t-2 border-blue-500/60 bg-blue-500/5" : "border-th-border"}`}
+          className={`p-3 space-y-2 transition-colors duration-fast ${isDragging ? "bg-th-accent/8" : ""}`}
           onSubmit={(e) => { e.preventDefault(); submit(); }}
           onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
           onDragLeave={() => setIsDragging(false)}
@@ -1554,17 +1634,25 @@ export default function CodePage() {
           )}
           <div className="flex gap-2 relative">
             {atOpen && mentions.length > 0 && (
-              <div className="absolute bottom-full left-0 mb-1 z-20 w-full max-w-md rounded-lg border border-th-border bg-th-bg-secondary shadow-lg overflow-hidden">
-                {mentions.slice(0, 8).map((item, index) => (
-                  <button
-                    key={item.path}
-                    type="button"
-                    className={`w-full text-left px-3 py-1.5 text-xs font-mono truncate ${index === atIndex ? "bg-th-surface-hover text-th-text-primary" : "text-th-text-secondary"}`}
-                    onMouseDown={(event) => { event.preventDefault(); insertMention(item.path); }}
-                  >
-                    {item.is_dir ? "dir  " : "file "}{item.path}
-                  </button>
-                ))}
+              <div role="listbox" aria-label="Files" className="absolute bottom-full left-0 mb-1 z-20 w-full max-w-md rounded-xl border border-th-border bg-th-dropdown-bg p-1 shadow-xl overflow-hidden animate-pop-in">
+                {mentions.slice(0, 8).map((item, index) => {
+                  const { name, dir } = splitPath(item.path);
+                  return (
+                    <button
+                      key={item.path}
+                      type="button"
+                      role="option"
+                      aria-selected={index === atIndex}
+                      className={`w-full flex items-center gap-2 rounded-lg text-left px-2.5 py-1.5 text-xs ${index === atIndex ? "bg-th-surface-hover text-th-text-primary" : "text-th-text-secondary"}`}
+                      onMouseEnter={() => setAtIndex(index)}
+                      onMouseDown={(event) => { event.preventDefault(); insertMention(item.path); }}
+                    >
+                      {item.is_dir ? <Folder size={13} className="shrink-0 text-th-accent" /> : <FileText size={13} className="shrink-0 text-th-text-muted" />}
+                      <span className="shrink-0 font-medium">{highlightMatch(name, atFilter)}</span>
+                      {dir && <span className="truncate text-th-text-muted">{highlightMatch(dir, atFilter)}</span>}
+                    </button>
+                  );
+                })}
               </div>
             )}
             <div className="relative flex-1 min-w-0">
@@ -1639,40 +1727,46 @@ export default function CodePage() {
             </button>
             </div>
             {streaming ? (
-              <button
-                type="button"
-                title="Stop agent"
-                aria-label="Stop agent"
+              <IconButton
+                label="Stop agent"
+                keys={["Esc"]}
+                icon={<Square size={14} />}
+                variant="secondary"
+                size="md"
                 onClick={() => { void handleStop(); }}
-                className="px-3 rounded-xl border border-th-border text-red-400 hover:bg-red-500/15"
-              >
-                <Square size={14} />
-              </button>
+                className="!h-auto !w-10 !rounded-xl !text-th-danger hover:!bg-th-danger/10"
+              />
             ) : (
-              <button type="submit" title="Send" aria-label="Send" disabled={uploading || (!sessionId && (!grantId || starting)) || (!input.trim() && !hasAttachments)} className="px-3 rounded-xl border border-th-border text-th-text-secondary disabled:opacity-40">
-                <Send size={14} />
-              </button>
+              <IconButton
+                type="submit"
+                label="Send"
+                keys={["⏎"]}
+                icon={<SendHorizontal size={15} />}
+                variant="primary"
+                size="md"
+                disabled={uploading || (!sessionId && (!grantId || starting)) || (!input.trim() && !hasAttachments)}
+                className="!h-auto !w-10 !rounded-xl"
+              />
             )}
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
-            <div className="flex rounded-lg border border-th-border overflow-hidden shrink-0" role="radiogroup" aria-label="Mode">
-              {MODES.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={mode === item.id}
-                  title={`${item.hint} (Shift+Tab to switch)`}
-                  disabled={streaming}
-                  onClick={() => { void changeMode(item.id); }}
-                  className={`px-2.5 py-0.5 text-[11px] disabled:opacity-60 ${mode === item.id ? "bg-th-tab-active-bg text-th-tab-active-fg" : "text-th-text-tertiary hover:text-th-text-primary"}`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-            {(mode === "plan" || mode === "debug") && <span className="text-[11px] text-th-text-muted shrink-0">Deep</span>}
-            {pendingCard && <span className="text-[11px] text-th-text-muted shrink-0" title="High-risk cards still wait for a click">⌘⏎ allow · ⌘⌫ reject</span>}
+            <Segmented
+              label="Mode"
+              value={mode}
+              disabled={streaming}
+              onChange={(id) => { void changeMode(id); }}
+              options={MODES.map((item) => ({ id: item.id, label: item.label, icon: item.icon, hint: `${item.hint} (Shift+Tab to switch)` }))}
+            />
+            {(mode === "plan" || mode === "debug") && <Badge title="Plan and Debug always run Deep">Deep</Badge>}
+            {pendingCard ? (
+              <span className="flex items-center gap-1 text-2xs text-th-text-muted shrink-0" title="High-risk cards still wait for a click">
+                <Kbd>⌘</Kbd><Kbd>⏎</Kbd> allow <Kbd>⌘</Kbd><Kbd>⌫</Kbd> reject
+              </span>
+            ) : (
+              <span className="hidden lg:flex items-center gap-1 text-2xs text-th-text-faint shrink-0">
+                <Kbd>⇧</Kbd><Kbd>⇥</Kbd> mode <Kbd>@</Kbd> file {streaming && <><Kbd>Esc</Kbd> stop</>}
+              </span>
+            )}
             <div className="ml-auto max-w-full" title={isModelBusy ? "Model is loading" : "Changes the model for all chats"}>
               <ModelPicker align="right" value={currentModel} models={availableModels} onChange={(id) => { void handleModelChange(id); }} />
             </div>
@@ -1699,19 +1793,28 @@ export default function CodePage() {
         className="w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-sky-400/50 active:bg-sky-400/70 focus:outline-none focus:bg-sky-400/40"
       />}
       {inspectorOpen && <aside style={{ width: narrow ? 280 : rightWidth }} className="shrink-0 border-l border-th-border flex flex-col min-h-0 overflow-hidden">
-        <div className="flex border-b border-th-border text-[11px]" role="tablist" aria-label="Inspector">
-          {(["changes", "files", "output", "timeline", ...(hasPlan || mode === "plan" ? ["plan"] : [])] as Inspector[]).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              aria-selected={inspector === tab}
-              onClick={() => setInspector(tab)}
-              className={`flex-1 py-2 capitalize ${inspector === tab ? "text-th-text-primary border-b border-sky-400" : "text-th-text-muted"}`}
-            >
-              {tab}
-            </button>
-          ))}
+        <div className="flex border-b border-th-border px-1 pt-1 text-xs" role="tablist" aria-label="Inspector">
+          {(["changes", "files", "output", "timeline", ...(hasPlan || mode === "plan" ? ["plan"] : [])] as Inspector[]).map((tab) => {
+            const TabIcon = { changes: FileDiff, files: Folder, output: Terminal, timeline: Clock, plan: ClipboardList }[tab];
+            return (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={inspector === tab}
+                onClick={() => setInspector(tab)}
+                title={tab[0].toUpperCase() + tab.slice(1)}
+                className={`relative flex-1 min-w-0 flex items-center justify-center gap-1.5 py-2 capitalize transition-colors duration-fast ${inspector === tab ? "text-th-text-primary font-medium" : "text-th-text-muted hover:text-th-text-secondary"}`}
+              >
+                <TabIcon size={13} className="shrink-0" />
+                <span className="truncate">{tab}</span>
+                {tab === "changes" && reviewStats.count > 0 && (
+                  <span className="rounded-full bg-th-accent/15 px-1.5 text-2xs font-medium text-th-accent">{reviewStats.count}</span>
+                )}
+                {inspector === tab && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-th-accent" />}
+              </button>
+            );
+          })}
         </div>
         <div className="flex-1 overflow-y-auto p-3 text-xs">
           {inspector === "changes" && (
@@ -1738,19 +1841,20 @@ export default function CodePage() {
               {changes?.message && <p className="text-th-text-muted">{changes.message}</p>}
               {sessionId && (changes?.files || []).some((file) => file.origin !== "outside") && (
                 confirmRevert ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-th-text-secondary">Revert Otto's changes? Edits made outside Otto stay.</span>
-                    <button type="button" className="text-red-400" onClick={() => { void runRevert(undefined, changeTurn ?? undefined); }}>Revert</button>
-                    <button type="button" className="text-th-text-muted" onClick={() => setConfirmRevert(false)}>Cancel</button>
+                  <div role="alertdialog" aria-label="Revert turn" className="flex flex-wrap items-center gap-2 rounded-xl border border-th-danger/25 bg-th-danger/8 p-2">
+                    <span className="flex-1 min-w-[10rem] text-th-text-secondary">Revert Otto's changes? Edits made outside Otto stay.</span>
+                    <Button variant="ghost" onClick={() => setConfirmRevert(false)}>Cancel</Button>
+                    <Button variant="danger" className="!bg-th-danger/10" onClick={() => { void runRevert(undefined, changeTurn ?? undefined); }}>Revert</Button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 text-th-text-muted hover:text-th-text-primary"
-                    onClick={() => setConfirmRevert(true)}
-                  >
-                    <RotateCcw size={12} /> Revert turn
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 text-th-text-secondary">
+                      <span className="font-medium text-th-text-primary">{reviewStats.count} file{reviewStats.count === 1 ? "" : "s"}</span>
+                      <span className="text-th-diff-add"> +{reviewStats.added}</span>
+                      <span className="text-th-diff-del"> −{reviewStats.deleted}</span>
+                    </span>
+                    <Button variant="ghost" onClick={() => setConfirmRevert(true)}><RotateCcw size={12} /> Revert turn</Button>
+                  </div>
                 )
               )}
               {revertNote && <p className="text-th-text-secondary">{revertNote}</p>}
@@ -1759,48 +1863,55 @@ export default function CodePage() {
               )}
               {(changes?.files || []).map((file) => {
                 const outside = file.origin === "outside";
+                const { name, dir } = splitPath(file.path);
+                const StatusIcon = file.status === "added" ? FilePlus2 : file.status === "deleted" ? FileMinus2 : FilePen;
+                const statusTone = file.status === "added" ? "text-th-success" : file.status === "deleted" ? "text-th-danger" : "text-th-warning";
+                const open = diffPath === file.path;
                 return (
-                <div key={file.path} className="flex items-center gap-2">
-                  <span className={`shrink-0 uppercase text-[10px] ${file.status === "added" ? "text-emerald-400" : file.status === "deleted" ? "text-red-300" : "text-amber-300"}`}>
-                    {file.status === "added" ? "A" : file.status === "deleted" ? "D" : "M"}
-                  </span>
-                  <button type="button" className="truncate text-left flex-1 font-mono hover:text-th-text-primary text-th-text-secondary" onClick={() => setDiffPath(diffPath === file.path ? null : file.path)}>
-                    {file.path}
-                  </button>
-                  {outside && <span className="shrink-0 text-th-text-muted">outside</span>}
-                  {file.added != null && <span className="shrink-0 text-emerald-400">+{file.added}</span>}
-                  {file.deleted != null && <span className="shrink-0 text-red-300">-{file.deleted}</span>}
-                  {file.status !== "deleted" && (
-                    <button type="button" className="shrink-0 text-th-text-muted hover:text-th-text-primary" title="Open file" onClick={() => openFile(file.path)}>
-                      Open
-                    </button>
-                  )}
-                  {!outside && (
-                    <button
-                      type="button"
-                      title={`Revert ${file.path}`}
-                      aria-label={`Revert ${file.path}`}
-                      className="shrink-0 p-1 rounded text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover"
-                      onClick={() => { void runRevert([file.path], changeTurn ?? undefined); }}
-                    >
-                      <Undo2 size={13} />
-                    </button>
-                  )}
-                </div>
+                  <div key={file.path} className="space-y-1.5">
+                    <div className={`group flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition-colors duration-fast ${open ? "bg-th-surface-hover" : "hover:bg-th-surface-hover/60"}`}>
+                      <StatusIcon size={14} className={`shrink-0 ${statusTone}`} aria-label={file.status} />
+                      <button
+                        type="button"
+                        aria-expanded={open}
+                        title={file.path}
+                        className="min-w-0 flex-1 truncate text-left"
+                        onClick={() => setDiffPath(open ? null : file.path)}
+                      >
+                        <span className="font-medium text-th-text-primary">{name}</span>
+                        {dir && <span className="ml-1.5 text-th-text-muted">{dir}</span>}
+                      </button>
+                      {outside && <Badge title="Changed outside Otto and not reverted">outside</Badge>}
+                      {file.added != null && <span className="shrink-0 text-th-diff-add">+{file.added}</span>}
+                      {file.deleted != null && <span className="shrink-0 text-th-diff-del">−{file.deleted}</span>}
+                      {file.status !== "deleted" && (
+                        <IconButton label={`Open ${file.path}`} icon={<ExternalLink size={12} />} onClick={() => openFile(file.path)} />
+                      )}
+                      {!outside && (
+                        <IconButton
+                          label={`Revert ${file.path}`}
+                          icon={<Undo2 size={13} />}
+                          className="hover:!text-th-danger"
+                          onClick={() => { void runRevert([file.path], changeTurn ?? undefined); }}
+                        />
+                      )}
+                    </div>
+                    {open && diff && (
+                      <PatchView
+                        diff={diff}
+                        path={file.path}
+                        truncated={diffTruncated}
+                        onAcceptHunk={() => {}}
+                        onUndoHunk={
+                          sessionId && changes?.git && !outside
+                            ? (hunk) => { void runRevert([file.path], changeTurn ?? undefined, hunk); }
+                            : undefined
+                        }
+                      />
+                    )}
+                  </div>
                 );
               })}
-              {diff && (
-                <PatchView
-                  diff={diff}
-                  truncated={diffTruncated}
-                  onAcceptHunk={() => {}}
-                  onUndoHunk={
-                    sessionId && diffPath && changes?.git && !(changes.files || []).some((file) => file.path === diffPath && file.origin === "outside")
-                      ? (hunk) => { void runRevert([diffPath], changeTurn ?? undefined, hunk); }
-                      : undefined
-                  }
-                />
-              )}
             </div>
           )}
           {inspector === "files" && artifact && sessionId && (artifact.type === "code" || artifact.type === "txt" || artifact.type === "md" || artifact.type === "json") && (
@@ -1830,9 +1941,9 @@ export default function CodePage() {
                 const showTurn = item.turn > 0 && (index === 0 || output[index - 1].turn !== item.turn);
                 return (
                   <div key={item.id} className="space-y-1">
-                    {showTurn && <p className="text-[10px] uppercase tracking-wider text-th-text-muted pt-1">Turn {item.turn}</p>}
+                    {showTurn && <p className="text-2xs uppercase tracking-wider text-th-text-muted pt-1">Turn {item.turn}</p>}
                     <div className="flex items-center gap-2">
-                      {item.command && <p className="font-mono text-[11px] text-th-text-muted break-all flex-1">$ {item.command}</p>}
+                      {item.command && <p className="font-mono text-2xs text-th-text-muted break-all flex-1">$ {item.command}</p>}
                       {item.done && exit != null && (
                         <span className={exit === 0 ? "text-emerald-400" : "text-red-300"}>
                           {exit === 0 ? "passed" : `exit ${exit}`}
@@ -1847,7 +1958,7 @@ export default function CodePage() {
                         <Copy size={12} />
                       </button>
                     </div>
-                    <pre className="whitespace-pre-wrap font-mono text-[11px] text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.text || (item.done ? "(no output)" : "Running…")}</pre>
+                    <pre className="whitespace-pre-wrap font-mono text-2xs text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.text || (item.done ? "(no output)" : "Running…")}</pre>
                   </div>
                 );
               })}
@@ -1876,22 +1987,24 @@ export default function CodePage() {
         </div>
       </aside>}
       {planConfirm && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-6">
-          <div className="w-full max-w-lg max-h-[70vh] flex flex-col rounded-xl border border-th-border bg-th-bg-secondary shadow-xl">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6 animate-fade-in" role="dialog" aria-modal="true" aria-label="Build this plan" onKeyDown={(event) => { if (event.key === "Escape") setPlanConfirm(false); }}>
+          <div className="w-full max-w-lg max-h-[70vh] flex flex-col rounded-2xl border border-th-border bg-th-bg-secondary shadow-2xl animate-pop-in">
             <div className="px-4 py-3 border-b border-th-border text-sm text-th-text-primary">Build this plan?</div>
-            <pre className="flex-1 overflow-auto px-4 py-3 text-[11px] whitespace-pre-wrap text-th-text-secondary">{planText || "The plan is in /output/plan.md."}</pre>
+            <pre className="flex-1 overflow-auto px-4 py-3 text-2xs whitespace-pre-wrap text-th-text-secondary">{planText || "The plan is in /output/plan.md."}</pre>
             <div className="px-4 py-3 border-t border-th-border flex justify-end gap-2">
-              <button type="button" onClick={() => setPlanConfirm(false)} className="px-2 py-1 text-xs text-th-text-muted">Cancel</button>
-              <button type="button" onClick={() => { void confirmBuild(); }} className="px-2 py-1 text-xs rounded border border-th-border text-th-text-primary">Build</button>
+              <Button variant="ghost" onClick={() => setPlanConfirm(false)}>Cancel</Button>
+              <Button variant="primary" autoFocus onClick={() => { void confirmBuild(); }}><Hammer size={12} /> Build</Button>
             </div>
           </div>
         </div>
       )}
-      {toast && (
-        <div className="fixed bottom-4 right-4 z-30 max-w-sm rounded-lg border border-th-border bg-th-bg-secondary px-3 py-2 text-xs text-th-text-primary shadow-lg" role="status">
-          {toast}
-        </div>
-      )}
+      {undoDelete ? (
+        <Toast key={undoDelete.id} duration={0} onDismiss={() => setUndoDelete(null)} action={{ label: "Undo", onClick: undoDeleteSession }}>
+          Deleted “{undoDelete.title}”
+        </Toast>
+      ) : toast ? (
+        <Toast duration={0} onDismiss={() => setToast(null)}>{toast}</Toast>
+      ) : null}
       {preview && (
         <FolderGrantDialog
           preview={preview}

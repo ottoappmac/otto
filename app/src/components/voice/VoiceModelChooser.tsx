@@ -63,7 +63,7 @@ function FitBadge({ fits }: { fits: VoiceCatalogRow["fits"] }) {
   };
   const { label, cls } = map[fits] ?? map.unknown;
   return (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${cls}`}>
+    <span className={`text-2xs font-medium px-1.5 py-0.5 rounded border ${cls}`}>
       {label}
     </span>
   );
@@ -94,7 +94,7 @@ function DownloadProgress({ job }: { job: DownloadJob }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <div className="flex justify-between text-[10px] text-zinc-500">
+      <div className="flex justify-between text-2xs text-zinc-500">
         <span>{bytesToHuman(job.bytes_done)} / {bytesToHuman(job.bytes_total)}</span>
         {job.eta_seconds != null && <span>{job.eta_seconds}s remaining</span>}
       </div>
@@ -158,12 +158,12 @@ function ModelRow({
               {row.display_name}
             </span>
             {row.featured && (
-              <span className="text-[9px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
+              <span className="text-2xs font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
                 Recommended
               </span>
             )}
             {isBuiltin && (
-              <span className="text-[9px] font-semibold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">
+              <span className="text-2xs font-semibold text-green-400 bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded">
                 Built-in
               </span>
             )}
@@ -177,13 +177,13 @@ function ModelRow({
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <FitBadge fits={row.fits} />
             {row.weights_gb > 0 && (
-              <span className="flex items-center gap-0.5 text-[10px] text-zinc-500">
+              <span className="flex items-center gap-0.5 text-2xs text-zinc-500">
                 <HardDrive className="w-3 h-3" />
                 {row.weights_gb.toFixed(2)} GB
               </span>
             )}
             {row.language && row.language !== "multilingual" && (
-              <span className="text-[10px] text-zinc-500">{row.language}</span>
+              <span className="text-2xs text-zinc-500">{row.language}</span>
             )}
           </div>
         </div>

@@ -63,7 +63,7 @@ export default function OutputFileGrid({
                 <span className="text-xs font-medium text-th-text-secondary group-hover:text-th-text-primary transition-colors truncate flex-1">
                   {node.name}
                 </span>
-                <span className="text-[10px] text-th-text-muted shrink-0 tabular-nums">
+                <span className="text-2xs text-th-text-muted shrink-0 tabular-nums">
                   {node.count}
                 </span>
                 {isOpen ? (

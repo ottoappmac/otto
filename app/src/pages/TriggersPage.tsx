@@ -837,7 +837,7 @@ function buildClaudeSnippet(customHooks: HookDefinition[], includeSystem: boolea
 
 function StatPill({ label, value }: { label: string; value: number | string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full bg-th-inset-bg border border-th-border text-th-text-tertiary font-medium">
+    <span className="inline-flex items-center gap-1.5 text-2xs px-2 py-0.5 rounded-full bg-th-inset-bg border border-th-border text-th-text-tertiary font-medium">
       <span className="text-th-text-primary font-semibold">{value}</span>
       {label}
     </span>
@@ -860,7 +860,7 @@ function ClaudeHookSnippet({ customHooks }: { customHooks: HookDefinition[] }) {
         Add to <code className="bg-th-inset-bg px-1 py-0.5 rounded text-th-text-secondary">~/.claude/settings.json</code>:
       </p>
       <div className="relative group">
-        <pre className="p-3 bg-th-inset-bg border border-th-border rounded-lg text-[11px] leading-relaxed text-th-text-secondary overflow-x-auto max-h-48">{snippet}</pre>
+        <pre className="p-3 bg-th-inset-bg border border-th-border rounded-lg text-2xs leading-relaxed text-th-text-secondary overflow-x-auto max-h-48">{snippet}</pre>
         <button
           type="button"
           onClick={handleCopy}
@@ -1217,7 +1217,7 @@ function ManagedTriggerRow({ t, label, description, busy, evalSuggestion, onEdit
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-th-text-primary truncate">{label}</span>
             {statusPill && (
-              <span className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${statusPill.cls}`}>
+              <span className={`inline-flex items-center text-2xs px-1.5 py-0.5 rounded-full font-medium border ${statusPill.cls}`}>
                 {statusPill.label}
               </span>
             )}
@@ -1227,7 +1227,7 @@ function ManagedTriggerRow({ t, label, description, busy, evalSuggestion, onEdit
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               <span className="text-xs text-th-text-muted">Last run: {formatRelative(t.last_run)}</span>
               {t.last_status && (
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-semibold border ${
                   t.last_status === "success"
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                     : t.last_status === "error"
@@ -1286,14 +1286,14 @@ function ManagedTriggerRow({ t, label, description, busy, evalSuggestion, onEdit
         </div>
       </div>
       {t.last_error && (
-        <p className="text-[11px] text-red-400/90 mt-2 truncate" title={t.last_error}>
+        <p className="text-2xs text-red-400/90 mt-2 truncate" title={t.last_error}>
           {t.last_error}
         </p>
       )}
       {evalSuggestion && (
         <button
           onClick={() => navigate(`/ambient?highlight=${encodeURIComponent(evalSuggestion.id)}`)}
-          className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 transition-all"
+          className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-2xs font-medium text-amber-300 hover:bg-amber-500/20 transition-all"
           title="An improved prompt was suggested for this trigger"
         >
           <Sparkles size={11} aria-hidden />
@@ -1418,10 +1418,10 @@ function TriggerRow({ t, busy, evalSuggestion, onEdit, onViewRuns, onToggle, onR
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-mono text-sm text-th-text-primary truncate">{t.id}</span>
-            <span className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${statusPill.cls}`}>
+            <span className={`inline-flex items-center text-2xs px-1.5 py-0.5 rounded-full font-medium border ${statusPill.cls}`}>
               {statusPill.label}
             </span>
-            <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-th-card-bg text-th-text-muted border border-th-border">
+            <span className="text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-th-card-bg text-th-text-muted border border-th-border">
               {t.type}
             </span>
           </div>
@@ -1432,7 +1432,7 @@ function TriggerRow({ t, busy, evalSuggestion, onEdit, onViewRuns, onToggle, onR
             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
               <span className="text-xs text-th-text-muted">Last run: {formatRelative(t.last_run)}</span>
               {t.last_status && (
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-semibold border ${
                   t.last_status === "success"
                     ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                     : t.last_status === "error"
@@ -1466,7 +1466,7 @@ function TriggerRow({ t, busy, evalSuggestion, onEdit, onViewRuns, onToggle, onR
           {confirmDelete ? (
             <>
               <button
-                className="px-2 py-1 rounded-md bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 text-[11px] font-medium transition-colors"
+                className="px-2 py-1 rounded-md bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 text-2xs font-medium transition-colors"
                 onClick={() => { setConfirmDelete(false); void onDelete(); }}
                 title="Confirm delete"
               >
@@ -1506,14 +1506,14 @@ function TriggerRow({ t, busy, evalSuggestion, onEdit, onViewRuns, onToggle, onR
         </div>
       </div>
       {t.last_error && (
-        <p className="text-[11px] text-red-400/90 mt-2 truncate" title={t.last_error}>
+        <p className="text-2xs text-red-400/90 mt-2 truncate" title={t.last_error}>
           {t.last_error}
         </p>
       )}
       {evalSuggestion && (
         <button
           onClick={() => navigate(`/ambient?highlight=${encodeURIComponent(evalSuggestion.id)}`)}
-          className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 transition-all"
+          className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/25 text-2xs font-medium text-amber-300 hover:bg-amber-500/20 transition-all"
           title="An improved prompt was suggested for this trigger"
         >
           <Sparkles size={11} aria-hidden />

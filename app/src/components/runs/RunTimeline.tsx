@@ -62,8 +62,8 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
     return (
       <>
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-[11px] font-semibold text-th-text-muted uppercase tracking-wider">User</span>
-          {event.ts && <span className="text-[10px] text-th-text-muted/50 tabular-nums">{formatTs(event.ts)}</span>}
+          <span className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">User</span>
+          {event.ts && <span className="text-2xs text-th-text-muted/50 tabular-nums">{formatTs(event.ts)}</span>}
         </div>
         <p className="text-sm text-th-text-primary leading-relaxed whitespace-pre-wrap break-words">{content}</p>
       </>
@@ -74,10 +74,10 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
     return (
       <>
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">
+          <span className="text-2xs font-semibold text-blue-400 uppercase tracking-wider">
             {event.subagent && !inGroup ? event.subagent : event.meta?.streaming ? "Thinking" : "Agent"}
           </span>
-          {event.ts && <span className="text-[10px] text-th-text-muted/50 tabular-nums">{formatTs(event.ts)}</span>}
+          {event.ts && <span className="text-2xs text-th-text-muted/50 tabular-nums">{formatTs(event.ts)}</span>}
         </div>
         <div className="prose prose-sm max-w-none text-th-text-primary prose-p:my-1 prose-pre:text-xs prose-pre:bg-th-inset-bg">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
@@ -107,7 +107,7 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
         >
           <Icon size={12} className={`${className} shrink-0`} aria-hidden />
           {event.subagent && !inGroup && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium shrink-0">
+            <span className="text-2xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium shrink-0">
               {event.subagent}
             </span>
           )}
@@ -115,18 +115,18 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
             {toolName}
           </span>
           {durationMs != null && (
-            <span className="inline-flex items-center gap-0.5 text-[10px] text-th-text-muted shrink-0 tabular-nums">
+            <span className="inline-flex items-center gap-0.5 text-2xs text-th-text-muted shrink-0 tabular-nums">
               <Clock size={9} aria-hidden />
               {formatDuration(durationMs)}
             </span>
           )}
           {isPending ? (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0">running</span>
+            <span className="text-2xs px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium shrink-0">running</span>
           ) : (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0">done</span>
+            <span className="text-2xs px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0">done</span>
           )}
           {(resultEvent?.ts ?? event.ts) && (
-            <span className="text-[10px] text-th-text-muted/50 ml-auto shrink-0 tabular-nums">{formatTs(resultEvent?.ts ?? event.ts)}</span>
+            <span className="text-2xs text-th-text-muted/50 ml-auto shrink-0 tabular-nums">{formatTs(resultEvent?.ts ?? event.ts)}</span>
           )}
           {canExpand && (
             expanded ? <ChevronDown size={11} className="text-th-text-muted shrink-0" /> : <ChevronRight size={11} className="text-th-text-muted shrink-0" />
@@ -136,16 +136,16 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
           <div className="mt-2 space-y-2">
             {hasArgs && (
               <div>
-                <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider mb-1">Args</p>
-                <pre className="text-[11px] bg-th-inset-bg border border-th-border/60 rounded-md p-2 overflow-x-auto text-th-text-secondary leading-relaxed">
+                <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider mb-1">Args</p>
+                <pre className="text-2xs bg-th-inset-bg border border-th-border/60 rounded-md p-2 overflow-x-auto text-th-text-secondary leading-relaxed">
                   {JSON.stringify(event.args, null, 2)}
                 </pre>
               </div>
             )}
             {hasResult && (
               <div>
-                <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wider mb-1">Result</p>
-                <p className="text-[11px] text-th-text-muted bg-th-inset-bg border border-th-border/60 rounded-md p-2 leading-relaxed whitespace-pre-wrap break-words">
+                <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider mb-1">Result</p>
+                <p className="text-2xs text-th-text-muted bg-th-inset-bg border border-th-border/60 rounded-md p-2 leading-relaxed whitespace-pre-wrap break-words">
                   {resultContent.slice(0, 800)}{resultContent.length > 800 ? "…" : ""}
                 </p>
               </div>
@@ -171,12 +171,12 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
         <button
           type="button"
           onClick={() => body && setExpanded((v) => !v)}
-          className={`text-[11px] leading-relaxed text-left ${tone} ${body ? "hover:opacity-80" : ""}`}
+          className={`text-2xs leading-relaxed text-left ${tone} ${body ? "hover:opacity-80" : ""}`}
         >
           {summary}
         </button>
         {expanded && body && (
-          <pre className="mt-1.5 text-[11px] leading-relaxed whitespace-pre-wrap break-words text-th-text-muted bg-th-inset-bg border border-th-border/60 rounded-md p-2">
+          <pre className="mt-1.5 text-2xs leading-relaxed whitespace-pre-wrap break-words text-th-text-muted bg-th-inset-bg border border-th-border/60 rounded-md p-2">
             {body}
           </pre>
         )}
@@ -192,7 +192,7 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
       );
     }
     return (
-      <span className="text-[10px] text-th-text-muted/60 font-medium leading-relaxed">{content.slice(0, 120)}</span>
+      <span className="text-2xs text-th-text-muted/60 font-medium leading-relaxed">{content.slice(0, 120)}</span>
     );
   }
 
@@ -201,9 +201,9 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
       <>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xs font-semibold text-red-400">Error</span>
-          {event.ts && <span className="text-[10px] text-th-text-muted/50 ml-auto tabular-nums">{formatTs(event.ts)}</span>}
+          {event.ts && <span className="text-2xs text-th-text-muted/50 ml-auto tabular-nums">{formatTs(event.ts)}</span>}
         </div>
-        <p className="text-[11px] text-red-300/80 bg-red-500/[0.07] border border-red-500/20 rounded-lg px-3 py-2 leading-relaxed break-words whitespace-pre-wrap">
+        <p className="text-2xs text-red-300/80 bg-red-500/[0.07] border border-red-500/20 rounded-lg px-3 py-2 leading-relaxed break-words whitespace-pre-wrap">
           {content}
         </p>
       </>
@@ -216,7 +216,7 @@ function EventContent({ event, inGroup }: { event: AugmentedEvent; inGroup: bool
         <span className={`text-xs font-medium ${type === "stopped" ? "text-th-text-muted" : "text-emerald-400"}`}>
           {type === "done" ? "Run completed" : "Run stopped"}
         </span>
-        {event.ts && <span className="text-[10px] text-th-text-muted/50 ml-auto tabular-nums">{formatTs(event.ts)}</span>}
+        {event.ts && <span className="text-2xs text-th-text-muted/50 ml-auto tabular-nums">{formatTs(event.ts)}</span>}
       </div>
     );
   }
@@ -246,11 +246,11 @@ function SubagentGroup({ name, events }: { name: string; events: AugmentedEvent[
   return (
     <div className="ml-7 my-1">
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium">
+        <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium">
           <Bot size={10} aria-hidden />
           {name}
         </span>
-        <span className="text-[10px] text-th-text-muted/50 tabular-nums">{events.length} step{events.length !== 1 ? "s" : ""}</span>
+        <span className="text-2xs text-th-text-muted/50 tabular-nums">{events.length} step{events.length !== 1 ? "s" : ""}</span>
       </div>
       <div className="relative">
         <div className="absolute left-[11px] top-2 bottom-2 w-px bg-blue-500/25" aria-hidden />

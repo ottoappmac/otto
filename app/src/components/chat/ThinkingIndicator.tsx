@@ -117,7 +117,7 @@ export function ThinkingIndicator({
       {pendingContext.map((ctx, i) => (
         <div key={i} className="flex items-center gap-2 pl-0.5">
           <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse shrink-0" />
-          <span className="text-[11px] text-th-text-muted italic truncate max-w-xs">
+          <span className="text-2xs text-th-text-muted italic truncate max-w-xs">
             "{ctx.length > 60 ? ctx.slice(0, 60) + "…" : ctx}"
           </span>
         </div>

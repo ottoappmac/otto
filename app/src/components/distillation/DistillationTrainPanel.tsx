@@ -216,7 +216,7 @@ export function DistillationTrainPanel({
 
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-lg bg-th-inset-bg border border-th-border px-3 py-2">
-          <p className="text-[10px] uppercase tracking-wider text-th-text-muted">
+          <p className="text-2xs uppercase tracking-wider text-th-text-muted">
             {source === "upload" ? "Valid rows" : "Trajectories"}
           </p>
           <p className="text-sm font-semibold text-th-text-primary mt-0.5 tabular-nums">
@@ -224,7 +224,7 @@ export function DistillationTrainPanel({
           </p>
         </div>
         <div className="rounded-lg bg-th-inset-bg border border-th-border px-3 py-2">
-          <p className="text-[10px] uppercase tracking-wider text-th-text-muted">Iters</p>
+          <p className="text-2xs uppercase tracking-wider text-th-text-muted">Iters</p>
           <input
             type="number"
             min={1}
@@ -236,7 +236,7 @@ export function DistillationTrainPanel({
           />
         </div>
         <div className="rounded-lg bg-th-inset-bg border border-th-border px-3 py-2">
-          <p className="text-[10px] uppercase tracking-wider text-th-text-muted">Progress</p>
+          <p className="text-2xs uppercase tracking-wider text-th-text-muted">Progress</p>
           <p className="text-sm font-semibold text-th-text-primary mt-0.5 tabular-nums">
             {running && status.iter_current != null
               ? `${status.iter_current}/${status.iters}`
@@ -246,7 +246,7 @@ export function DistillationTrainPanel({
       </div>
 
       <div>
-        <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+        <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
           Purpose
         </label>
         <textarea
@@ -257,7 +257,7 @@ export function DistillationTrainPanel({
           placeholder="e.g. Mail triage and calendar scheduling from my Otto sessions"
           className="w-full px-3 py-2 rounded-lg bg-th-input-bg border border-th-input-border text-sm text-th-text-primary placeholder:text-th-text-muted focus:outline-none focus:border-violet-400 focus:ring-1 focus:ring-violet-300/30 resize-y disabled:opacity-60"
         />
-        <p className="text-[11px] text-th-text-muted mt-1 leading-relaxed">
+        <p className="text-2xs text-th-text-muted mt-1 leading-relaxed">
           Written onto the catalog card so you and the agent know when to load this adapter.
         </p>
       </div>
@@ -369,14 +369,14 @@ export function DistillationTrainPanel({
       {(running || status.log_lines.length > 0) && (
         <pre
           ref={logRef}
-          className="max-h-44 overflow-auto rounded-lg bg-black/80 p-3 text-[10px] text-emerald-100/90 font-mono whitespace-pre-wrap leading-relaxed"
+          className="max-h-44 overflow-auto rounded-lg bg-black/80 p-3 text-2xs text-emerald-100/90 font-mono whitespace-pre-wrap leading-relaxed"
         >
           {status.log_lines.join("\n") || "Waiting for output…"}
         </pre>
       )}
 
       {status.state === "success" && status.adapter_path && (
-        <p className="text-[11px] text-th-text-tertiary break-all">
+        <p className="text-2xs text-th-text-tertiary break-all">
           {status.display_name && (
             <span className="block font-medium text-th-text-primary mb-0.5">
               {status.display_name}

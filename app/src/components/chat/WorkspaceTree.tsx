@@ -49,10 +49,10 @@ function TreeLevel({
   }, []);
 
   if (error) {
-    return <p className="text-[11px] text-red-400/80 px-2 py-1">{error}</p>;
+    return <p className="text-2xs text-red-400/80 px-2 py-1">{error}</p>;
   }
   if (!entries) {
-    return <p className="text-[11px] text-th-text-muted px-2 py-1">Loading…</p>;
+    return <p className="text-2xs text-th-text-muted px-2 py-1">Loading…</p>;
   }
 
   return (

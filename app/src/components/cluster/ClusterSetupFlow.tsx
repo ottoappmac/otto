@@ -148,7 +148,7 @@ function FlowStep({
       <div className="flex items-center gap-3 px-4 py-3">
         <span
           className={cx(
-            "inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-bold shrink-0",
+            "inline-flex items-center justify-center w-6 h-6 rounded-full text-2xs font-bold shrink-0",
             isDone
               ? "bg-emerald-500 text-white"
               : isActive
@@ -172,7 +172,7 @@ function FlowStep({
             {title}
           </p>
           {isDone && doneDetail && (
-            <p className="text-[10px] text-th-text-tertiary truncate mt-0.5">
+            <p className="text-2xs text-th-text-tertiary truncate mt-0.5">
               {doneDetail}
             </p>
           )}
@@ -206,11 +206,11 @@ function RuntimeErrorPanel({
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-3 space-y-1.5">
         <div className="flex items-start gap-2">
           <AlertTriangle size={13} className="text-amber-500 mt-0.5 shrink-0" />
-          <p className="text-[11px] font-semibold text-th-text-primary leading-snug">
+          <p className="text-2xs font-semibold text-th-text-primary leading-snug">
             {title}
           </p>
         </div>
-        <p className="text-[11px] text-th-text-secondary leading-relaxed pl-5">
+        <p className="text-2xs text-th-text-secondary leading-relaxed pl-5">
           {hint}
         </p>
       </div>
@@ -218,7 +218,7 @@ function RuntimeErrorPanel({
         <button
           type="button"
           onClick={onRetry}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover transition-colors"
         >
           <RefreshCw size={11} /> Try again
         </button>
@@ -226,14 +226,14 @@ function RuntimeErrorPanel({
           <button
             type="button"
             onClick={() => setShowDetails((v) => !v)}
-            className="text-[11px] text-th-text-muted hover:text-th-text-tertiary underline underline-offset-2 transition-colors"
+            className="text-2xs text-th-text-muted hover:text-th-text-tertiary underline underline-offset-2 transition-colors"
           >
             {showDetails ? "Hide details" : "Show details"}
           </button>
         )}
       </div>
       {showDetails && hasDetails && (
-        <pre className="px-3 py-2.5 rounded-lg border border-th-border bg-th-inset-bg text-[10px] text-th-text-tertiary font-mono whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
+        <pre className="px-3 py-2.5 rounded-lg border border-th-border bg-th-inset-bg text-2xs text-th-text-tertiary font-mono whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
           {[...log.slice(-40), rawError].filter(Boolean).join("\n")}
         </pre>
       )}
@@ -326,16 +326,16 @@ function MacCard({
           <Server size={12} className="text-th-text-muted shrink-0" />
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-[11px] font-medium text-th-text-primary truncate">
+          <p className="text-2xs font-medium text-th-text-primary truncate">
             {mac.label}
           </p>
-          <p className="text-[10px] text-th-text-muted font-mono">
+          <p className="text-2xs text-th-text-muted font-mono">
             {mac.host}
             {mac.port !== 22 ? `:${mac.port}` : ""}
           </p>
         </div>
         {isDone && (
-          <span className="text-[10px] font-medium text-emerald-500 shrink-0">
+          <span className="text-2xs font-medium text-emerald-500 shrink-0">
             Added
           </span>
         )}
@@ -344,14 +344,14 @@ function MacCard({
             <button
               type="button"
               onClick={onSetup}
-              className="px-2.5 py-1 text-[10px] font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg hover:opacity-90 transition-opacity"
+              className="px-2.5 py-1 text-2xs font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg hover:opacity-90 transition-opacity"
             >
               Add
             </button>
             <button
               type="button"
               onClick={onSkip}
-              className="px-2.5 py-1 text-[10px] font-medium rounded-md border border-th-border text-th-text-tertiary hover:text-th-text-secondary transition-colors"
+              className="px-2.5 py-1 text-2xs font-medium rounded-md border border-th-border text-th-text-tertiary hover:text-th-text-secondary transition-colors"
             >
               Not now
             </button>
@@ -360,20 +360,20 @@ function MacCard({
       </div>
 
       {isError && mac.error && (
-        <p className="text-[10px] text-rose-400 leading-relaxed">{mac.error}</p>
+        <p className="text-2xs text-rose-400 leading-relaxed">{mac.error}</p>
       )}
 
       {isNeedsPw && (
         <div className="space-y-2">
           {mac.error && (
-            <p className="text-[10px] text-amber-500 leading-relaxed">{mac.error}</p>
+            <p className="text-2xs text-amber-500 leading-relaxed">{mac.error}</p>
           )}
-          <p className="text-[10px] text-th-text-muted leading-relaxed">
+          <p className="text-2xs text-th-text-muted leading-relaxed">
             Enter the login for this Mac to install a secure key. The password
             is used once and never stored or seen by any AI.
           </p>
           <div className="space-y-1">
-            <label className="block text-[10px] font-medium text-th-text-tertiary">
+            <label className="block text-2xs font-medium text-th-text-tertiary">
               Username on that Mac
             </label>
             <input
@@ -389,7 +389,7 @@ function MacCard({
             />
           </div>
           <div className="space-y-1">
-            <label className="block text-[10px] font-medium text-th-text-tertiary">
+            <label className="block text-2xs font-medium text-th-text-tertiary">
               Mac login password
             </label>
             <div className="flex items-center gap-2">
@@ -412,7 +412,7 @@ function MacCard({
                 type="button"
                 disabled={!username.trim() || !pw}
                 onClick={submit}
-                className="px-2.5 py-1.5 text-[10px] font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-40 hover:opacity-90 transition-opacity shrink-0"
+                className="px-2.5 py-1.5 text-2xs font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-40 hover:opacity-90 transition-opacity shrink-0"
               >
                 Add Mac
               </button>
@@ -422,7 +422,7 @@ function MacCard({
       )}
 
       {isBusy && (
-        <p className="text-[10px] text-th-text-muted flex items-center gap-1.5">
+        <p className="text-2xs text-th-text-muted flex items-center gap-1.5">
           <Loader2 size={9} className="animate-spin" />
           {busyLabel}
         </p>
@@ -682,7 +682,7 @@ function ClusterNodesPanel({
       {/* Auto-discovered peers */}
       {peers.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[11px] font-medium text-emerald-500">
+          <p className="text-2xs font-medium text-emerald-500">
             Already in your cluster
           </p>
           {peers.map((p) => (
@@ -692,11 +692,11 @@ function ClusterNodesPanel({
             >
               <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium text-th-text-primary truncate">
+                <p className="text-2xs font-medium text-th-text-primary truncate">
                   {p.friendly_name ?? `${p.node_id.slice(0, 14)}…`}
                 </p>
                 {(p.chip ?? p.memory_total_gb) && (
-                  <p className="text-[10px] text-th-text-muted">
+                  <p className="text-2xs text-th-text-muted">
                     {[
                       p.chip,
                       p.memory_total_gb != null &&
@@ -715,7 +715,7 @@ function ClusterNodesPanel({
       {/* Nearby Macs that can be added */}
       {macs.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[11px] font-medium text-th-text-secondary">
+          <p className="text-2xs font-medium text-th-text-secondary">
             Macs found nearby
           </p>
           {macs.map((m, idx) => (
@@ -735,7 +735,7 @@ function ClusterNodesPanel({
       {/* Calm single-Mac default */}
       {!scanning && peers.length === 0 && macs.filter((m) => m.status !== "skipped").length === 0 && (
         <div className="rounded-xl border border-th-border bg-th-inset-bg px-3 py-2.5">
-          <p className="text-[11px] text-th-text-secondary leading-relaxed">
+          <p className="text-2xs text-th-text-secondary leading-relaxed">
             Using <span className="font-medium text-th-text-primary">this Mac only</span>
             {" "}— a perfectly good cluster. To add more Macs, connect them over
             Thunderbolt or the same network with Remote Login enabled, then rescan.
@@ -746,7 +746,7 @@ function ClusterNodesPanel({
       {/* Configured remotes (settings variant) */}
       {variant === "settings" && remotes.length > 0 && (
         <div className="space-y-1.5">
-          <p className="text-[11px] font-medium text-th-text-secondary">
+          <p className="text-2xs font-medium text-th-text-secondary">
             Configured Macs
           </p>
           {remotes.map((r) => (
@@ -756,10 +756,10 @@ function ClusterNodesPanel({
             >
               <Server size={12} className="text-th-text-muted shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium text-th-text-primary truncate">
+                <p className="text-2xs font-medium text-th-text-primary truncate">
                   {r.label || r.ssh_alias}
                 </p>
-                <p className="text-[10px] text-th-text-muted font-mono truncate">
+                <p className="text-2xs text-th-text-muted font-mono truncate">
                   {r.ssh_alias}
                 </p>
               </div>
@@ -796,7 +796,7 @@ function ClusterNodesPanel({
         type="button"
         onClick={() => void scan()}
         disabled={scanning || !reachable}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover disabled:opacity-50 transition-colors"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover disabled:opacity-50 transition-colors"
       >
         {scanning ? (
           <Loader2 size={11} className="animate-spin" />
@@ -975,14 +975,14 @@ export default function ClusterSetupFlow({
     return (
       <div className="space-y-6">
         <section className="space-y-2">
-          <h3 className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
+          <h3 className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
             Cluster
           </h3>
           <ExoOperations enabled={settings.exo.enabled} pane="overview" />
         </section>
 
         <section className="space-y-2">
-          <h3 className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
+          <h3 className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
             Macs in this cluster
           </h3>
           <ClusterNodesPanel
@@ -994,7 +994,7 @@ export default function ClusterSetupFlow({
         </section>
 
         <section className="space-y-2">
-          <h3 className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
+          <h3 className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
             Model
           </h3>
           <ExoModelChooser
@@ -1030,13 +1030,13 @@ export default function ClusterSetupFlow({
         doneDetail="Running on this Mac"
       >
         {phase === "probing" && (
-          <p className="text-[11px] text-th-text-secondary flex items-center gap-1.5">
+          <p className="text-2xs text-th-text-secondary flex items-center gap-1.5">
             <Loader2 size={11} className="animate-spin" /> Checking the cluster…
           </p>
         )}
         {phase === "choosing" && (
           <div className="space-y-3">
-            <p className="text-[11px] text-th-text-secondary leading-relaxed">
+            <p className="text-2xs text-th-text-secondary leading-relaxed">
               {installed === false
                 ? "Otto runs the cluster on this Mac. The first start downloads the runtime (~600 MB for the recommended prebuilt) — no build tools required. You can switch to building from source or point at your own runtime first."
                 : "Otto runs the cluster on this Mac. Starting will download the runtime on first use if needed — no build tools required. You can switch to building from source or point at your own runtime first."}
@@ -1052,7 +1052,7 @@ export default function ClusterSetupFlow({
               <button
                 type="button"
                 onClick={() => void startNode()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md border border-th-tab-active-bg/40 bg-th-tab-active-bg text-th-tab-active-fg hover:opacity-90 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md border border-th-tab-active-bg/40 bg-th-tab-active-bg text-th-tab-active-fg hover:opacity-90 transition-colors"
               >
                 <Power size={11} />{" "}
                 {installed === false ? "Download & start" : "Start the cluster"}
@@ -1061,7 +1061,7 @@ export default function ClusterSetupFlow({
                 <button
                   type="button"
                   onClick={() => void startNode(true)}
-                  className="inline-flex items-center gap-1.5 text-[11px] text-th-text-muted hover:text-th-text-secondary underline underline-offset-2 transition-colors"
+                  className="inline-flex items-center gap-1.5 text-2xs text-th-text-muted hover:text-th-text-secondary underline underline-offset-2 transition-colors"
                 >
                   <RefreshCw size={10} /> Reinstall runtime
                 </button>
@@ -1071,7 +1071,7 @@ export default function ClusterSetupFlow({
         )}
         {phase === "starting" && (
           <div className="space-y-2.5">
-            <p className="text-[11px] text-th-text-secondary leading-relaxed">
+            <p className="text-2xs text-th-text-secondary leading-relaxed">
               Setting up the cluster runtime and starting it on this Mac. The
               first time can take a few minutes while it downloads.
             </p>
@@ -1079,7 +1079,7 @@ export default function ClusterSetupFlow({
               <button
                 type="button"
                 onClick={() => setShowLog((v) => !v)}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] text-th-text-tertiary hover:text-th-text-secondary transition-colors"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-2xs text-th-text-tertiary hover:text-th-text-secondary transition-colors"
               >
                 <span className="inline-flex items-center gap-1.5">
                   <Loader2 size={10} className="animate-spin text-th-text-muted" />
@@ -1092,7 +1092,7 @@ export default function ClusterSetupFlow({
               </button>
               {showLog && (
                 <div className="border-t border-th-border px-3 py-2">
-                  <pre className="text-[10px] text-th-text-tertiary font-mono leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">
+                  <pre className="text-2xs text-th-text-tertiary font-mono leading-relaxed whitespace-pre-wrap max-h-36 overflow-y-auto">
                     {log.slice(-30).join("\n") || "(waiting for output…)"}
                   </pre>
                 </div>
@@ -1139,7 +1139,7 @@ export default function ClusterSetupFlow({
         doneDetail={settings.exo?.model_name ?? ""}
       >
         <div className="space-y-3">
-          <p className="text-[11px] text-th-text-secondary leading-relaxed">
+          <p className="text-2xs text-th-text-secondary leading-relaxed">
             Pick a model to run on your cluster. We recommend one that fits
             comfortably — add more Macs to unlock bigger models.
           </p>
@@ -1167,7 +1167,7 @@ export default function ClusterSetupFlow({
             <button
               type="button"
               onClick={onComplete}
-              className="text-[11px] text-th-text-tertiary hover:text-th-text-secondary underline underline-offset-2 transition-colors"
+              className="text-2xs text-th-text-tertiary hover:text-th-text-secondary underline underline-offset-2 transition-colors"
             >
               Finish later
             </button>

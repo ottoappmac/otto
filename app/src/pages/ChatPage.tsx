@@ -2116,7 +2116,7 @@ export default function ChatPage() {
               className="text-xs text-th-text-tertiary"
               title="Slash to pick a subagent before sending; otherwise the orchestrator will route the message."
             >
-              Type <kbd className="px-1.5 py-0.5 bg-th-inset-bg border border-th-border rounded text-[10px] font-mono text-th-text-muted">/</kbd> to pick a subagent
+              Type <kbd className="px-1.5 py-0.5 bg-th-inset-bg border border-th-border rounded text-2xs font-mono text-th-text-muted">/</kbd> to pick a subagent
             </span>
           )}
           {renderItems.some(item => item.kind === "subagent-group") && (
@@ -2168,7 +2168,7 @@ export default function ChatPage() {
           )}
           {memoryHits.hits > 0 && (
             <span
-              className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-blue-500/10 text-blue-400/80 border border-blue-500/15"
+              className="inline-flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full bg-blue-500/10 text-blue-400/80 border border-blue-500/15"
               title={`Memory injected in ${memoryHits.hits} of ${memoryHits.total} responses`}
             >
               <Brain size={11} />
@@ -2252,7 +2252,7 @@ export default function ChatPage() {
         )}
         {!isStreaming && viewableSessionFiles.length > 0 && (
           <div className="mt-4 ml-10 p-3 rounded-xl border border-th-border bg-th-card-bg">
-            <p className="text-[10px] uppercase tracking-wider font-semibold text-th-text-muted mb-2">
+            <p className="text-2xs uppercase tracking-wider font-semibold text-th-text-muted mb-2">
               Output files
             </p>
             <OutputFileGrid
@@ -2330,7 +2330,7 @@ export default function ChatPage() {
             </button>
             <button
               onClick={() => { if (currentSessionId) api.openSessionFilesFolder(currentSessionId).catch((e) => console.warn("Failed to open folder:", e)); }}
-              className="flex items-center gap-1 text-[10px] text-th-text-tertiary hover:text-th-text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-th-surface-hover"
+              className="flex items-center gap-1 text-2xs text-th-text-tertiary hover:text-th-text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-th-surface-hover"
               title="Open in file manager"
             >
               <ExternalLink size={11} />
@@ -2406,7 +2406,7 @@ export default function ChatPage() {
                   <button
                     type="button"
                     onClick={() => { void beginGrant(name); }}
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 hover:bg-sky-500/30"
+                    className="text-2xs px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 hover:bg-sky-500/30"
                     title="Map as project workspace"
                   >
                     Map
@@ -2450,7 +2450,7 @@ export default function ChatPage() {
                 <MessageSquarePlus size={13} className="shrink-0 text-violet-400" />
                 <span className="text-xs text-violet-300/90">
                   Type to steer the agent in real time — press{" "}
-                  <kbd className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-violet-500/20 border border-violet-400/30 font-mono text-[10px] text-violet-300 leading-none">
+                  <kbd className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-violet-500/20 border border-violet-400/30 font-mono text-2xs text-violet-300 leading-none">
                     ↵
                   </kbd>{" "}
                   to inject
@@ -2475,7 +2475,7 @@ export default function ChatPage() {
           {slashOpen && slashItems.length > 0 && (
             <div ref={slashRef} className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-th-card-bg border border-th-border rounded-lg shadow-xl z-50">
               <div className="px-3 py-2 border-b border-th-border">
-                <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Select Agent</span>
+                <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Select Agent</span>
               </div>
               {slashItems.map((item, i) => (
                 <button
@@ -2489,7 +2489,7 @@ export default function ChatPage() {
                   }`}
                 >
                   <span className="font-medium">{item.name}</span>
-                  {item.description && <span className="text-[11px] text-th-text-muted truncate">{item.description}</span>}
+                  {item.description && <span className="text-2xs text-th-text-muted truncate">{item.description}</span>}
                 </button>
               ))}
             </div>
@@ -2504,7 +2504,7 @@ export default function ChatPage() {
                   <div key={`${item.group}:${item.path}:${i}`}>
                     {showHeader && (
                       <div className="px-3 py-2 border-b border-th-border">
-                        <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">
+                        <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">
                           {item.group === "pending"
                             ? "Attached (not sent yet)"
                             : item.group === "workspace"
@@ -2529,7 +2529,7 @@ export default function ChatPage() {
                       )}
                       <span className="truncate font-mono text-xs flex-1">{item.path}</span>
                       {item.pending && (
-                        <span className="shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400/80">
+                        <span className="shrink-0 text-2xs px-1 py-0.5 rounded bg-amber-500/10 text-amber-400/80">
                           not sent
                         </span>
                       )}
@@ -2697,19 +2697,19 @@ export default function ChatPage() {
             <ModelPicker value={currentModel} models={availableModels} onChange={handleModelChange} />
             <DepthPicker value={runDepth} onChange={handleRunDepthChange} />
             {exoModelLoading && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 shrink-0">
+              <span className="inline-flex items-center gap-1 text-2xs text-amber-400 shrink-0">
                 <Loader2 size={11} className="animate-spin" />
                 Loading…
               </span>
             )}
             {omlxModelLoading && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 shrink-0">
+              <span className="inline-flex items-center gap-1 text-2xs text-amber-400 shrink-0">
                 <Loader2 size={11} className="animate-spin" />
                 Loading…
               </span>
             )}
             {debugLlm && (
-              <div className="flex items-center gap-1.5 text-[10px] text-th-text-muted truncate">
+              <div className="flex items-center gap-1.5 text-2xs text-th-text-muted truncate">
                 <span className="px-1.5 py-0.5 rounded bg-th-inset-bg text-th-text-tertiary border border-th-border">
                   {debugLlm.provider === "exo" ? "Cluster"
                     : debugLlm.provider === "omlx" ? "Turbo"
@@ -2780,7 +2780,7 @@ export default function ChatPage() {
                 </span>
                 {m.label && (
                   <span
-                    className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-medium ${tone}`}
+                    className={`inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full border font-medium ${tone}`}
                     title={`Model: ${m.label}`}
                   >
                     <Cpu size={10} />
@@ -2944,7 +2944,7 @@ function ChatScheduleDialog({
                 placeholder="0 9 * * 1-5"
               />
             )}
-            <p className="text-[11px] text-th-text-muted mt-1.5">Cron: {cron}</p>
+            <p className="text-2xs text-th-text-muted mt-1.5">Cron: {cron}</p>
           </div>
           {error && (
             <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</div>
@@ -2997,7 +2997,7 @@ function MlxDownloadBanner({ job }: { job: MlxDownloadJob }) {
 
   return (
     <div className="max-w-4xl mx-auto mb-1.5 rounded-lg border border-th-border bg-th-surface px-3 py-2 space-y-1.5">
-      <div className="flex items-center justify-between gap-2 text-[11px]">
+      <div className="flex items-center justify-between gap-2 text-2xs">
         <span className="inline-flex items-center gap-1.5 text-amber-400 font-medium">
           <Loader2 size={11} className="animate-spin" />
           Downloading model…

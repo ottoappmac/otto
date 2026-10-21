@@ -209,7 +209,7 @@ function SafetyStopChip({
       <span
         title={title}
         className={`inline-flex items-center gap-1.5 shrink-0 rounded-full border font-medium whitespace-nowrap ${tone} ${
-          compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs"
+          compact ? "px-2 py-0.5 text-2xs" : "px-2.5 py-1 text-xs"
         }`}
       >
         <Icon size={compact ? 10 : 12} className="shrink-0" />
@@ -220,7 +220,7 @@ function SafetyStopChip({
       <div className="min-w-0 flex-1">
         <p
           className={`text-th-text-secondary leading-relaxed break-words ${
-            compact ? "text-[11px]" : "text-sm pt-0.5"
+            compact ? "text-2xs" : "text-sm pt-0.5"
           }`}
         >
           {detail}
@@ -228,7 +228,7 @@ function SafetyStopChip({
         {!compact && (
           <Link
             to="/settings?tab=Jev"
-            className="mt-1 inline-flex items-center gap-1 text-[11px] text-th-text-muted hover:text-th-text-secondary transition-colors"
+            className="mt-1 inline-flex items-center gap-1 text-2xs text-th-text-muted hover:text-th-text-secondary transition-colors"
           >
             <ExternalLink size={10} />
             Settings → Jev
@@ -249,7 +249,7 @@ export function ThoughtBlock({ messages }: { messages: ChatMessage[] }) {
       className="ml-11 group"
       open={streaming || undefined}
     >
-      <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-th-text-muted hover:text-th-text-tertiary inline-flex items-center gap-1.5 list-none select-none max-w-full [&::-webkit-details-marker]:hidden">
+      <summary className="cursor-pointer text-2xs uppercase tracking-wider text-th-text-muted hover:text-th-text-tertiary inline-flex items-center gap-1.5 list-none select-none max-w-full [&::-webkit-details-marker]:hidden">
         <ChevronRight size={11} className="transition-transform group-open:rotate-90 shrink-0" />
         <span className="shrink-0">{streaming ? "Thinking" : "Thought"}</span>
         {!streaming && preview && (
@@ -299,7 +299,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
             <div className={`bg-violet-500/5 border border-violet-500/20 rounded-2xl rounded-br-sm px-4 py-3 transition-opacity duration-300 ${isPending ? "opacity-70" : "opacity-100"}`}>
               <div className="flex items-center gap-1.5 mb-1.5">
                 <MessageSquarePlus size={11} className="text-violet-400/70 shrink-0" />
-                <span className="text-[10px] text-violet-400/70 font-medium uppercase tracking-wide">
+                <span className="text-2xs text-violet-400/70 font-medium uppercase tracking-wide">
                   {isPending ? "Context queued…" : "Context added"}
                 </span>
               </div>
@@ -321,7 +321,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           {depthSource === "agent" && (depthMode === "quick" || depthMode === "deep") && (
             <div className="flex justify-end mb-1">
               <span
-                className="text-[10px] px-1.5 py-0.5 rounded-full border border-th-border text-th-text-muted"
+                className="text-2xs px-1.5 py-0.5 rounded-full border border-th-border text-th-text-muted"
                 title={depthReason || undefined}
               >
                 {depthMode === "quick" ? "Quick" : "Deep"}
@@ -364,7 +364,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                 />
                 <div className="flex gap-2 justify-end items-center">
                   {canRestore && (
-                    <label className="mr-auto flex items-center gap-1.5 text-[11px] text-th-text-tertiary">
+                    <label className="mr-auto flex items-center gap-1.5 text-2xs text-th-text-tertiary">
                       <input
                         type="checkbox"
                         checked={restoreFiles}
@@ -424,7 +424,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                             <Icon size={14} className={`${iconColor} shrink-0`} />
                             <span className="text-xs font-medium text-th-text-primary truncate max-w-[200px]">{name}</span>
                             {clickable && (
-                              <span className="text-[10px] text-th-text-muted group-hover/att:text-blue-400 transition-colors shrink-0">Open ↗</span>
+                              <span className="text-2xs text-th-text-muted group-hover/att:text-blue-400 transition-colors shrink-0">Open ↗</span>
                             )}
                           </button>
                         );
@@ -531,9 +531,9 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           <div className="min-w-0 flex-1 py-1">
             {memoryTopics && memoryTopics.length > 0 && (
               <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-                <span className="text-[10px] text-blue-400/70 font-medium uppercase tracking-wider">Memory</span>
+                <span className="text-2xs text-blue-400/70 font-medium uppercase tracking-wider">Memory</span>
                 {memoryTopics.map((t) => (
-                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400/80 border border-blue-500/15">{t.replace(/\.md$/, "")}</span>
+                  <span key={t} className="text-2xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400/80 border border-blue-500/15">{t.replace(/\.md$/, "")}</span>
                 ))}
               </div>
             )}
@@ -641,14 +641,14 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
 
     return (
       <div className={subagentName ? (inGroup ? "" : "ml-16 pl-3") : "ml-10"}>
-        <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-2 text-xs text-th-text-tertiary hover:text-th-text-secondary transition-colors py-1.5 group/tool">
+        <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={`${displayLabel} — ${isStopped ? "stopped" : isDone ? "done" : "running"}`} className="flex items-center gap-2 text-xs text-th-text-tertiary hover:text-th-text-secondary transition-colors py-1.5 group/tool">
           {expanded ? <ChevronUp size={12} /> : <ChevronRight size={12} />}
           {hasImages ? <Image size={12} className="text-blue-400" /> : (() => { const { Icon, className } = getToolIcon(toolName ?? ""); return <Icon size={12} className={className} />; })()}
-          {subagentName && !inGroup && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium shrink-0">{subagentName}</span>}
+          {subagentName && !inGroup && <span className="text-2xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium shrink-0">{subagentName}</span>}
           <span className="text-th-text-tertiary group-hover/tool:text-th-text-secondary truncate max-w-[400px]">{displayLabel}</span>
-          {!isDone && <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium animate-pulse shrink-0">running</span>}
-          {isStopped && <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-500/10 text-th-text-muted border border-neutral-500/20 font-medium shrink-0">stopped</span>}
-          {isDone && !isStopped && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0">done</span>}
+          {!isDone && <span className="text-2xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium animate-pulse shrink-0">running</span>}
+          {isStopped && <span className="text-2xs px-2 py-0.5 rounded-full bg-neutral-500/10 text-th-text-muted border border-neutral-500/20 font-medium shrink-0">stopped</span>}
+          {isDone && !isStopped && <span className="text-2xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0">done</span>}
         </button>
         {spawnResult && (
           <div className="mt-1.5 ml-6 max-w-md">
@@ -693,7 +693,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           />
         )}
         {resultSnippet && (
-          <pre className="mt-1 ml-6 text-[11px] leading-[1.5] text-th-text-secondary bg-th-code-bg border border-th-border rounded-lg p-2.5 max-h-36 overflow-auto font-mono whitespace-pre-wrap break-all max-w-2xl">
+          <pre className="mt-1 ml-6 text-2xs leading-[1.5] text-th-text-secondary bg-th-code-bg border border-th-border rounded-lg p-2.5 max-h-36 overflow-auto font-mono whitespace-pre-wrap break-all max-w-2xl">
             {resultSnippet}
           </pre>
         )}
@@ -702,10 +702,10 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           <div className="mt-1.5 ml-6">
             <div className="flex items-center gap-1.5 mb-1">
               <ScrollText size={10} className="text-th-text-muted shrink-0" />
-              <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Live output</span>
-              <span className="text-[10px] text-th-text-muted ml-auto">{liveOutput.length} lines</span>
+              <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Live output</span>
+              <span className="text-2xs text-th-text-muted ml-auto">{liveOutput.length} lines</span>
             </div>
-            <pre className="text-[11px] leading-[1.5] text-emerald-400/80 bg-[#0d1117] border border-th-border rounded-lg p-2.5 max-h-36 overflow-y-auto font-mono whitespace-pre-wrap break-all">
+            <pre className="text-2xs leading-[1.5] text-emerald-400/80 bg-[#0d1117] border border-th-border rounded-lg p-2.5 max-h-36 overflow-y-auto font-mono whitespace-pre-wrap break-all">
               {liveOutput.slice(-25).join("\n")}
             </pre>
           </div>
@@ -748,7 +748,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
             <span className="text-xs font-medium text-th-text-primary truncate max-w-[240px]">
               {artifactPath!.split("/").pop()}
             </span>
-            <span className="ml-auto text-[10px] text-th-text-muted group-hover/artifact:text-blue-400 transition-colors shrink-0">
+            <span className="ml-auto text-2xs text-th-text-muted group-hover/artifact:text-blue-400 transition-colors shrink-0">
               Open ↗
             </span>
           </button>
@@ -757,7 +757,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           <div className="mt-1.5 ml-6 space-y-2">
             {message.metadata?.args != null && (
               <div>
-                <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Args</span>
+                <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Args</span>
                 <pre className="mt-1 text-xs text-th-text-secondary bg-th-code-bg border border-th-border rounded-lg p-3 overflow-x-auto max-h-40 overflow-y-auto">
                   {JSON.stringify(message.metadata.args, null, 2)}
                 </pre>
@@ -771,7 +771,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
               />
             ) : hasResult ? (
               <div>
-                <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
+                <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
                 <pre className="mt-1 text-xs text-th-text-secondary bg-th-code-bg border border-th-border rounded-lg p-3 overflow-x-auto max-h-40 overflow-y-auto">
                   {String(message.metadata!.result as string)}
                 </pre>
@@ -849,7 +849,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
 
     return (
       <div className="flex gap-3 justify-start">
-        <div className="max-w-[75%] w-full rounded-xl border border-th-border overflow-hidden">
+        <div role={resolved ? "group" : "alertdialog"} aria-label={resolved ? "Approval (resolved)" : pendingTitle} className="max-w-[75%] w-full rounded-xl border border-th-border overflow-hidden">
           {/* Card header */}
           <div className="flex items-center gap-2 px-3 py-2 bg-th-inset-bg border-b border-th-border/60">
             {resolved
@@ -887,10 +887,10 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                 <div key={i} className="px-3 pt-2.5 pb-2.5">
                   <div className="flex items-center gap-1.5 mb-1.5">
                     <Terminal size={11} className="text-th-text-muted shrink-0" />
-                    <span className="text-[11px] text-th-text-muted font-medium">{getToolLabel(action.name)}</span>
+                    <span className="text-2xs text-th-text-muted font-medium">{getToolLabel(action.name)}</span>
                     {riskLabels.length > 0 && (
                       <span
-                        className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/20"
+                        className="inline-flex items-center gap-1 text-2xs font-medium px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/20"
                         title={riskLabels.map(describeHighRiskLabel).join(" \u2022 ")}
                       >
                         <AlertTriangle size={9} />
@@ -898,7 +898,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                       </span>
                     )}
                     {editedCmd && (
-                      <span className="text-[10px] text-blue-400/60 font-medium">edited</span>
+                      <span className="text-2xs text-blue-400/60 font-medium">edited</span>
                     )}
                   </div>
 
@@ -918,7 +918,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                   )}
 
                   {riskLabels.length > 0 && !resolved && (
-                    <p className="mt-1.5 text-[11px] text-red-400/70 flex items-start gap-1 leading-snug">
+                    <p className="mt-1.5 text-2xs text-red-400/70 flex items-start gap-1 leading-snug">
                       <AlertTriangle size={10} className="mt-0.5 shrink-0" />
                       {riskLabels.map(describeHighRiskLabel).join("; ")}. Review carefully before approving.
                     </p>
@@ -987,7 +987,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                         grant_category: risk.category,
                       })))}
                       title="Allow this kind of action for the rest of this chat"
-                      className="ml-auto flex items-center gap-1 px-2 py-1.5 text-[11px] text-th-text-muted hover:text-th-text-tertiary transition-colors"
+                      className="ml-auto flex items-center gap-1 px-2 py-1.5 text-2xs text-th-text-muted hover:text-th-text-tertiary transition-colors"
                     >
                       <CheckCheck size={10} /> Allow {GRANT_NOUN[risk.category] ?? risk.category} this session
                     </button>
@@ -995,7 +995,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                     <button
                       onClick={() => onApproveAllSession?.(actions.map(() => ({ type: "approve" })))}
                       title="Auto-approve further commands this session, except ones the server marks as always asking"
-                      className="ml-auto flex items-center gap-1 px-2 py-1.5 text-[11px] text-th-text-muted hover:text-th-text-tertiary transition-colors"
+                      className="ml-auto flex items-center gap-1 px-2 py-1.5 text-2xs text-th-text-muted hover:text-th-text-tertiary transition-colors"
                     >
                       <CheckCheck size={10} /> Always allow
                     </button>
@@ -1020,7 +1020,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
               <ShieldAlert size={13} className="text-th-text-tertiary shrink-0" />
               <span className="text-xs font-medium text-th-text-secondary flex-1">Privacy Lock active</span>
               {provider && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-th-surface-hover/40 text-th-text-muted border border-th-border font-mono">
+                <span className="text-2xs px-1.5 py-0.5 rounded bg-th-surface-hover/40 text-th-text-muted border border-th-border font-mono">
                   {provider}
                 </span>
               )}
@@ -1058,7 +1058,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           <div className="bg-violet-500/5 border border-violet-500/20 rounded-2xl rounded-br-sm px-4 py-3">
             <div className="flex items-center gap-1.5 mb-1.5">
               <MessageSquarePlus size={11} className="text-violet-400/70 shrink-0" />
-              <span className="text-[10px] text-violet-400/70 font-medium uppercase tracking-wide">Context added</span>
+              <span className="text-2xs text-violet-400/70 font-medium uppercase tracking-wide">Context added</span>
             </div>
             <div className="text-sm text-th-text-primary whitespace-pre-wrap break-words leading-relaxed">
               {message.content}
@@ -1133,9 +1133,9 @@ function ExecuteResultBlock({
     return (
       <div>
         <div className="flex items-center gap-1.5 mb-1">
-          <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
+          <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
           {outputLines != null && (
-            <span className="text-[10px] text-th-text-muted ml-auto">{outputLines} lines</span>
+            <span className="text-2xs text-th-text-muted ml-auto">{outputLines} lines</span>
           )}
         </div>
         <pre className="text-xs text-th-text-secondary bg-th-code-bg border border-th-border rounded-lg p-3 overflow-x-auto max-h-72 overflow-y-auto whitespace-pre-wrap break-all">
@@ -1149,7 +1149,7 @@ function ExecuteResultBlock({
   if (!match) {
     return (
       <div>
-        <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
+        <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
         <pre className="mt-1 text-xs text-th-text-secondary bg-th-code-bg border border-th-border rounded-lg p-3 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap break-all">
           {result}
         </pre>
@@ -1165,9 +1165,9 @@ function ExecuteResultBlock({
   return (
     <div>
       <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
+        <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Result</span>
         {outputLines != null && (
-          <span className="text-[10px] text-th-text-muted ml-auto">{outputLines} lines</span>
+          <span className="text-2xs text-th-text-muted ml-auto">{outputLines} lines</span>
         )}
       </div>
       <div className="rounded-lg border border-th-border bg-th-code-bg overflow-hidden">
@@ -1176,7 +1176,7 @@ function ExecuteResultBlock({
         </pre>
         <button
           onClick={() => setShowFull(true)}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 border-y border-th-border bg-th-surface-hover/40 hover:bg-th-surface-hover text-[10px] text-th-text-muted hover:text-th-text-secondary transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 border-y border-th-border bg-th-surface-hover/40 hover:bg-th-surface-hover text-2xs text-th-text-muted hover:text-th-text-secondary transition-colors"
         >
           <ChevronDown size={10} />
           {omittedCount} lines omitted — click to expand
@@ -1252,8 +1252,8 @@ function TodoChecklist({ todos }: { todos: TodoItem[] }) {
   return (
     <div className="mt-1.5 ml-6 rounded-lg border border-th-border bg-th-card-bg/90 overflow-hidden max-w-md">
       <div className="flex items-center gap-2.5 px-3 py-2 border-b border-th-border bg-th-inset-bg">
-        <span className="text-[11px] font-semibold text-th-text-tertiary tracking-wide">Tasks</span>
-        <span className="text-[10px] text-th-text-muted font-medium ml-auto">{done}/{todos.length} completed</span>
+        <span className="text-2xs font-semibold text-th-text-tertiary tracking-wide">Tasks</span>
+        <span className="text-2xs text-th-text-muted font-medium ml-auto">{done}/{todos.length} completed</span>
         <div className="w-16 h-1 rounded-full bg-th-border overflow-hidden">
           <div
             className="h-full rounded-full bg-emerald-500 transition-all duration-300"
@@ -1551,7 +1551,7 @@ function CredentialInputBubble({
           {headerIcon}
           <span className={`text-xs font-medium flex-1 ${headerTone}`}>{headerLabel}</span>
           {serverId && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-th-surface-hover/40 text-th-text-muted border border-th-border font-mono">
+            <span className="text-2xs px-1.5 py-0.5 rounded bg-th-surface-hover/40 text-th-text-muted border border-th-border font-mono">
               {serverId}
             </span>
           )}
@@ -1562,7 +1562,7 @@ function CredentialInputBubble({
           <p className="text-sm text-th-text-primary mb-0.5 leading-relaxed">
             {displayLabel}
             {name && (
-              <span className="ml-2 text-[10px] font-mono text-th-text-muted">{name}</span>
+              <span className="ml-2 text-2xs font-mono text-th-text-muted">{name}</span>
             )}
           </p>
           {instructions && (
@@ -1598,7 +1598,7 @@ function CredentialInputBubble({
                   type="button"
                   onClick={() => setReveal((r) => !r)}
                   title={reveal ? "Hide value" : "Show value"}
-                  className="px-2 text-[10px] uppercase tracking-wider rounded-lg text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover border border-th-border transition-colors"
+                  className="px-2 text-2xs uppercase tracking-wider rounded-lg text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover border border-th-border transition-colors"
                 >
                   {reveal ? "Hide" : "Show"}
                 </button>
@@ -1639,7 +1639,7 @@ function CredentialInputBubble({
                 )}
               </div>
 
-              <p className="mt-2 text-[10px] text-th-text-muted leading-relaxed">
+              <p className="mt-2 text-2xs text-th-text-muted leading-relaxed">
                 Stored locally in your OS keychain. The agent only sees a "stored" ack — never the value.
               </p>
             </>

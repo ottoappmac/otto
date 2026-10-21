@@ -1,5 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../../hooks/useApi";
+import { escapeHtml, highlightCode } from "../../utils/highlightCode";
+import { Button } from "../ui/Button";
+
+const HIGHLIGHT_LIMIT = 200_000;
 
 interface FileEditorProps {
   sessionId: string;
@@ -54,30 +58,64 @@ export function FileEditor({ sessionId, path, fileUrl, revision }: FileEditorPro
     }
   };
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (dirty && status !== "saving") void save();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const highlighted = useMemo(
+    () => (text.length > HIGHLIGHT_LIMIT ? escapeHtml(text) : highlightCode(text, path)),
+    [text, path],
+  );
+  const lineCount = useMemo(() => text.split("\n").length, [text]);
+
   if (status === "loading") {
     return <p className="text-sm text-th-text-muted">Loading…</p>;
   }
 
+  const name = path.split("/").pop() ?? path;
+
   return (
     <div className="h-full min-h-0 flex flex-col gap-2">
-      <div className="flex items-center gap-2 text-[11px]">
-        <span className="truncate text-th-text-secondary flex-1" title={path}>{path}</span>
-        <button
-          type="button"
+      <div className="flex items-center gap-2 text-2xs">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-th-text-secondary" title={path}>
+          <span className="truncate font-medium text-th-text-primary">{name}</span>
+          {dirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-th-warning" role="img" aria-label="Unsaved changes" />}
+        </span>
+        {message && <span className={status === "error" ? "text-th-danger" : "text-th-text-muted"}>{message}</span>}
+        <Button
+          variant={dirty ? "primary" : "secondary"}
           disabled={!dirty || status === "saving"}
           onClick={() => { void save(); }}
-          className="px-2 py-1 rounded border border-th-border text-th-text-primary disabled:opacity-40"
+          title="Save (⌘S)"
         >
           {status === "saving" ? "Saving…" : "Save"}
-        </button>
+        </Button>
       </div>
-      {message && <p className="text-[11px] text-th-text-muted">{message}</p>}
-      <textarea
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        spellCheck={false}
-        className="flex-1 min-h-0 w-full resize-none rounded-lg border border-th-border bg-th-inset-bg p-2 font-mono text-[11px] text-th-text-primary"
-      />
+      <div className="min-h-[12rem] flex-1 overflow-auto rounded-lg border border-th-border bg-th-inset-bg font-mono text-2xs leading-[1.55]">
+        <div className="flex min-h-full min-w-max">
+          <div aria-hidden className="sticky left-0 z-10 shrink-0 select-none bg-th-inset-bg py-2 pl-2 pr-2 text-right text-th-text-faint">
+            {Array.from({ length: lineCount }, (_, i) => <div key={i}>{i + 1}</div>)}
+          </div>
+          <div className="relative flex-1 py-2 pr-3">
+            <pre aria-hidden className="hljs m-0 whitespace-pre font-[inherit]" dangerouslySetInnerHTML={{ __html: highlighted + "\n " }} />
+            <textarea
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              spellCheck={false}
+              wrap="off"
+              aria-label={`Edit ${name}`}
+              className="absolute inset-0 h-full w-full resize-none overflow-hidden whitespace-pre bg-transparent py-2 pr-3 font-[inherit] leading-[inherit] text-transparent caret-th-text-primary outline-none selection:bg-th-accent/30"
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

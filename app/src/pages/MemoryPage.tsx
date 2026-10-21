@@ -90,7 +90,7 @@ function StatCard({ icon: Icon, label, value }: { icon: typeof FileText; label: 
         <Icon size={18} className="text-th-text-muted" />
       </div>
       <div>
-        <p className="text-[11px] text-th-text-tertiary uppercase tracking-wider">{label}</p>
+        <p className="text-2xs text-th-text-tertiary uppercase tracking-wider">{label}</p>
         <p className="text-lg font-semibold text-th-text-primary mt-0.5">{value}</p>
       </div>
     </div>
@@ -303,7 +303,7 @@ export function MemoryPanel() {
         <span className="text-xs font-medium text-th-text-primary">Memory consolidation</span>
         <StatusBadge state={status.state} />
         {(saveStatus === "saving" || saveStatus === "saved" || saveStatus === "error") && (
-          <span className={`text-[11px] ${saveStatus === "saved" ? "text-emerald-500/70" : saveStatus === "error" ? "text-red-500/70" : "text-th-text-muted"}`}>
+          <span className={`text-2xs ${saveStatus === "saved" ? "text-emerald-500/70" : saveStatus === "error" ? "text-red-500/70" : "text-th-text-muted"}`}>
             {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Save failed"}
           </span>
         )}
@@ -419,7 +419,7 @@ export function MemoryPanel() {
               <Loader2 size={18} className="text-blue-400 animate-spin" />
               <div>
                 <p className="text-sm text-blue-300 font-medium">Consolidation in progress…</p>
-                {status.started_at && <p className="text-[11px] text-blue-400/60 mt-0.5">Started {formatTimeAgo(status.started_at)}</p>}
+                {status.started_at && <p className="text-2xs text-blue-400/60 mt-0.5">Started {formatTimeAgo(status.started_at)}</p>}
               </div>
             </div>
           )}
@@ -428,7 +428,7 @@ export function MemoryPanel() {
               <CheckCircle size={18} className="text-emerald-400" />
               <div>
                 <p className="text-sm text-emerald-300 font-medium">Last run completed successfully</p>
-                <p className="text-[11px] text-emerald-400/60 mt-0.5">{status.transcripts_processed} transcript(s) processed · {formatTimeAgo(status.finished_at)}</p>
+                <p className="text-2xs text-emerald-400/60 mt-0.5">{status.transcripts_processed} transcript(s) processed · {formatTimeAgo(status.finished_at)}</p>
               </div>
             </div>
           )}
@@ -437,7 +437,7 @@ export function MemoryPanel() {
               <XCircle size={18} className="text-red-400" />
               <div>
                 <p className="text-sm text-red-300 font-medium">Last run failed</p>
-                {status.error && <p className="text-[11px] text-red-400/60 mt-0.5 font-mono break-all">{status.error}</p>}
+                {status.error && <p className="text-2xs text-red-400/60 mt-0.5 font-mono break-all">{status.error}</p>}
               </div>
             </div>
           )}
@@ -446,7 +446,7 @@ export function MemoryPanel() {
               <Ban size={18} className="text-amber-400" />
               <div>
                 <p className="text-sm text-amber-300 font-medium">Last run was cancelled</p>
-                {status.finished_at && <p className="text-[11px] text-amber-400/60 mt-0.5">{formatTimeAgo(status.finished_at)}</p>}
+                {status.finished_at && <p className="text-2xs text-amber-400/60 mt-0.5">{formatTimeAgo(status.finished_at)}</p>}
               </div>
             </div>
           )}
@@ -460,16 +460,16 @@ export function MemoryPanel() {
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="bg-th-inset-bg rounded-lg p-3 text-center">
                   <p className="text-lg font-semibold text-blue-400">{hits.total_injections}</p>
-                  <p className="text-[10px] text-th-text-tertiary uppercase tracking-wider mt-0.5">Injections</p>
+                  <p className="text-2xs text-th-text-tertiary uppercase tracking-wider mt-0.5">Injections</p>
                 </div>
                 <div className="bg-th-inset-bg rounded-lg p-3 text-center">
                   <p className="text-lg font-semibold text-th-text-primary">{hits.unique_sessions}</p>
-                  <p className="text-[10px] text-th-text-tertiary uppercase tracking-wider mt-0.5">Sessions</p>
+                  <p className="text-2xs text-th-text-tertiary uppercase tracking-wider mt-0.5">Sessions</p>
                 </div>
               </div>
               {hits.top_topics.length > 0 && (
                 <div className="mb-4">
-                  <p className="text-[11px] text-th-text-tertiary uppercase tracking-wider mb-2">Most Used</p>
+                  <p className="text-2xs text-th-text-tertiary uppercase tracking-wider mb-2">Most Used</p>
                   <div className="space-y-1.5">
                     {hits.top_topics.slice(0, 5).map((t) => {
                       const maxCount = hits.top_topics[0].count;
@@ -478,9 +478,9 @@ export function MemoryPanel() {
                         <div key={t.topic} className="flex items-center gap-2">
                           <div className="flex-1 h-5 bg-th-code-bg rounded overflow-hidden relative">
                             <div className="h-full bg-blue-500/20 rounded" style={{ width: `${pct}%` }} />
-                            <span className="absolute inset-0 flex items-center px-2 text-[11px] text-th-text-secondary truncate">{t.topic.replace(/\.md$/, "")}</span>
+                            <span className="absolute inset-0 flex items-center px-2 text-2xs text-th-text-secondary truncate">{t.topic.replace(/\.md$/, "")}</span>
                           </div>
-                          <span className="text-[11px] text-th-text-tertiary w-8 text-right tabular-nums">{t.count}</span>
+                          <span className="text-2xs text-th-text-tertiary w-8 text-right tabular-nums">{t.count}</span>
                         </div>
                       );
                     })}
@@ -489,10 +489,10 @@ export function MemoryPanel() {
               )}
               {hits.recent.length > 0 && (
                 <div>
-                  <p className="text-[11px] text-th-text-tertiary uppercase tracking-wider mb-2">Recent</p>
+                  <p className="text-2xs text-th-text-tertiary uppercase tracking-wider mb-2">Recent</p>
                   <div className="space-y-1 max-h-32 overflow-y-auto">
                     {hits.recent.slice(0, 10).map((r, i) => (
-                      <div key={i} className="flex items-center gap-2 text-[11px]">
+                      <div key={i} className="flex items-center gap-2 text-2xs">
                         <span className="text-th-text-muted w-12 shrink-0">{r.ts ? new Date(r.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
                         <span className="text-th-text-tertiary w-16 shrink-0 truncate font-mono">{r.session_id}</span>
                         <span className="text-th-text-tertiary truncate">{r.topics.map((t) => t.replace(/\.md$/, "")).join(", ")}</span>
@@ -738,7 +738,7 @@ export function AmbientPanel({
                     {mlxListLoading ? "Fetching…" : "Refresh"}
                   </button>
                 </div>
-                <p className="text-[11px] text-th-text-muted mb-2">
+                <p className="text-2xs text-th-text-muted mb-2">
                   Pick a small cached model. The default (Qwen3-1.7B-4bit, ~1 GB) is already
                   downloaded on most Apple Silicon Macs after first-run setup.
                 </p>
@@ -772,7 +772,7 @@ export function AmbientPanel({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm text-th-text-secondary font-medium">Only run when idle</p>
-                <p className="text-[11px] text-th-text-muted mt-0.5">
+                <p className="text-2xs text-th-text-muted mt-0.5">
                   Skip sweeps while you're actively typing or using the computer.
                 </p>
               </div>
@@ -781,7 +781,7 @@ export function AmbientPanel({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm text-th-text-secondary font-medium">Sweep after each session</p>
-                <p className="text-[11px] text-th-text-muted mt-0.5">
+                <p className="text-2xs text-th-text-muted mt-0.5">
                   Trigger an additional sweep shortly after a chat session completes.
                 </p>
               </div>
@@ -803,7 +803,7 @@ export function AmbientPanel({
               <div key={key} className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-sm text-th-text-secondary font-medium">{label}</p>
-                  <p className="text-[11px] text-th-text-muted mt-0.5">{desc}</p>
+                  <p className="text-2xs text-th-text-muted mt-0.5">{desc}</p>
                 </div>
                 <Toggle
                   checked={Boolean(ambient[key])}
@@ -858,7 +858,7 @@ export function AmbientPanel({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-th-text-secondary">Allow one-click approve &amp; run</p>
-                <p className="text-[11px] text-th-text-muted mt-0.5 max-w-sm">
+                <p className="text-2xs text-th-text-muted mt-0.5 max-w-sm">
                   When enabled, each hint gains an "Approve &amp; run" button that spawns a
                   background session immediately.  All risky tool calls still require your
                   approval via the normal HITL flow.
@@ -938,7 +938,7 @@ function InputField({
   return (
     <div>
       <label className="block text-sm text-th-text-secondary font-medium mb-1">{label}</label>
-      {description && <p className="text-[11px] text-th-text-muted mb-2">{description}</p>}
+      {description && <p className="text-2xs text-th-text-muted mb-2">{description}</p>}
       <input
         type={type}
         min={min}
@@ -981,7 +981,7 @@ function ModelPickerField({ value, onChange, models, loading, error, onFetch }: 
           </button>
         </div>
       </div>
-      <p className="text-[11px] text-th-text-muted mb-2">Fast, low-cost model used for consolidation and per-turn memory relevance ranking.</p>
+      <p className="text-2xs text-th-text-muted mb-2">Fast, low-cost model used for consolidation and per-turn memory relevance ranking.</p>
       {hasModels ? (
         <div className="relative">
           <select
@@ -1023,7 +1023,7 @@ function FamilySelectField({ value, onChange, mainProvider }: {
   return (
     <div>
       <label className="block text-sm text-th-text-secondary font-medium mb-1">Consolidation stack</label>
-      <p className="text-[11px] text-th-text-muted mb-2">
+      <p className="text-2xs text-th-text-muted mb-2">
         Which model runs the consolidation pipeline and per-turn memory ranking. On-Device runs locally; Frontier uses Anthropic / Bedrock; Cluster uses the distributed inference nodes.
       </p>
       <div className="relative">
@@ -1074,7 +1074,7 @@ function MlxModelPickerField({ value, onChange, models, loading, error, onFetch,
           {loading ? "Fetching…" : "Refresh"}
         </button>
       </div>
-      <p className="text-[11px] text-th-text-muted mb-2">
+      <p className="text-2xs text-th-text-muted mb-2">
         Pick a local on-device model from the cache. Leave on default to reuse the chat model.
       </p>
       <div className="relative">
@@ -1202,7 +1202,7 @@ function ModelInstallBanner({ memoryEnabled }: { memoryEnabled: boolean }) {
               style={{ width: pct !== null ? `${pct}%` : "30%" }}
             />
           </div>
-          <div className="flex items-center justify-between text-[11px] text-th-text-tertiary">
+          <div className="flex items-center justify-between text-2xs text-th-text-tertiary">
             <span>
               {formatBytes(modelStatus.bytes_downloaded)}
               {modelStatus.total_bytes > 0 && ` / ${formatBytes(modelStatus.total_bytes)}`}
@@ -1210,7 +1210,7 @@ function ModelInstallBanner({ memoryEnabled }: { memoryEnabled: boolean }) {
             {pct !== null && <span className="tabular-nums">{pct}%</span>}
           </div>
         </div>
-        <p className="text-[11px] text-th-text-muted">
+        <p className="text-2xs text-th-text-muted">
           {modelStatus.model_name} · Required for semantic memory search · Only downloads once
         </p>
       </div>
@@ -1235,7 +1235,7 @@ function ModelInstallBanner({ memoryEnabled }: { memoryEnabled: boolean }) {
               : "all-MiniLM-L6-v2 (~90 MB) · Required for semantic search"}
           </p>
           {modelStatus.error && (
-            <p className="text-[11px] text-red-400 mt-1 font-mono break-all">{modelStatus.error}</p>
+            <p className="text-2xs text-red-400 mt-1 font-mono break-all">{modelStatus.error}</p>
           )}
         </div>
       </div>
@@ -1272,7 +1272,7 @@ const CONFIDENCE_COLORS: Record<string, string> = {
 function TopicTypeBadge({ type }: { type: string }) {
   const color = TYPE_COLORS[type] || "text-th-text-muted bg-neutral-500/10 border-neutral-500/20";
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${color}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-medium border ${color}`}>
       {type || "—"}
     </span>
   );
@@ -1379,17 +1379,17 @@ function MemoryTopicsPanel({ memoryEnabled }: { memoryEnabled: boolean }) {
                 <h3 className="text-base font-semibold text-th-text-primary">{selected.name}</h3>
                 <TopicTypeBadge type={selected.type} />
                 {selected.confidence && (
-                  <span className={`text-[11px] font-medium ${CONFIDENCE_COLORS[selected.confidence] ?? "text-th-text-muted"}`}>{selected.confidence} confidence</span>
+                  <span className={`text-2xs font-medium ${CONFIDENCE_COLORS[selected.confidence] ?? "text-th-text-muted"}`}>{selected.confidence} confidence</span>
                 )}
               </div>
               <p className="text-xs text-th-text-tertiary">{selected.description}</p>
-              <div className="flex flex-wrap gap-3 text-[11px] text-th-text-muted">
+              <div className="flex flex-wrap gap-3 text-2xs text-th-text-muted">
                 {selected.created_at && <span>Created {formatTimeAgo(selected.created_at)}</span>}
                 {selected.updated_at && <span>· Updated {formatTimeAgo(selected.updated_at)}</span>}
                 {selected.source_sessions.length > 0 && (
                   <span className="flex items-center gap-1">
                     · Sessions: {selected.source_sessions.slice(0, 4).map((s) => (
-                      <code key={s} className="bg-th-code-bg px-1 rounded text-[10px]">{s.slice(0, 8)}</code>
+                      <code key={s} className="bg-th-code-bg px-1 rounded text-2xs">{s.slice(0, 8)}</code>
                     ))}
                     {selected.source_sessions.length > 4 && <span>+{selected.source_sessions.length - 4}</span>}
                   </span>
@@ -1404,9 +1404,9 @@ function MemoryTopicsPanel({ memoryEnabled }: { memoryEnabled: boolean }) {
               )}
               {deleteConfirm === selected.filename ? (
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-red-400">Delete?</span>
-                  <button type="button" onClick={() => deleteTopic(selected.filename)} className="px-2.5 py-1 rounded text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20">Yes</button>
-                  <button type="button" onClick={() => setDeleteConfirm(null)} className="px-2.5 py-1 rounded text-[11px] text-th-text-muted hover:text-th-text-primary">No</button>
+                  <span className="text-2xs text-red-400">Delete?</span>
+                  <button type="button" onClick={() => deleteTopic(selected.filename)} className="px-2.5 py-1 rounded text-2xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20">Yes</button>
+                  <button type="button" onClick={() => setDeleteConfirm(null)} className="px-2.5 py-1 rounded text-2xs text-th-text-muted hover:text-th-text-primary">No</button>
                 </div>
               ) : (
                 <button type="button" onClick={() => setDeleteConfirm(selected.filename)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/5 border border-red-500/15 text-red-400 hover:bg-red-500/10 transition-colors">
@@ -1434,7 +1434,7 @@ function MemoryTopicsPanel({ memoryEnabled }: { memoryEnabled: boolean }) {
             <p className="text-xs font-semibold text-th-text-secondary flex items-center gap-1.5">
               <ShieldAlert size={13} className="text-amber-400" /> Corrections
             </p>
-            <p className="text-[11px] text-th-text-muted">Override what OTTO believes. Corrections survive consolidation runs.</p>
+            <p className="text-2xs text-th-text-muted">Override what OTTO believes. Corrections survive consolidation runs.</p>
             <div className="flex gap-2">
               <input type="text" className="flex-1 bg-th-input-bg border border-th-input-border rounded-lg px-3 py-2 text-xs text-th-text-primary focus:outline-none focus:border-amber-400 placeholder:text-th-text-muted" placeholder="e.g. I prefer TypeScript, not JavaScript — correct this" value={correctionText} onChange={(e) => setCorrectionText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addCorrection(); } }} />
               <button type="button" onClick={addCorrection} disabled={!correctionText.trim() || saving} className="px-3 py-2 rounded-lg text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 disabled:opacity-50">Add</button>
@@ -1478,10 +1478,10 @@ function MemoryTopicsPanel({ memoryEnabled }: { memoryEnabled: boolean }) {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-medium text-th-text-primary truncate">{t.name}</span>
                   <TopicTypeBadge type={t.type} />
-                  {t.confidence && <span className={`text-[10px] ${CONFIDENCE_COLORS[t.confidence] ?? "text-th-text-muted"}`}>{t.confidence}</span>}
+                  {t.confidence && <span className={`text-2xs ${CONFIDENCE_COLORS[t.confidence] ?? "text-th-text-muted"}`}>{t.confidence}</span>}
                 </div>
                 <p className="text-xs text-th-text-tertiary line-clamp-1">{t.description}</p>
-                <div className="flex flex-wrap gap-3 text-[11px] text-th-text-muted">
+                <div className="flex flex-wrap gap-3 text-2xs text-th-text-muted">
                   {t.updated_at && <span>Updated {formatTimeAgo(t.updated_at)}</span>}
                   {t.source_sessions.length > 0 && <span>{t.source_sessions.length} session{t.source_sessions.length !== 1 ? "s" : ""}</span>}
                   <span>{(t.size_bytes / 1024).toFixed(1)} KB</span>
@@ -1490,19 +1490,19 @@ function MemoryTopicsPanel({ memoryEnabled }: { memoryEnabled: boolean }) {
               <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
                 {deleteConfirm === t.filename ? (
                   <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                    <span className="text-[11px] text-red-400">Delete?</span>
+                    <span className="text-2xs text-red-400">Delete?</span>
                     <button
                       type="button"
                       onClick={() => deleteTopic(t.filename)}
                       disabled={saving}
-                      className="px-2 py-0.5 rounded text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50"
+                      className="px-2 py-0.5 rounded text-2xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50"
                     >
                       Yes
                     </button>
                     <button
                       type="button"
                       onClick={() => setDeleteConfirm(null)}
-                      className="px-2 py-0.5 rounded text-[11px] text-th-text-muted hover:text-th-text-primary"
+                      className="px-2 py-0.5 rounded text-2xs text-th-text-muted hover:text-th-text-primary"
                     >
                       No
                     </button>
@@ -1656,13 +1656,13 @@ function EmbeddingIndexPanel({
           <p className="text-sm font-medium text-th-text-secondary">Indexed Sources</p>
           <div className="space-y-1.5 max-h-64 overflow-y-auto">
             {embStatus.sources.map((s) => (
-              <div key={s.source_path} className="flex items-center gap-2 text-[11px] group">
-                <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${s.source_type === "memory" ? "bg-blue-500/10 text-blue-400" : s.source_type === "transcript" ? "bg-blue-500/10 text-blue-400" : "bg-emerald-500/10 text-emerald-400"}`}>{s.source_type}</span>
+              <div key={s.source_path} className="flex items-center gap-2 text-2xs group">
+                <span className={`shrink-0 px-1.5 py-0.5 rounded text-2xs font-medium ${s.source_type === "memory" ? "bg-blue-500/10 text-blue-400" : s.source_type === "transcript" ? "bg-blue-500/10 text-blue-400" : "bg-emerald-500/10 text-emerald-400"}`}>{s.source_type}</span>
                 <span className="flex-1 text-th-text-tertiary truncate font-mono">{s.source_path.split("/").slice(-2).join("/")}</span>
                 <span className="text-th-text-muted tabular-nums shrink-0">{s.chunk_count} chunk{s.chunk_count !== 1 ? "s" : ""}</span>
                 {deleteConfirmSource === s.source_path ? (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[11px] text-red-400">Remove?</span>
+                    <span className="text-2xs text-red-400">Remove?</span>
                     <button
                       type="button"
                       disabled={deletingSource}
@@ -1676,14 +1676,14 @@ function EmbeddingIndexPanel({
                           setDeleteConfirmSource(null);
                         }
                       }}
-                      className="px-2 py-0.5 rounded text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50"
+                      className="px-2 py-0.5 rounded text-2xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50"
                     >
                       Yes
                     </button>
                     <button
                       type="button"
                       onClick={() => setDeleteConfirmSource(null)}
-                      className="px-2 py-0.5 rounded text-[11px] text-th-text-muted hover:text-th-text-primary"
+                      className="px-2 py-0.5 rounded text-2xs text-th-text-muted hover:text-th-text-primary"
                     >
                       No
                     </button>

@@ -112,7 +112,7 @@ function AgentTurns({ events }: { events: TimelineEvent[] }) {
         onClick={() => setOpen((o) => !o)}
         className="w-full px-5 py-3 flex items-center justify-between text-left hover:bg-th-surface-hover transition-colors"
       >
-        <span className="text-[11px] font-semibold text-th-text-muted uppercase tracking-wider">
+        <span className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">
           Previous turns ({events.length})
         </span>
         <ChevronDown size={13} className={`text-th-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
@@ -123,7 +123,7 @@ function AgentTurns({ events }: { events: TimelineEvent[] }) {
             const text = typeof ev.content === "string" ? ev.content : "";
             return (
               <div key={i} className="px-5 py-3">
-                <p className="text-[10px] text-th-text-muted/60 mb-2">
+                <p className="text-2xs text-th-text-muted/60 mb-2">
                   Turn {i + 1}{ev.ts ? ` · ${formatRelativeTime(ev.ts)}` : ""}
                 </p>
                 <div className="prose prose-sm dark:prose-invert max-w-none text-th-text-secondary
@@ -243,7 +243,7 @@ function FilesTab({
     <div className="space-y-3">
       {/* Toolbar */}
       <div className="flex items-center justify-between">
-        <p className="text-[11px] text-th-text-muted">{files.length} file{files.length !== 1 ? "s" : ""}</p>
+        <p className="text-2xs text-th-text-muted">{files.length} file{files.length !== 1 ? "s" : ""}</p>
         <button
           onClick={openFolder}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-th-border bg-th-inset-bg/70 text-xs text-th-text-secondary hover:text-th-text-primary hover:border-th-border-strong transition-all duration-200 active:scale-[0.97]"
@@ -279,11 +279,11 @@ function FilesTab({
                 <IconComp size={15} className="text-th-text-muted shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-th-text-primary truncate">{name}</p>
-                  <p className="text-[10px] text-th-text-muted/70 truncate mt-0.5">{f.path}</p>
+                  <p className="text-2xs text-th-text-muted/70 truncate mt-0.5">{f.path}</p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-[11px] text-th-text-muted">{formatBytes(f.size)}</span>
-                  <span className="text-[10px] text-th-text-muted/60">
+                  <span className="text-2xs text-th-text-muted">{formatBytes(f.size)}</span>
+                  <span className="text-2xs text-th-text-muted/60">
                     {new Date(f.modified_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
                   <a
@@ -399,7 +399,7 @@ function EvalTrace({ steps, running, title = "Evaluator activity" }: { steps: No
     <div className="bg-th-card-bg border border-th-card-border rounded-2xl overflow-hidden shadow-sm shadow-black/[0.03]">
       <div className="px-5 py-3 border-b border-th-border/50 flex items-center gap-2">
         <Sparkles size={13} className="text-blue-400" aria-hidden />
-        <p className="text-[11px] font-semibold text-th-text-muted uppercase tracking-wider">{title}</p>
+        <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">{title}</p>
       </div>
       <div className="divide-y divide-th-border/30">
         {steps.map((s, i) => {
@@ -420,7 +420,7 @@ function EvalTrace({ steps, running, title = "Evaluator activity" }: { steps: No
               <Icon size={13} className={`mt-0.5 shrink-0 ${iconTone}`} aria-hidden />
               <div className="min-w-0 flex-1">
                 {s.metric && (s.kind === "metric_start" || s.kind === "metric_result") && (
-                  <span className="text-[10px] font-semibold text-th-text-muted uppercase tracking-wide mr-1.5">
+                  <span className="text-2xs font-semibold text-th-text-muted uppercase tracking-wide mr-1.5">
                     {EVAL_LABELS[s.metric] ?? s.metric}
                     {isResult && typeof s.score === "number" ? ` · ${Math.round(s.score * 100)}%` : ""}
                   </span>
@@ -503,7 +503,7 @@ function EvaluationTab({
       {showSummary && (
         <div className="bg-th-card-bg border border-th-card-border rounded-2xl px-5 py-4 flex items-center justify-between shadow-sm shadow-black/[0.03]">
           <div>
-            <p className="text-[10px] text-th-text-muted uppercase tracking-wider mb-1">Overall score</p>
+            <p className="text-2xs text-th-text-muted uppercase tracking-wider mb-1">Overall score</p>
             <div className="flex items-baseline gap-2">
               <span className={`text-2xl font-bold ${overall != null ? scoreColor(overall, undefined) : "text-th-text-muted"}`}>
                 {overall != null ? `${Math.round(overall * 100)}%` : "—"}
@@ -516,7 +516,7 @@ function EvaluationTab({
             </div>
           </div>
           {evaluation?.model && (
-            <span className="text-[10px] text-th-text-muted/60">judge: {evaluation.model}</span>
+            <span className="text-2xs text-th-text-muted/60">judge: {evaluation.model}</span>
           )}
         </div>
       )}
@@ -558,7 +558,7 @@ function EvaluationTab({
           <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl px-5 py-4 shadow-sm shadow-black/[0.03]">
             <div className="flex items-center gap-1.5 mb-2">
               <Sparkles size={13} className="text-blue-400" aria-hidden />
-              <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">
+              <p className="text-2xs font-semibold text-blue-400 uppercase tracking-wider">
                 Suggested prompt improvement
               </p>
             </div>
@@ -624,13 +624,13 @@ function EvaluationTab({
       {/* Skipped / error notices */}
       {status === "skipped" && (
         <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl px-5 py-4 shadow-sm shadow-black/[0.03]">
-          <p className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider mb-1">Evaluation skipped</p>
+          <p className="text-2xs font-semibold text-amber-400 uppercase tracking-wider mb-1">Evaluation skipped</p>
           <p className="text-xs text-th-text-secondary">{evaluation?.reason || "No judge model was available."}</p>
         </div>
       )}
       {status === "error" && (
         <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-4 shadow-sm shadow-black/[0.03]">
-          <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wider mb-1">Evaluation error</p>
+          <p className="text-2xs font-semibold text-red-400 uppercase tracking-wider mb-1">Evaluation error</p>
           <p className="text-sm text-red-300 font-mono leading-relaxed">{evaluation?.error || "Unknown error"}</p>
         </div>
       )}
@@ -645,7 +645,7 @@ function EvaluationTab({
                 <div key={i} className="bg-th-card-bg border border-th-card-border rounded-2xl px-5 py-4 shadow-sm shadow-black/[0.03]">
                   <div className="flex items-center justify-between mb-1">
                     <p className="text-sm font-semibold text-th-text-primary">{label}</p>
-                    <span className="text-[10px] text-red-400">errored</span>
+                    <span className="text-2xs text-red-400">errored</span>
                   </div>
                   <p className="text-xs text-red-300/80 font-mono">{r.error}</p>
                 </div>
@@ -661,7 +661,7 @@ function EvaluationTab({
                       {Math.round(score * 100)}%
                     </span>
                     <span
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${
+                      className={`text-2xs font-medium px-1.5 py-0.5 rounded-full border ${
                         r.success
                           ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
                           : "text-red-400 bg-red-500/10 border-red-500/20"
@@ -681,7 +681,7 @@ function EvaluationTab({
                   <p className="text-xs text-th-text-secondary leading-relaxed">{r.reason}</p>
                 )}
                 {r.threshold != null && (
-                  <p className="text-[10px] text-th-text-muted/60 mt-1">threshold {Math.round(r.threshold * 100)}%</p>
+                  <p className="text-2xs text-th-text-muted/60 mt-1">threshold {Math.round(r.threshold * 100)}%</p>
                 )}
               </div>
             );
@@ -1104,7 +1104,7 @@ export default function RunDetailPage() {
               </span>
             )}
             <span className="text-th-text-muted">·</span>
-            <span className="font-mono text-[11px] text-th-text-muted/60 select-all" title={run.session_id ?? run.id}>
+            <span className="font-mono text-2xs text-th-text-muted/60 select-all" title={run.session_id ?? run.id}>
               #{(run.session_id ?? run.id).slice(0, 8)}
             </span>
             <span className="text-th-text-muted">·</span>
@@ -1139,7 +1139,7 @@ export default function RunDetailPage() {
               </>
             )}
             {run.llm_provider && (
-              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-medium ${familyChipClasses(run.llm_provider)}`}>
+              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-2xs font-medium ${familyChipClasses(run.llm_provider)}`}>
                 <ProvIcon size={9} className={provCls} aria-hidden />
                 {run.model || run.llm_provider}
               </span>
@@ -1195,7 +1195,7 @@ export default function RunDetailPage() {
               <Icon size={12} aria-hidden />
               {label}
               {badge != null && badge > 0 && (
-                <span className="ml-0.5 px-1.5 py-px rounded-full text-[9px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/20 tabular-nums">
+                <span className="ml-0.5 px-1.5 py-px rounded-full text-2xs font-bold bg-blue-500/15 text-blue-400 border border-blue-500/20 tabular-nums">
                   {badge}
                 </span>
               )}
@@ -1264,8 +1264,8 @@ export default function RunDetailPage() {
                   {/* Final response card */}
                   <div className="bg-th-card-bg border border-th-card-border rounded-2xl overflow-hidden shadow-sm shadow-black/[0.03]">
                     <div className="px-5 py-3 border-b border-th-border/50 flex items-center justify-between">
-                      <p className="text-[11px] font-semibold text-th-text-muted uppercase tracking-wider">Final response</p>
-                      <span className="text-[10px] text-th-text-muted/60">
+                      <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-wider">Final response</p>
+                      <span className="text-2xs text-th-text-muted/60">
                         {finalEvent.ts ? formatRelativeTime(finalEvent.ts) : ""}
                       </span>
                     </div>
@@ -1340,7 +1340,7 @@ export default function RunDetailPage() {
 
             {Object.keys(toolDurations).length > 0 && (
               <div className="bg-th-card-bg border border-th-card-border rounded-2xl p-4 shadow-sm shadow-black/[0.03]">
-                <h3 className="text-[11px] text-th-text-muted font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <h3 className="text-2xs text-th-text-muted font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
                   <Wrench size={11} aria-hidden />
                   Avg tool duration
                 </h3>
@@ -1354,8 +1354,8 @@ export default function RunDetailPage() {
                     .slice(0, 10)
                     .map(({ tool, avg }) => (
                       <div key={tool} className="flex items-center gap-2">
-                        <span className="text-[11px] text-th-text-secondary truncate" style={{ minWidth: "8rem" }}>{tool}</span>
-                        <span className="text-[11px] text-th-text-muted tabular-nums">{formatDuration(avg)}</span>
+                        <span className="text-2xs text-th-text-secondary truncate" style={{ minWidth: "8rem" }}>{tool}</span>
+                        <span className="text-2xs text-th-text-muted tabular-nums">{formatDuration(avg)}</span>
                       </div>
                     ))}
                 </div>
@@ -1364,7 +1364,7 @@ export default function RunDetailPage() {
 
             {run.error && (
               <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-4 shadow-sm shadow-black/[0.03]">
-                <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wider mb-1">Error</p>
+                <p className="text-2xs font-semibold text-red-400 uppercase tracking-wider mb-1">Error</p>
                 <p className="text-sm text-red-300 font-mono leading-relaxed">{run.error}</p>
               </div>
             )}

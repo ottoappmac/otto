@@ -28,7 +28,7 @@ export function AllowlistField({
               key={option.id}
               type="button"
               onClick={() => toggle(option.id)}
-              className={`px-2 py-1 text-[11px] rounded-md border transition-colors ${
+              className={`px-2 py-1 text-2xs rounded-md border transition-colors ${
                 on
                   ? "bg-th-tab-active-bg text-th-tab-active-fg border-transparent"
                   : "bg-th-inset-bg text-th-text-tertiary border-th-border hover:text-th-text-secondary"

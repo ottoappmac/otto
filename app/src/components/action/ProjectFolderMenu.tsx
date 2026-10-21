@@ -76,7 +76,7 @@ export function ProjectFolderMenu({
     <>
       <Folder size={11} />
       <span className="truncate">{workspace.name}</span>
-      {workspace.mode === "read" && <span className="text-[10px] opacity-70">read</span>}
+      {workspace.mode === "read" && <span className="text-2xs opacity-70">read</span>}
     </>
   ) : (
     <>
@@ -110,7 +110,7 @@ export function ProjectFolderMenu({
             placement === "above" ? "bottom-full mb-1" : "top-full mt-1"
           }`}
         >
-          <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-th-text-muted">Allowed folders</p>
+          <p className="px-3 pt-2 pb-1 text-2xs uppercase tracking-wider text-th-text-muted">Allowed folders</p>
           {loadError && <p className="px-3 py-1 text-xs text-red-400">{loadError}</p>}
           {!loadError && grants.length === 0 && (
             <p className="px-3 py-2 text-xs text-th-text-muted">No folders yet. Allow one below.</p>
@@ -135,7 +135,7 @@ export function ProjectFolderMenu({
                 >
                   <Folder size={12} className="shrink-0" />
                   <span className="truncate flex-1">{grant.label}</span>
-                  <span className="text-[10px] text-th-text-muted shrink-0">{grant.mode === "read" ? "read only" : "read/write"}</span>
+                  <span className="text-2xs text-th-text-muted shrink-0">{grant.mode === "read" ? "read only" : "read/write"}</span>
                   {active && <Check size={12} className="text-emerald-400 shrink-0" />}
                 </button>
                 <button

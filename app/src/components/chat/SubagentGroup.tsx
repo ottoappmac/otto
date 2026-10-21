@@ -44,12 +44,12 @@ export const SubagentGroup = memo(function SubagentGroup({ name, messages, model
       >
         {expanded ? <ChevronUp size={12} /> : <ChevronRight size={12} />}
         {(() => { const { Icon, className } = getAgentIcon("subagent"); return <Icon size={12} className={className} />; })()}
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium shrink-0">
+        <span className="text-2xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium shrink-0">
           {name}
         </span>
         {modelLabel && (
           <span
-            className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-medium shrink-0 ${familyChipClasses(modelFamily ?? "")}`}
+            className={`inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded border font-medium shrink-0 ${familyChipClasses(modelFamily ?? "")}`}
             title={`Model: ${modelLabel}`}
             onClick={(e) => e.stopPropagation()}
           >
@@ -66,11 +66,11 @@ export const SubagentGroup = memo(function SubagentGroup({ name, messages, model
           {stepCount} {stepCount === 1 ? "step" : "steps"}
         </span>
         {hasRunning ? (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium animate-pulse shrink-0">
+          <span className="text-2xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium animate-pulse shrink-0">
             running
           </span>
         ) : (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0">
+          <span className="text-2xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium shrink-0">
             done
           </span>
         )}

@@ -65,7 +65,7 @@ export function AllowedFolders() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-th-text-primary">Allowed folders</h3>
-          <p className="text-[11px] text-th-text-tertiary mt-1 max-w-xl">
+          <p className="text-2xs text-th-text-tertiary mt-1 max-w-xl">
             Otto only reads and edits a project folder after you allow it. Shell commands can still read most of the disk. They cannot read SSH keys, keychains, or Otto&apos;s own data, and a read-only folder is not writable from the shell.
           </p>
         </div>

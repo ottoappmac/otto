@@ -142,7 +142,7 @@ function AppBadge({ name }: { name: string }) {
   const hue = appHue(name);
   return (
     <span
-      className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0"
+      className="inline-flex items-center gap-1.5 text-2xs font-medium px-2 py-0.5 rounded-full shrink-0"
       style={{
         background: `hsl(${hue},55%,18%)`,
         color: `hsl(${hue},80%,72%)`,
@@ -189,14 +189,14 @@ function ActivityTableRow({ r, expanded, onToggle }: { r: ActivityRow; expanded:
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 truncate mt-0.5"
+                className="inline-flex items-center gap-1 text-2xs text-sky-400 hover:text-sky-300 truncate mt-0.5"
               >
                 <ExternalLink size={9} className="shrink-0" />
                 <span className="truncate">{r.url}</span>
               </a>
             )}
             {r.file_path && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-th-text-tertiary font-mono truncate mt-0.5">
+              <span className="inline-flex items-center gap-1 text-2xs text-th-text-tertiary font-mono truncate mt-0.5">
                 <FileText size={9} className="shrink-0" />
                 <span className="truncate" title={r.file_path}>{r.file_path}</span>
               </span>
@@ -206,7 +206,7 @@ function ActivityTableRow({ r, expanded, onToggle }: { r: ActivityRow; expanded:
         {/* Duration */}
         <td className="px-2 py-2.5 text-right whitespace-nowrap w-[64px]">
           {r.duration_s > 0 ? (
-            <span className="text-[11px] text-th-text-muted tabular-nums">{formatDuration(r.duration_s)}</span>
+            <span className="text-2xs text-th-text-muted tabular-nums">{formatDuration(r.duration_s)}</span>
           ) : null}
         </td>
         {/* Expand toggle */}
@@ -224,7 +224,7 @@ function ActivityTableRow({ r, expanded, onToggle }: { r: ActivityRow; expanded:
           <td colSpan={5} className="px-4 pb-3 pt-0">
             <div className="ml-[80px] pl-4 border-l-2 border-th-border/40 space-y-2">
               {r.context && (
-                <p className="text-[11px] text-th-text-secondary whitespace-pre-line break-words leading-relaxed">
+                <p className="text-2xs text-th-text-secondary whitespace-pre-line break-words leading-relaxed">
                   {r.context}
                 </p>
               )}
@@ -266,7 +266,7 @@ function PaginationBar({
         className="px-1.5 py-0.5 rounded text-[12px] leading-none text-th-text-muted hover:text-th-text-primary hover:bg-th-surface-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         title="Previous page"
       >‹</button>
-      <span className="px-2 text-[11px] text-th-text-secondary tabular-nums select-none">
+      <span className="px-2 text-2xs text-th-text-secondary tabular-nums select-none">
         {page + 1} / {totalPages}
       </span>
       <button
@@ -307,10 +307,10 @@ function ActivityTable({
       </colgroup>
       <thead>
         <tr className="border-b border-th-border/50">
-          <th className="pl-4 pr-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted">Time</th>
-          <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted">App</th>
-          <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted">Title / URL / File</th>
-          <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted text-right">Duration</th>
+          <th className="pl-4 pr-4 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted">Time</th>
+          <th className="px-2 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted">App</th>
+          <th className="px-2 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted">Title / URL / File</th>
+          <th className="px-2 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted text-right">Duration</th>
           <th className="pl-2 pr-4 py-2" />
         </tr>
       </thead>
@@ -467,7 +467,7 @@ export default function ActivityPage() {
           <h1 className="text-lg font-bold text-th-text-primary shrink-0">macOS Activity</h1>
           {status && (
             <span
-              className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full font-medium ${
+              className={`inline-flex items-center gap-1.5 text-2xs px-2 py-0.5 rounded-full font-medium ${
                 status.enabled
                   ? status.running
                     ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/25"
@@ -593,7 +593,7 @@ export default function ActivityPage() {
                 <button
                   type="button"
                   onClick={() => setDate(today)}
-                  className="px-2.5 py-1 text-[11px] font-medium text-sky-400 hover:bg-sky-500/10 rounded-lg border border-sky-500/25 transition-colors shrink-0"
+                  className="px-2.5 py-1 text-2xs font-medium text-sky-400 hover:bg-sky-500/10 rounded-lg border border-sky-500/25 transition-colors shrink-0"
                   title="Jump to today"
                 >
                   Today
@@ -652,7 +652,7 @@ export default function ActivityPage() {
             ) : searchMode && grouped ? (
               <>
                 <div className="px-4 py-2.5 border-b border-th-border/50 flex items-center justify-between">
-                  <span className="text-[11px] text-th-text-muted">
+                  <span className="text-2xs text-th-text-muted">
                     <span className="text-th-text-secondary font-medium">{total}</span>{" "}
                     {total === 1 ? "match" : "matches"} for{" "}
                     <span className="font-medium text-th-text-primary">"{search}"</span>
@@ -662,10 +662,10 @@ export default function ActivityPage() {
                 {grouped.map((g) => (
                   <div key={g.date}>
                     <div className="px-4 py-2 bg-th-inset-bg/50 border-b border-th-border/30 flex items-center gap-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-th-text-tertiary">
+                      <span className="text-2xs font-semibold uppercase tracking-wide text-th-text-tertiary">
                         {formatDateLabel(g.date)}
                       </span>
-                      <span className="text-[10px] text-th-text-muted tabular-nums">{g.rows.length} rows</span>
+                      <span className="text-2xs text-th-text-muted tabular-nums">{g.rows.length} rows</span>
                     </div>
                     <ActivityTable rows={g.rows} expandedIds={expandedIds} onToggle={toggleExpanded} />
                   </div>
@@ -674,7 +674,7 @@ export default function ActivityPage() {
             ) : (
               <>
                 <div className="px-4 py-2.5 border-b border-th-border/30 flex items-center justify-between">
-                  <span className="text-[11px] text-th-text-muted tabular-nums">
+                  <span className="text-2xs text-th-text-muted tabular-nums">
                     <span className="text-th-text-secondary font-medium">{total}</span>{" "}
                     {total === 1 ? "record" : "records"}
                   </span>
@@ -694,10 +694,10 @@ export default function ActivityPage() {
                   <Search size={14} className="text-th-text-muted" />
                 </div>
                 <p className="text-2xl font-bold text-th-text-primary">{total}</p>
-                <p className="text-[11px] text-th-text-muted mt-0.5">
+                <p className="text-2xs text-th-text-muted mt-0.5">
                   {total === 1 ? "match" : "matches"} across all dates
                 </p>
-                <div className="mt-3 pt-3 border-t border-th-border/30 text-[11px] text-th-text-tertiary">
+                <div className="mt-3 pt-3 border-t border-th-border/30 text-2xs text-th-text-tertiary">
                   Ranked by relevance. Clear the search box to return to the daily timeline.
                 </div>
               </div>
@@ -709,7 +709,7 @@ export default function ActivityPage() {
                     <Clock size={14} className="text-th-text-muted" />
                   </div>
                   <p className="text-2xl font-bold text-th-text-primary">{formatDuration(totalSeconds)}</p>
-                  <p className="text-[11px] text-th-text-muted mt-0.5">tracked on {formatDateLabel(date)}</p>
+                  <p className="text-2xs text-th-text-muted mt-0.5">tracked on {formatDateLabel(date)}</p>
                 </div>
 
                 <div className="bg-th-card-bg border border-th-card-border rounded-xl p-4">
@@ -779,7 +779,7 @@ export default function ActivityPage() {
                         />
                       </div>
                       {hasCap && (
-                        <div className="flex justify-between text-[10px] text-th-text-muted tabular-nums">
+                        <div className="flex justify-between text-2xs text-th-text-muted tabular-nums">
                           <span>{pct.toFixed(1)}% used</span>
                           {pct > 85 && (
                             <span className="text-red-400 font-medium">Near limit</span>
@@ -794,7 +794,7 @@ export default function ActivityPage() {
                     <span className="text-th-text-muted">Excluded apps</span>
                     <div className="flex flex-wrap gap-1">
                       {status.exclude_apps.map((a) => (
-                        <span key={a} className="px-1.5 py-0.5 rounded text-[10px] bg-th-inset-bg text-th-text-secondary">
+                        <span key={a} className="px-1.5 py-0.5 rounded text-2xs bg-th-inset-bg text-th-text-secondary">
                           {a}
                         </span>
                       ))}
@@ -806,13 +806,13 @@ export default function ActivityPage() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={handleClear}
-                        className="px-2 py-1 rounded text-[11px] font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-all"
+                        className="px-2 py-1 rounded text-2xs font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-all"
                       >
                         Confirm wipe
                       </button>
                       <button
                         onClick={() => setConfirmClear(false)}
-                        className="px-2 py-1 rounded text-[11px] font-medium text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover transition-all"
+                        className="px-2 py-1 rounded text-2xs font-medium text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover transition-all"
                       >
                         Cancel
                       </button>
@@ -820,7 +820,7 @@ export default function ActivityPage() {
                   ) : (
                     <button
                       onClick={() => setConfirmClear(true)}
-                      className="w-full inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-[11px] font-medium text-th-text-tertiary hover:text-red-400 hover:bg-red-500/10 transition-all"
+                      className="w-full inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-2xs font-medium text-th-text-tertiary hover:text-red-400 hover:bg-red-500/10 transition-all"
                     >
                       <Trash2 size={11} />
                       Clear all activity data

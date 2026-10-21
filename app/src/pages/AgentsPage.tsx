@@ -418,7 +418,7 @@ function AgentDialog({ agent, onClose, onSaved }: { agent: AgentSpec | null; onC
               <option value="custom">Custom (model id string)</option>
             </select>
             {subFamily === "exo" && (
-              <p className="mt-2 text-[11px] text-th-text-muted">
+              <p className="mt-2 text-2xs text-th-text-muted">
                 All cluster subagents share the same cluster URL and model id
                 from <span className="font-mono">Settings → LLM → Cluster</span>.
               </p>

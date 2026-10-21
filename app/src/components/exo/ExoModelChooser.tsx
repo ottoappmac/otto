@@ -140,7 +140,7 @@ function FitBadge({ fits }: { fits: ExoCatalogRow["fits"] }) {
   const v = map[fits];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${v.cls}`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium ${v.cls}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />
       {v.label}
@@ -167,7 +167,7 @@ function ClusterBar({
 
   if (!reachable && nodes.length === 0) {
     return (
-      <p className="inline-flex items-center gap-1.5 text-[11px] text-th-text-muted">
+      <p className="inline-flex items-center gap-1.5 text-2xs text-th-text-muted">
         <AlertTriangle size={11} />
         Cluster offline — start it to see fit scores.
       </p>
@@ -181,7 +181,7 @@ function ClusterBar({
   const lowMemory = totalFreeRam > 0 && totalFreeRam < minRam * 0.6;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-th-text-tertiary">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-2xs text-th-text-tertiary">
       <span className="inline-flex items-center gap-1.5 text-th-text-secondary font-medium">
         <Server size={12} className="text-th-text-muted" />
         {peerCount} {peerCount === 1 ? "node" : "nodes"}
@@ -256,7 +256,7 @@ function PreloadProgress({
           <p className="text-xs font-medium text-th-text-primary truncate">
             {job.model_id}
           </p>
-          <p className="text-[11px] text-th-text-muted truncate">
+          <p className="text-2xs text-th-text-muted truncate">
             {stageLabel[job.stage]}
             {job.min_nodes > 1 && job.stage !== "done" && (
               <span className="ml-1 text-th-text-tertiary">
@@ -315,7 +315,7 @@ function PreloadProgress({
         )}
       </div>
 
-      <div className="flex items-center justify-between text-[11px] text-th-text-muted font-mono">
+      <div className="flex items-center justify-between text-2xs text-th-text-muted font-mono">
         <span>
           {/* Hide byte counters during placing/loading — they don't reflect memory load progress */}
           {!isLoadingStage && (
@@ -401,29 +401,29 @@ function ModelRow({
             {row.featured && (
               <span
                 title="Recommended starting point"
-                className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-500"
+                className="inline-flex items-center gap-0.5 text-2xs font-medium text-amber-500"
               >
                 <Sparkles size={10} />
                 featured
               </span>
             )}
             {row.loaded && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-500">
+              <span className="inline-flex items-center gap-1 text-2xs font-medium text-emerald-500">
                 <CheckCircle2 size={10} />
                 loaded
               </span>
             )}
             {!row.loaded && row.downloaded && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-th-text-tertiary">
+              <span className="inline-flex items-center gap-1 text-2xs font-medium text-th-text-tertiary">
                 <CheckCircle2 size={10} />
                 downloaded
               </span>
             )}
           </div>
-          <p className="text-[11px] text-th-text-tertiary truncate font-mono">
+          <p className="text-2xs text-th-text-tertiary truncate font-mono">
             {row.model_id}
           </p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-th-text-muted">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-th-text-muted">
             <span title={breakdownTitle} className="cursor-help font-mono">
               {row.weights_gb.toFixed(1)} GB · {row.params_b.toFixed(0)}B · {row.quant}
             </span>
@@ -433,20 +433,20 @@ function ModelRow({
             {row.capabilities.slice(0, 4).map((t) => (
               <span
                 key={t}
-                className="px-1.5 py-0.5 rounded bg-th-inset-bg text-th-text-secondary text-[10px]"
+                className="px-1.5 py-0.5 rounded bg-th-inset-bg text-th-text-secondary text-2xs"
               >
                 {t}
               </span>
             ))}
           </div>
           {row.fits === "over" && row.min_nodes_required != null && (
-            <p className="text-[11px] text-amber-400">
+            <p className="text-2xs text-amber-400">
               Would fit comfortably with {row.min_nodes_required} node
               {row.min_nodes_required === 1 ? "" : "s"} — try the slider above.
             </p>
           )}
           {row.fits === "over" && row.min_nodes_required == null && (
-            <p className="text-[11px] text-rose-400 inline-flex items-center gap-1">
+            <p className="text-2xs text-rose-400 inline-flex items-center gap-1">
               <AlertTriangle size={11} />
               No combination of current nodes can hold this model.
             </p>
@@ -459,14 +459,14 @@ function ModelRow({
             <div className="flex flex-col items-end gap-1.5">
               <button
                 type="button"
-                className="px-2.5 py-1 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover"
+                className="px-2.5 py-1 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover"
                 onClick={onUseLoaded}
               >
                 Use this model
               </button>
               <button
                 type="button"
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 disabled:opacity-40"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-2xs font-medium rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 disabled:opacity-40"
                 onClick={onUnload}
                 disabled={!enabled || unloading}
                 title="Free cluster RAM by removing the in-memory instance (weights stay on disk)"
@@ -481,7 +481,7 @@ function ModelRow({
             </div>
           ) : activeJob ? (
             <span
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md bg-th-inset-bg text-th-text-tertiary"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-2xs font-medium rounded-md bg-th-inset-bg text-th-text-tertiary"
               title="Preload in progress — see card above."
             >
               <Loader2 size={11} className="animate-spin" />
@@ -494,7 +494,7 @@ function ModelRow({
           ) : (
             <button
               type="button"
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-50 hover:opacity-90"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-2xs font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg disabled:opacity-50 hover:opacity-90"
               onClick={onPreload}
               disabled={dlBlocked}
               title={
@@ -760,7 +760,7 @@ export default function ExoModelChooser({
         </div>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-50"
           onClick={() => void refresh({ force: true })}
           disabled={loading}
           title="Re-scan model cards and re-fetch cluster status"
@@ -809,7 +809,7 @@ export default function ExoModelChooser({
               key={t.id}
               type="button"
               onClick={() => setPickerTab(t.id)}
-              className={`flex-1 px-3 py-2 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors
+              className={`flex-1 px-3 py-2 text-2xs font-medium flex items-center justify-center gap-1.5 transition-colors
                 ${pickerTab === t.id
                   ? "bg-th-tab-active-bg text-white"
                   : "text-th-text-secondary hover:text-th-text-primary hover:bg-th-surface-hover/20"}`}
@@ -837,7 +837,7 @@ export default function ExoModelChooser({
         <div className="space-y-3">
           {recommended ? (
             <>
-              <p className="text-[11px] font-medium text-th-text-secondary inline-flex items-center gap-1.5">
+              <p className="text-2xs font-medium text-th-text-secondary inline-flex items-center gap-1.5">
                 <Sparkles size={12} className="text-amber-500" />
                 Recommended for your cluster
               </p>
@@ -864,7 +864,7 @@ export default function ExoModelChooser({
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="text-[11px] text-th-text-tertiary hover:text-th-text-primary underline underline-offset-2 transition-colors"
+            className="text-2xs text-th-text-tertiary hover:text-th-text-primary underline underline-offset-2 transition-colors"
           >
             See all {counts?.total ?? 0} models
           </button>
@@ -874,7 +874,7 @@ export default function ExoModelChooser({
       {/* min_nodes slider — only meaningful when peer_count > 1 */}
       {!condensed && (cluster?.max_nodes ?? 1) > 1 && (
         <div className="rounded-lg border border-th-border bg-th-inset-bg/40 px-3 py-2 space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-th-text-secondary">
+          <div className="flex items-center justify-between text-2xs text-th-text-secondary">
             <label htmlFor="exo-min-nodes" className="font-medium">
               Split across at least {minNodes} node
               {minNodes === 1 ? "" : "s"}
@@ -893,7 +893,7 @@ export default function ExoModelChooser({
             onChange={(e) => setMinNodes(parseInt(e.target.value, 10) || 1)}
             className="w-full"
           />
-          <p className="text-[10px] text-th-text-muted">
+          <p className="text-2xs text-th-text-muted">
             Forces pipeline-parallel placement so larger models can fit by
             sharing weights across nodes.
           </p>
@@ -916,7 +916,7 @@ export default function ExoModelChooser({
               <button
                 key={f}
                 type="button"
-                className={`px-2.5 py-1 text-[11px] font-medium rounded-md border ${
+                className={`px-2.5 py-1 text-2xs font-medium rounded-md border ${
                   filter === f
                     ? "border-th-tab-active-bg bg-th-tab-active-bg/15 text-th-text-primary"
                     : "border-th-border bg-th-surface text-th-text-tertiary hover:text-th-text-primary"
@@ -933,7 +933,7 @@ export default function ExoModelChooser({
           placeholder="Search by name, family, or tag…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[200px] px-2.5 py-1 text-[11px] rounded-md border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted w-full"
+          className="flex-1 min-w-[200px] px-2.5 py-1 text-2xs rounded-md border border-th-border bg-th-surface text-th-text-primary placeholder:text-th-text-muted w-full"
         />
       </div>
       )}
@@ -966,7 +966,7 @@ export default function ExoModelChooser({
       {/* Pagination */}
       {!condensed && pageCount > 1 && (
         <div className="flex items-center justify-between gap-2 pt-1">
-          <span className="text-[11px] text-th-text-muted">
+          <span className="text-2xs text-th-text-muted">
             {filtered.length} models · page {safePage} of {pageCount}
           </span>
           <div className="flex items-center gap-1">
@@ -992,13 +992,13 @@ export default function ExoModelChooser({
               }
               return pages.map((p, i) =>
                 p === "…" ? (
-                  <span key={`ellipsis-${i}`} className="px-1 text-[11px] text-th-text-muted select-none">…</span>
+                  <span key={`ellipsis-${i}`} className="px-1 text-2xs text-th-text-muted select-none">…</span>
                 ) : (
                   <button
                     key={p}
                     type="button"
                     onClick={() => setPage(p as number)}
-                    className={`min-w-[26px] px-1.5 py-0.5 text-[11px] font-medium rounded border ${
+                    className={`min-w-[26px] px-1.5 py-0.5 text-2xs font-medium rounded border ${
                       p === safePage
                         ? "border-th-tab-active-bg bg-th-tab-active-bg/15 text-th-text-primary"
                         : "border-th-border bg-th-surface text-th-text-tertiary hover:text-th-text-primary"

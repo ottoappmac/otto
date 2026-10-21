@@ -158,7 +158,7 @@ export default function HistoryPage() {
                       <span className="text-th-text-secondary font-medium">{session.agent_name || "General Purpose"}</span>
                       {session.trigger_source && TRIGGER_META[session.trigger_source] && (
                         <span
-                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${TRIGGER_META[session.trigger_source].color}`}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-2xs font-medium border ${TRIGGER_META[session.trigger_source].color}`}
                           title={TRIGGER_META[session.trigger_source].detail}
                         >
                           <Zap size={9} />

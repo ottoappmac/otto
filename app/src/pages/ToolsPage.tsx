@@ -217,10 +217,10 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-th-text-primary">{srv.name}</h3>
                       {srv.generated && (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"><Sparkles size={9} /> Agent-built</span>
+                        <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"><Sparkles size={9} /> Agent-built</span>
                       )}
                       {mcpRiskBadge(srv.id, !!srv.generated) && (
-                        <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">{mcpRiskBadge(srv.id, !!srv.generated)}</span>
+                        <span className="inline-flex items-center text-2xs px-1.5 py-0.5 rounded font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">{mcpRiskBadge(srv.id, !!srv.generated)}</span>
                       )}
                     </div>
                     <p className="text-xs text-th-text-tertiary mt-0.5">
@@ -231,7 +231,7 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                 </div>
                 <div className="flex items-center gap-2">
                   {srv.context_cache_active && (
-                    <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"><Database size={9} /> Context Cache</span>
+                    <span className="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"><Database size={9} /> Context Cache</span>
                   )}
                   {srv.required_secrets.length > 0 ? (
                     srv.missing_secrets.length > 0 ? (
@@ -379,10 +379,10 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-th-text-primary">{srv.name}</h3>
                           {mcpRiskBadge(srv.id, false) && (
-                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">{mcpRiskBadge(srv.id, false)}</span>
+                            <span className="inline-flex items-center text-2xs px-1.5 py-0.5 rounded font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">{mcpRiskBadge(srv.id, false)}</span>
                           )}
                           {!srv.os_supported && srv.requires_os && (
-                            <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full font-semibold bg-th-inset-bg text-th-text-tertiary border border-th-border">
+                            <span className="inline-flex items-center text-2xs px-2 py-0.5 rounded-full font-semibold bg-th-inset-bg text-th-text-tertiary border border-th-border">
                               {srv.requires_os.charAt(0).toUpperCase() + srv.requires_os.slice(1)} only
                             </span>
                           )}
@@ -399,7 +399,7 @@ export default function ToolsPage({ embedded }: { embedded?: boolean } = {}) {
                     </div>
                     <div className="flex items-center gap-2">
                       {srv.os_supported && srv.context_cache_active && (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"><Database size={9} /> Context Cache</span>
+                        <span className="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"><Database size={9} /> Context Cache</span>
                       )}
                       {srv.os_supported && (
                         srv.required_secrets.length > 0 ? (
@@ -572,7 +572,7 @@ function HeaderRows({ rows, onChange }: { rows: { name: string; value: string }[
         ))}
       </div>
       <button type="button" onClick={add} className="mt-2 inline-flex items-center gap-1 text-xs text-th-text-tertiary hover:text-th-text-primary transition-colors"><Plus size={12} /> Add header</button>
-      <p className="text-[11px] text-th-text-muted mt-1.5">Values are stored in the OS keychain, never in plain config — e.g. a Snowflake PAT as <code>Authorization</code> / <code>Bearer &lt;token&gt;</code>.</p>
+      <p className="text-2xs text-th-text-muted mt-1.5">Values are stored in the OS keychain, never in plain config — e.g. a Snowflake PAT as <code>Authorization</code> / <code>Bearer &lt;token&gt;</code>.</p>
     </div>
   );
 }
@@ -692,7 +692,7 @@ function EditMCPDialog({ server, onClose, onSaved }: { server: MCPServerStatus; 
                 min={1}
                 max={65535}
               />
-              <p className="text-[11px] text-th-text-muted mt-1">Used for both the executable --port arg and the MCP client connection</p>
+              <p className="text-2xs text-th-text-muted mt-1">Used for both the executable --port arg and the MCP client connection</p>
             </div>
           )}
           {(transport === "stdio" || hasLocalProcess) && (<><Field label="Command (no quotes needed — spaces in paths are OK)" value={command} onChange={setCommand} placeholder="Auto-detected if left empty" /><Field label="Arguments (space-separated)" value={args} onChange={setArgs} placeholder="run testserver" /></>)}
@@ -1065,23 +1065,23 @@ function CredentialsDialog({
                     <div className="flex items-center gap-2">
                       <code className="text-xs font-mono font-semibold text-th-text-primary">{name}</code>
                       {isRequired ? (
-                        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold">required</span>
+                        <span className="text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-semibold">required</span>
                       ) : isOptional ? (
                         <span
-                          className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold"
+                          className="text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold"
                           title="The MCP has a working default; setting a value here personalises it."
                         >
                           optional
                         </span>
                       ) : (
-                        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-th-card-bg text-th-text-muted border border-th-border font-semibold">extra</span>
+                        <span className="text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-th-card-bg text-th-text-muted border border-th-border font-semibold">extra</span>
                       )}
                       {isStored ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                           <CheckCircle2 size={9} /> stored
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                        <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
                           <XCircle size={9} /> missing
                         </span>
                       )}
@@ -1089,7 +1089,7 @@ function CredentialsDialog({
                     {isStored && (
                       <button
                         type="button"
-                        className="text-[11px] px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50 flex items-center gap-1"
+                        className="text-2xs px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50 flex items-center gap-1"
                         onClick={() => handleDelete(name)}
                         disabled={deletingName === name}
                       >
@@ -1226,16 +1226,16 @@ function InteractiveAuthPanel({
             </span>
             {status.has_bundle ? (
               status.expired ? (
-                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
                   <XCircle size={9} /> expired
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   <CheckCircle2 size={9} /> signed in
                 </span>
               )
             ) : (
-              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <span className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
                 <XCircle size={9} /> not signed in
               </span>
             )}
@@ -1291,8 +1291,8 @@ function ToolChips({ srv, onToggle }: { srv: MCPServerStatus; onToggle: (serverI
   return (
     <div className="mt-4">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-[10px] uppercase tracking-wider text-th-text-muted font-semibold">Tools</span>
-        <span className="text-[10px] text-th-text-muted">{enabledCount}/{srv.tools.length} enabled</span>
+        <span className="text-2xs uppercase tracking-wider text-th-text-muted font-semibold">Tools</span>
+        <span className="text-2xs text-th-text-muted">{enabledCount}/{srv.tools.length} enabled</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {srv.tools.map((tool) => {

@@ -265,20 +265,20 @@ export function RunTable({
     <table className="w-full text-sm border-collapse">
       <thead className="sticky top-0 z-10 bg-th-bg-secondary/80 backdrop-blur-xl">
         <tr className="border-b border-th-border">
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Status</th>
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Run</th>
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Agent</th>
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Source</th>
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Status</th>
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Run</th>
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Agent</th>
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">Source</th>
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
             <SortableHeader label="Started" field="started_at" active={sortKey === "started_at"} dir={sortDir} onSort={onSort} />
           </th>
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
             <SortableHeader label="Duration" field="duration_ms" active={sortKey === "duration_ms"} dir={sortDir} onSort={onSort} />
           </th>
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
             <SortableHeader label="Tokens" field="tokens" active={sortKey === "tokens"} dir={sortDir} onSort={onSort} />
           </th>
-          <th className="text-left text-[10px] font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
+          <th className="text-left text-2xs font-semibold uppercase tracking-wider text-th-text-muted px-3 py-2 whitespace-nowrap">
             <SortableHeader label="Eval" field="eval" active={sortKey === "eval"} dir={sortDir} onSort={onSort} />
           </th>
           <th className="px-2 py-2 w-px" aria-label="Actions" />
@@ -300,7 +300,7 @@ export function RunTable({
                 <td className={`px-3 ${rowPad} whitespace-nowrap`}>
                   <div className="flex items-center gap-1.5">
                     {run.eval_status === "running" ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-400">
+                      <span className="inline-flex items-center gap-1 text-2xs font-medium text-blue-400">
                         <FlaskConical size={11} className="animate-pulse" aria-hidden />
                         Evaluating…
                       </span>
@@ -313,7 +313,7 @@ export function RunTable({
                               e.stopPropagation();
                               setExpandedErrorId(isErrorExpanded ? null : run.id);
                             }}
-                            className={`flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium transition-colors ${
+                            className={`flex items-center gap-0.5 rounded px-1 py-0.5 text-2xs font-medium transition-colors ${
                               isErrorExpanded
                                 ? "text-red-400 bg-red-500/10"
                                 : "text-th-text-muted/60 hover:text-red-400 hover:bg-red-500/10"
@@ -339,7 +339,7 @@ export function RunTable({
                     <p className="text-th-text-primary font-medium truncate group-hover:text-blue-400 transition-colors">
                       {run.title || "Untitled"}
                     </p>
-                    <span className="text-[10px] font-mono text-th-text-muted/50">
+                    <span className="text-2xs font-mono text-th-text-muted/50">
                       #{(run.session_id ?? run.id).slice(0, 8)}
                     </span>
                   </div>
@@ -394,7 +394,7 @@ export function RunTable({
                   <div className="flex flex-col gap-0.5">
                     <span className="text-xs text-th-text-muted">{formatDuration(run.duration_ms)}</span>
                     <span
-                      className="inline-flex items-center gap-1 text-[10px] text-th-text-muted/50"
+                      className="inline-flex items-center gap-1 text-2xs text-th-text-muted/50"
                       title="Total agent steps (model turns + tool calls), including subagents"
                     >
                       <Footprints size={9} aria-hidden />
@@ -415,7 +415,7 @@ export function RunTable({
                       </span>
                       {run.avg_generation_tps != null && (
                         <span
-                          className="font-mono text-[10px] text-th-text-muted/50"
+                          className="font-mono text-2xs text-th-text-muted/50"
                           title={`Generation throughput: ${run.avg_generation_tps} tokens/sec`}
                         >
                           {run.avg_generation_tps.toFixed(0)} t/s
@@ -429,7 +429,7 @@ export function RunTable({
                 <td className={`px-3 ${rowPad} whitespace-nowrap`}>
                   {run.eval_status === "done" && run.eval_overall_score != null ? (
                     <button
-                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[10px] font-bold hover:opacity-80 transition-opacity ${evalChipClasses(run.eval_overall_score)}`}
+                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-2xs font-bold hover:opacity-80 transition-opacity ${evalChipClasses(run.eval_overall_score)}`}
                       title={`${run.eval_pass_count ?? 0}/${run.eval_total ?? 0} metrics passed — click to view`}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -440,9 +440,9 @@ export function RunTable({
                       {Math.round(run.eval_overall_score * 100)}%
                     </button>
                   ) : run.eval_status === "running" ? (
-                    <span className="text-[10px] text-blue-400 animate-pulse">…</span>
+                    <span className="text-2xs text-blue-400 animate-pulse">…</span>
                   ) : (
-                    <span className="text-[10px] text-th-text-muted/30">—</span>
+                    <span className="text-2xs text-th-text-muted/30">—</span>
                   )}
                 </td>
                 <td className={`px-2 ${rowPad} whitespace-nowrap w-px`} onClick={(e) => e.stopPropagation()}>
@@ -452,12 +452,12 @@ export function RunTable({
               {isErrorExpanded && (
                 <tr key={`${run.id}-error`} className="border-b border-th-border/40">
                   <td colSpan={colSpan} className="px-3 pb-2.5 pt-0">
-                    <div className="flex items-start gap-2 text-[11px] text-red-400/90 bg-red-500/[0.06] border border-red-500/15 rounded-md px-3 py-2 leading-relaxed">
+                    <div className="flex items-start gap-2 text-2xs text-red-400/90 bg-red-500/[0.06] border border-red-500/15 rounded-md px-3 py-2 leading-relaxed">
                       <AlertCircle size={12} className="shrink-0 mt-0.5" aria-hidden />
                       <p className="flex-1 min-w-0 break-words whitespace-pre-wrap">{run.error}</p>
                       <button
                         onClick={() => navigate(`/runs/${run.session_id ?? run.id}`)}
-                        className="shrink-0 text-[10px] font-medium text-red-400 hover:text-red-300 underline-offset-2 hover:underline"
+                        className="shrink-0 text-2xs font-medium text-red-400 hover:text-red-300 underline-offset-2 hover:underline"
                       >
                         View run
                       </button>

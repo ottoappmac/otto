@@ -512,7 +512,7 @@ function Stepper({ step }: { step: StepId }) {
             <div key={m.id} className="flex items-center gap-1.5 min-w-0">
               <div
                 className={classNames(
-                  "w-5 h-5 rounded-full border text-[10px] font-semibold flex items-center justify-center shrink-0 transition-colors",
+                  "w-5 h-5 rounded-full border text-2xs font-semibold flex items-center justify-center shrink-0 transition-colors",
                   done && "bg-emerald-500/20 border-emerald-500/60 text-emerald-500",
                   !done && active && "bg-th-tab-active-bg/20 border-th-tab-active-bg/60 text-th-tab-active-bg",
                   !done && !active && "bg-th-surface border-th-border text-th-text-muted",
@@ -522,7 +522,7 @@ function Stepper({ step }: { step: StepId }) {
               </div>
               <span
                 className={classNames(
-                  "text-[11px] font-medium hidden sm:inline",
+                  "text-2xs font-medium hidden sm:inline",
                   (done || active) ? "text-th-text-primary" : "text-th-text-muted",
                 )}
               >
@@ -587,13 +587,13 @@ function WelcomeScreen({ onContinue }: { onContinue: () => void }) {
 function MachineSummaryStrip({ caps }: { caps: MlxCapabilities | null }) {
   if (!caps) {
     return (
-      <div className="h-9 inline-flex items-center gap-2 px-3 rounded-full border border-th-border bg-th-surface text-[11px] text-th-text-muted">
+      <div className="h-9 inline-flex items-center gap-2 px-3 rounded-full border border-th-border bg-th-surface text-2xs text-th-text-muted">
         <Loader2 size={11} className="animate-spin" /> Reading your Mac…
       </div>
     );
   }
   return (
-    <div className="inline-flex items-center gap-x-5 gap-y-1 px-4 py-2 rounded-full border border-th-border bg-th-surface text-[11px] text-th-text-secondary">
+    <div className="inline-flex items-center gap-x-5 gap-y-1 px-4 py-2 rounded-full border border-th-border bg-th-surface text-2xs text-th-text-secondary">
       <span className="inline-flex items-center gap-1.5 font-medium text-th-text-primary">
         <Cpu size={11} /> {caps.chip || caps.platform}
       </span>
@@ -761,7 +761,7 @@ function ProviderTile({
           <h3 className="text-sm font-semibold text-th-text-primary">
             {title}
           </h3>
-          <p className="text-[11px] text-th-text-tertiary mt-0.5">{tagline}</p>
+          <p className="text-2xs text-th-text-tertiary mt-0.5">{tagline}</p>
         </div>
         {busy && <Loader2 size={14} className="animate-spin text-th-text-muted" />}
       </div>
@@ -770,7 +770,7 @@ function ProviderTile({
       </p>
       <ul className="space-y-1.5">
         {bullets.map((b) => (
-          <li key={b} className="text-[11px] text-th-text-tertiary flex items-center gap-1.5">
+          <li key={b} className="text-2xs text-th-text-tertiary flex items-center gap-1.5">
             <Check size={11} className="text-th-text-muted shrink-0" />
             {b}
           </li>
@@ -840,7 +840,7 @@ function LocalModelScreen({
               {pickedLabel || picked}
             </p>
             {pickedLabel && pickedLabel !== picked && (
-              <p className="text-[10px] text-th-text-muted font-mono truncate mt-0.5">{picked}</p>
+              <p className="text-2xs text-th-text-muted font-mono truncate mt-0.5">{picked}</p>
             )}
           </div>
           <button
@@ -1282,7 +1282,7 @@ function CloudProviderScreen({
         {(prov === "anthropic" || prov === "openai") && (
           <>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                 Model
               </label>
               <select
@@ -1294,12 +1294,12 @@ function CloudProviderScreen({
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
-              <p className="text-[10px] text-th-text-muted mt-1.5">
+              <p className="text-2xs text-th-text-muted mt-1.5">
                 After a successful test we'll fetch the live model list from your account.
               </p>
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                 API key
               </label>
               <div className="flex items-center gap-2">
@@ -1338,7 +1338,7 @@ function CloudProviderScreen({
         {prov === "azure" && (
           <div className="space-y-3">
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                 Model
               </label>
               <select
@@ -1350,12 +1350,12 @@ function CloudProviderScreen({
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
-              <p className="text-[10px] text-th-text-muted mt-1.5">
+              <p className="text-2xs text-th-text-muted mt-1.5">
                 Pick the base model your Azure deployment is serving.
               </p>
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                 Endpoint URL
               </label>
               <input
@@ -1368,7 +1368,7 @@ function CloudProviderScreen({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+                <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                   Deployment name
                 </label>
                 <input
@@ -1380,7 +1380,7 @@ function CloudProviderScreen({
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+                <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                   API version
                 </label>
                 <input
@@ -1392,7 +1392,7 @@ function CloudProviderScreen({
               </div>
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                 API key
               </label>
               <div className="relative">
@@ -1429,7 +1429,7 @@ function CloudProviderScreen({
             {/* AWS keys */}
             <div className="space-y-3">
               <div>
-                <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+                <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                   AWS Access Key ID
                 </label>
                 <input
@@ -1441,7 +1441,7 @@ function CloudProviderScreen({
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+                <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                   AWS Secret Access Key
                 </label>
                 <div className="relative">
@@ -1465,7 +1465,7 @@ function CloudProviderScreen({
 
             {/* Region */}
             <div>
-              <label className="block text-[11px] font-medium text-th-text-tertiary mb-1.5">
+              <label className="block text-2xs font-medium text-th-text-tertiary mb-1.5">
                 Region
               </label>
               <input
@@ -1480,11 +1480,11 @@ function CloudProviderScreen({
             {/* Inference profile */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-[11px] font-medium text-th-text-tertiary">
+                <label className="block text-2xs font-medium text-th-text-tertiary">
                   Inference profile
                 </label>
                 {fetchingProfiles && (
-                  <span className="flex items-center gap-1 text-[10px] text-th-text-muted">
+                  <span className="flex items-center gap-1 text-2xs text-th-text-muted">
                     <Loader2 size={10} className="animate-spin" /> Fetching profiles…
                   </span>
                 )}
@@ -1500,7 +1500,7 @@ function CloudProviderScreen({
                 ))}
               </select>
               {!fetchingProfiles && models.length === 0 && (
-                <p className="text-[10px] text-th-text-muted mt-1.5">
+                <p className="text-2xs text-th-text-muted mt-1.5">
                   Fill in your credentials above — profiles will load automatically.
                 </p>
               )}
@@ -1731,9 +1731,9 @@ function OmlxSetupScreen({
           {/* Homebrew path */}
           {homebrew ? (
             <div className="space-y-3">
-              <p className="text-[11px] text-th-text-secondary leading-relaxed">
+              <p className="text-2xs text-th-text-secondary leading-relaxed">
                 We'll run{" "}
-                <code className="bg-th-inset-bg px-1 py-0.5 rounded text-[10px]">
+                <code className="bg-th-inset-bg px-1 py-0.5 rounded text-2xs">
                   brew tap jundot/omlx &amp;&amp; brew install omlx
                 </code>
                 . The first run resolves MLX dependencies and can take a few minutes.
@@ -1756,7 +1756,7 @@ function OmlxSetupScreen({
                   href="https://github.com/jundot/omlx/releases"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[11px] text-th-text-tertiary hover:text-th-text-secondary underline underline-offset-2"
+                  className="text-2xs text-th-text-tertiary hover:text-th-text-secondary underline underline-offset-2"
                 >
                   Download manually ↗
                 </a>
@@ -1764,7 +1764,7 @@ function OmlxSetupScreen({
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-[11px] text-th-text-secondary leading-relaxed">
+              <p className="text-2xs text-th-text-secondary leading-relaxed">
                 Homebrew isn't on your PATH — no problem. We'll download oMLX
                 from its{" "}
                 <a href="https://github.com/jundot/omlx/releases" target="_blank" rel="noreferrer" className="underline underline-offset-2">
@@ -1791,7 +1791,7 @@ function OmlxSetupScreen({
                   href="https://github.com/jundot/omlx/releases"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[11px] text-th-text-tertiary hover:text-th-text-secondary underline underline-offset-2"
+                  className="text-2xs text-th-text-tertiary hover:text-th-text-secondary underline underline-offset-2"
                 >
                   Download manually ↗
                 </a>
@@ -1811,7 +1811,7 @@ function OmlxSetupScreen({
               type="button"
               onClick={() => void handleStop()}
               disabled={busy !== null}
-              className="text-[11px] text-th-text-tertiary hover:text-red-400 inline-flex items-center gap-1 transition-colors disabled:opacity-40"
+              className="text-2xs text-th-text-tertiary hover:text-red-400 inline-flex items-center gap-1 transition-colors disabled:opacity-40"
             >
               {busy === "stop" ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
               Stop
@@ -1819,9 +1819,9 @@ function OmlxSetupScreen({
           }
         >
           <div className="space-y-3">
-            <p className="text-[11px] text-th-text-secondary leading-relaxed">
+            <p className="text-2xs text-th-text-secondary leading-relaxed">
               {homebrew
-                ? <>We'll use <code className="bg-th-inset-bg px-1 py-0.5 rounded text-[10px]">brew services start omlx</code> so it auto-restarts on crash.</>
+                ? <>We'll use <code className="bg-th-inset-bg px-1 py-0.5 rounded text-2xs">brew services start omlx</code> so it auto-restarts on crash.</>
                 : "We'll spawn omlx serve directly. Without Homebrew it won't auto-restart on reboot."}
             </p>
             <button
@@ -1859,12 +1859,12 @@ function OmlxSetupScreen({
                     <option key={m.id} value={m.id}>{m.id}</option>
                   ))}
                 </select>
-                <p className="text-[10px] text-th-text-tertiary">
+                <p className="text-2xs text-th-text-tertiary">
                   Otto uses this model when oMLX is the provider. You can change it any time in Settings.
                 </p>
               </div>
             ) : (
-              <p className="text-[11px] text-th-text-tertiary">
+              <p className="text-2xs text-th-text-tertiary">
                 No models loaded yet — start the server first, then refresh.
               </p>
             )}
@@ -1886,7 +1886,7 @@ function OmlxSetupScreen({
           <button
             type="button"
             onClick={() => setShowLog((v) => !v)}
-            className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-medium text-th-text-secondary hover:bg-th-surface-hover/20 transition-colors"
+            className="w-full flex items-center justify-between px-3 py-2 text-2xs font-medium text-th-text-secondary hover:bg-th-surface-hover/20 transition-colors"
           >
             <span className="inline-flex items-center gap-1.5">
               {job.status === "running" && <Loader2 size={11} className="animate-spin text-th-text-muted" />}
@@ -1898,11 +1898,11 @@ function OmlxSetupScreen({
           </button>
           {showLog && (
             <div className="border-t border-th-border px-3 pb-3">
-              <pre className="text-[10px] text-th-text-tertiary whitespace-pre-wrap max-h-40 overflow-auto font-mono leading-relaxed pt-2">
+              <pre className="text-2xs text-th-text-tertiary whitespace-pre-wrap max-h-40 overflow-auto font-mono leading-relaxed pt-2">
                 {(job.log_lines.slice(-40).join("\n")) || "(no output yet)"}
               </pre>
               {job.error && (
-                <p className="text-[11px] text-red-400 mt-1.5 leading-relaxed">{job.error}</p>
+                <p className="text-2xs text-red-400 mt-1.5 leading-relaxed">{job.error}</p>
               )}
             </div>
           )}
@@ -1911,7 +1911,7 @@ function OmlxSetupScreen({
 
       {/* ── Error banner ──────────────────────────────────────────── */}
       {error && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2.5 text-[11px] text-red-400 leading-relaxed">
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2.5 text-2xs text-red-400 leading-relaxed">
           {error}
         </div>
       )}
@@ -1921,7 +1921,7 @@ function OmlxSetupScreen({
         <button
           type="button"
           onClick={() => setShowDiagnostics((v) => !v)}
-          className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-medium text-th-text-tertiary hover:text-th-text-secondary hover:bg-th-surface-hover/20 transition-colors"
+          className="w-full flex items-center justify-between px-3 py-2 text-2xs font-medium text-th-text-tertiary hover:text-th-text-secondary hover:bg-th-surface-hover/20 transition-colors"
         >
           <span className="inline-flex items-center gap-1.5">
             {detecting && <Loader2 size={10} className="animate-spin" />}
@@ -1971,7 +1971,7 @@ function OmlxSetupScreen({
       </div>
 
       {/* ── Third-party note ─────────────────────────────────────── */}
-      <p className="text-[10px] text-th-text-tertiary leading-relaxed px-0.5">
+      <p className="text-2xs text-th-text-tertiary leading-relaxed px-0.5">
         <AlertTriangle size={10} className="inline text-amber-500 mr-1 -mt-0.5" />
         oMLX is a third-party project. If install fails with a dylib relink error, run{" "}
         <code className="font-mono">brew untap --force jundot/omlx &amp;&amp; brew reinstall omlx</code> in your terminal.
@@ -2025,7 +2025,7 @@ function OmlxStep({
         {/* Step badge */}
         <span
           className={classNames(
-            "inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-bold shrink-0",
+            "inline-flex items-center justify-center w-6 h-6 rounded-full text-2xs font-bold shrink-0",
             isDone
               ? "bg-emerald-500 text-white"
               : isActive
@@ -2046,7 +2046,7 @@ function OmlxStep({
             {title}
           </p>
           {isDone && doneDetail && (
-            <p className="text-[10px] text-th-text-tertiary truncate mt-0.5">{doneDetail}</p>
+            <p className="text-2xs text-th-text-tertiary truncate mt-0.5">{doneDetail}</p>
           )}
         </div>
 
@@ -2123,8 +2123,8 @@ function StatusRow({
     <div className="flex items-start gap-2">
       <Icon size={12} className={`${color} mt-0.5 shrink-0`} />
       <div className="min-w-0">
-        <p className="text-[11px] font-medium text-th-text-primary">{label}</p>
-        <p className="text-[10px] text-th-text-tertiary truncate">{detail}</p>
+        <p className="text-2xs font-medium text-th-text-primary">{label}</p>
+        <p className="text-2xs text-th-text-tertiary truncate">{detail}</p>
       </div>
     </div>
   );
@@ -2223,7 +2223,7 @@ function MemoryScreen({
           </div>
         )}
 
-        <details className="text-[11px] text-th-text-tertiary">
+        <details className="text-2xs text-th-text-tertiary">
           <summary className="cursor-pointer select-none hover:text-th-text-secondary">
             How it works
           </summary>
@@ -2377,7 +2377,7 @@ function ActivityScreen({
                   <p className="text-xs font-medium text-th-text-primary">
                     Accessibility permission required
                   </p>
-                  <p className="text-[11px] text-th-text-muted mt-0.5 leading-relaxed">
+                  <p className="text-2xs text-th-text-muted mt-0.5 leading-relaxed">
                     macOS requires Accessibility access to read window
                     titles. {prompted
                       ? <>If no dialog appeared, open <span className="font-mono">System Settings → Privacy &amp; Security → Accessibility</span> and toggle Otto on.</>
@@ -2388,7 +2388,7 @@ function ActivityScreen({
                       <button
                         type="button"
                         onClick={() => void requestPermission()}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg hover:opacity-90"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md bg-th-tab-active-bg text-th-tab-active-fg hover:opacity-90"
                       >
                         <ShieldCheck size={11} /> Grant permission
                       </button>
@@ -2397,7 +2397,7 @@ function ActivityScreen({
                       type="button"
                       onClick={() => void probe()}
                       disabled={probing}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-40"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-2xs font-medium rounded-md border border-th-border bg-th-surface text-th-text-secondary hover:bg-th-surface-hover disabled:opacity-40"
                     >
                       {probing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
                       Re-check
@@ -2410,13 +2410,13 @@ function ActivityScreen({
         )}
 
         {enabled && permission && !permission.supported && (
-          <div className="rounded-xl border border-th-border bg-th-inset-bg p-3 text-[11px] text-th-text-muted">
+          <div className="rounded-xl border border-th-border bg-th-inset-bg p-3 text-2xs text-th-text-muted">
             Activity tracking is macOS-only. The toggle will be saved
             but won't have any effect on this platform.
           </div>
         )}
 
-        <details className="text-[11px] text-th-text-tertiary">
+        <details className="text-2xs text-th-text-tertiary">
           <summary className="cursor-pointer select-none hover:text-th-text-secondary">
             What's recorded
           </summary>
@@ -2486,7 +2486,7 @@ function AmbientScreen({
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-th-text-primary">Enable ambient assistant</p>
-            <p className="text-[11px] text-th-text-muted mt-0.5 max-w-xs">
+            <p className="text-2xs text-th-text-muted mt-0.5 max-w-xs">
               Uses a tiny on-device model (Qwen3-1.7B, ~1 GB — already downloaded).
               Shows suggestions in the sidebar; never acts without your approval.
             </p>
@@ -2696,7 +2696,7 @@ function SummaryRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-[11px] uppercase tracking-wider text-th-text-muted shrink-0">
+      <span className="text-2xs uppercase tracking-wider text-th-text-muted shrink-0">
         {label}
       </span>
       <span
@@ -2763,7 +2763,7 @@ function ToggleRow({
           {label}
         </span>
         {description && (
-          <span className="block text-[11px] text-th-text-tertiary mt-0.5 leading-relaxed">
+          <span className="block text-2xs text-th-text-tertiary mt-0.5 leading-relaxed">
             {description}
           </span>
         )}
@@ -2798,7 +2798,7 @@ function ReassurancePills({
       {pills.map((p) => (
         <span
           key={p.label}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-th-inset-bg border border-th-border text-[11px] font-medium text-th-text-secondary"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-th-inset-bg border border-th-border text-2xs font-medium text-th-text-secondary"
         >
           <span className="text-emerald-500">{p.icon}</span>
           {p.label}
@@ -2973,7 +2973,7 @@ const VOICE_PROVIDER_META: Record<VoiceProvider, {
 
 function SectionNumber({ n }: { n: number }) {
   return (
-    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-th-bg-secondary border border-th-border text-[10px] font-bold text-th-text-secondary shrink-0">
+    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-th-bg-secondary border border-th-border text-2xs font-bold text-th-text-secondary shrink-0">
       {n}
     </span>
   );
@@ -3027,7 +3027,7 @@ function VoiceSetupScreen({
           </div>
           <div>
             <h2 className="text-xl font-bold text-th-text-primary leading-none">Voice</h2>
-            <span className={`inline-flex items-center gap-1 mt-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${meta.badgeColor}`}>
+            <span className={`inline-flex items-center gap-1 mt-1 text-2xs font-medium px-1.5 py-0.5 rounded-full border ${meta.badgeColor}`}>
               {meta.badge}
             </span>
           </div>
@@ -3066,7 +3066,7 @@ function VoiceSetupScreen({
               <SectionNumber n={1} />
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-th-text-primary">Speech-to-text model</p>
-                <p className="text-[11px] text-th-text-secondary mt-0.5">
+                <p className="text-2xs text-th-text-secondary mt-0.5">
                   Whisper runs on-device. Your voice is transcribed privately on your Mac.
                 </p>
               </div>
@@ -3088,7 +3088,7 @@ function VoiceSetupScreen({
               : "border-emerald-500/20 bg-emerald-500/[0.04]"
           }`}>
             <ShieldCheck size={14} className={`mt-0.5 shrink-0 ${providerType === "cloud" ? "text-amber-400" : "text-emerald-400"}`} />
-            <p className={`text-[11px] leading-relaxed ${providerType === "cloud" ? "text-amber-300/80" : "text-emerald-300/80"}`}>
+            <p className={`text-2xs leading-relaxed ${providerType === "cloud" ? "text-amber-300/80" : "text-emerald-300/80"}`}>
               <span className={`font-semibold ${providerType === "cloud" ? "text-amber-300" : "text-emerald-300"}`}>
                 {providerType === "cloud" ? "STT stays on-device." : "Fully private."}
               </span>{" "}

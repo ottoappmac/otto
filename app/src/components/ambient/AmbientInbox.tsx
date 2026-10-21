@@ -63,7 +63,7 @@ function SourceChip({ source }: { source: string }) {
   const meta = SOURCE_META[source] ?? { label: source, icon: BookOpen };
   const Icon = meta.icon;
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-th-surface-hover text-th-text-muted border-th-border">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border bg-th-surface-hover text-th-text-muted border-th-border">
       <Icon size={9} />
       {meta.label}
     </span>
@@ -211,7 +211,7 @@ function HintCard({
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <h3 className="text-sm font-semibold text-th-text-primary truncate">{hint.title}</h3>
             {hint.kind === "schedule" && hint.schedule_cron && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono border bg-neutral-500/10 text-neutral-400 border-neutral-500/20">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono border bg-neutral-500/10 text-neutral-400 border-neutral-500/20">
                 <Clock size={9} />
                 {hint.schedule_cron}
               </span>
@@ -222,7 +222,7 @@ function HintCard({
             <div className="flex flex-wrap gap-1 mt-2">
               {hint.sources.slice(0, MAX_VISIBLE_SOURCES).map((s) => <SourceChip key={s} source={s} />)}
               {hint.sources.length > MAX_VISIBLE_SOURCES && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-th-surface-hover text-th-text-muted border-th-border">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-medium border bg-th-surface-hover text-th-text-muted border-th-border">
                   +{hint.sources.length - MAX_VISIBLE_SOURCES}
                 </span>
               )}
@@ -258,7 +258,7 @@ function HintCard({
         <button
           type="button"
           onClick={() => setPromptExpanded((v) => !v)}
-          className="inline-flex items-center gap-1 text-[11px] text-th-text-muted hover:text-th-text-secondary transition-colors"
+          className="inline-flex items-center gap-1 text-2xs text-th-text-muted hover:text-th-text-secondary transition-colors"
           aria-expanded={promptExpanded}
         >
           {promptExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -278,7 +278,7 @@ function HintCard({
                   setCopied(true);
                   setTimeout(() => setCopied(false), 1500);
                 }}
-                className="inline-flex items-center gap-1 text-[10px] text-th-text-muted hover:text-th-text-secondary transition-colors"
+                className="inline-flex items-center gap-1 text-2xs text-th-text-muted hover:text-th-text-secondary transition-colors"
                 title="Copy to clipboard"
               >
                 {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
@@ -294,7 +294,7 @@ function HintCard({
         <div className="mt-3 ml-11">
           {confirmingApply ? (
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] text-th-text-muted">
+              <span className="text-2xs text-th-text-muted">
                 Replace the {applyTarget} prompt with this improved version?
               </span>
               <button
@@ -696,7 +696,7 @@ export default function AmbientInbox() {
             >
               {showRecent ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               Recently actioned
-              <span className="text-[10px] text-th-text-muted/60 normal-case font-medium">({recentActioned.length})</span>
+              <span className="text-2xs text-th-text-muted/60 normal-case font-medium">({recentActioned.length})</span>
             </button>
             {showRecent && (
               <div className="space-y-2">
@@ -707,7 +707,7 @@ export default function AmbientInbox() {
                   >
                     <CheckCircle size={14} className="text-emerald-400 shrink-0" />
                     <p className="text-xs text-th-text-secondary truncate">{hint.title}</p>
-                    <span className="ml-auto text-[10px] text-th-text-muted shrink-0 capitalize">
+                    <span className="ml-auto text-2xs text-th-text-muted shrink-0 capitalize">
                       {hint.status}
                     </span>
                   </div>

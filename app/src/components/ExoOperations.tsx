@@ -118,7 +118,7 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span
       className={classNames(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium border",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-2xs font-medium border",
         ok
           ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
           : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
@@ -176,7 +176,7 @@ function PrimaryButton({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-th-border-soft bg-th-bg px-3 py-2">
-      <div className="text-[10px] uppercase tracking-widest text-th-text-muted">
+      <div className="text-2xs uppercase tracking-widest text-th-text-muted">
         {label}
       </div>
       <div
@@ -585,11 +585,11 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
                   {startupJob.phases.map((ph, idx) => (
                     <div key={ph.name} className="flex items-center gap-1">
                       {idx > 0 && (
-                        <span className="text-blue-900/60 text-[10px]">›</span>
+                        <span className="text-blue-900/60 text-2xs">›</span>
                       )}
                       <span
                         className={classNames(
-                          "text-[11px] font-medium",
+                          "text-2xs font-medium",
                           ph.status === "done" && "text-emerald-400",
                           ph.status === "running" && "text-blue-300",
                           ph.status === "error" && "text-red-400",
@@ -737,13 +737,13 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
         {info?.state?.mlx_version_warning ? (
           <div className="border-t border-th-border px-4 py-3 bg-amber-500/5 text-[12px] text-amber-600 leading-relaxed">
             <div className="flex items-start gap-2">
-              <span className="font-semibold uppercase text-[10px] tracking-wider mt-0.5">
+              <span className="font-semibold uppercase text-2xs tracking-wider mt-0.5">
                 MLX preflight
               </span>
               <span className="flex-1">
                 {info.state.mlx_version_warning}
                 {info.state.mlx_version_pinned && info.state.mlx_version_bundled && (
-                  <span className="ml-2 font-mono text-[11px] text-th-text-muted">
+                  <span className="ml-2 font-mono text-2xs text-th-text-muted">
                     (pinned {info.state.mlx_version_pinned} · bundled {info.state.mlx_version_bundled})
                   </span>
                 )}
@@ -754,10 +754,10 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
 
         <div className="border-t border-th-border px-4 py-3.5">
           <div className="flex items-center justify-between mb-2.5">
-            <h3 className="text-[11px] uppercase tracking-widest text-th-text-muted">
+            <h3 className="text-2xs uppercase tracking-widest text-th-text-muted">
               Topology
             </h3>
-            <span className="text-[11px] text-th-text-muted">
+            <span className="text-2xs text-th-text-muted">
               {(!reachable || busy === "down")
                 ? `${Object.keys(knownNodes).length} offline`
                 : `${Object.values(knownNodes).filter((r) => r.clusterStatus === "online").length} online${
@@ -859,11 +859,11 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
                           </span>
                         )}
                         {isMaster && (
-                          <span className="inline-flex items-center rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30 px-1.5 py-[1px] text-[10px] font-medium">
+                          <span className="inline-flex items-center rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30 px-1.5 py-[1px] text-2xs font-medium">
                             master
                           </span>
                         )}
-                        <span className={classNames("text-[11px] font-medium", st.text)}>
+                        <span className={classNames("text-2xs font-medium", st.text)}>
                           {st.label}
                         </span>
                       </div>
@@ -901,7 +901,7 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
             <h2 className="text-[13px] font-semibold text-th-text-primary">
               Models
             </h2>
-            <span className="text-[11px] text-th-text-muted">
+            <span className="text-2xs text-th-text-muted">
               fit-scored against your cluster
             </span>
           </div>
@@ -942,11 +942,11 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
                       {j.phases.map((ph: ExoJobPhase, idx: number) => (
                         <div key={ph.name} className="flex items-center gap-1.5">
                           {idx > 0 && (
-                            <span className="text-th-text-muted text-[10px]">›</span>
+                            <span className="text-th-text-muted text-2xs">›</span>
                           )}
                           <div
                             className={classNames(
-                              "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium border",
+                              "flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium border",
                               ph.status === "done" &&
                                 "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
                               ph.status === "running" &&
@@ -978,17 +978,17 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
                     </div>
                     {/* Error banner */}
                     {j.error && (
-                      <div className="flex items-start gap-2 rounded-md bg-red-500/10 border border-red-500/20 px-3 py-2 text-[11px] text-red-500 pl-5">
+                      <div className="flex items-start gap-2 rounded-md bg-red-500/10 border border-red-500/20 px-3 py-2 text-2xs text-red-500 pl-5">
                         <AlertTriangle size={12} className="shrink-0 mt-0.5" />
                         <span>{j.error}</span>
                       </div>
                     )}
                     {/* Log expander */}
                     <details className="pl-5">
-                      <summary className="cursor-pointer text-[11px] text-th-text-muted hover:text-th-text-secondary list-none">
+                      <summary className="cursor-pointer text-2xs text-th-text-muted hover:text-th-text-secondary list-none">
                         {j.log_lines.length} log line{j.log_lines.length !== 1 ? "s" : ""}
                       </summary>
-                      <pre className="mt-1.5 max-h-52 overflow-auto rounded bg-black/80 p-2.5 text-[11px] text-emerald-100 font-mono whitespace-pre-wrap">
+                      <pre className="mt-1.5 max-h-52 overflow-auto rounded bg-black/80 p-2.5 text-2xs text-emerald-100 font-mono whitespace-pre-wrap">
                         {j.log_lines.join("\n") || "(no output yet)"}
                       </pre>
                     </details>
@@ -1017,7 +1017,7 @@ export default function ExoOperations({ enabled, pane }: ExoOperationsProps) {
                         {j.status} · {j.log_lines.length} lines
                       </span>
                     </summary>
-                    <pre className="mt-2 max-h-72 overflow-auto rounded bg-black/80 p-3 text-[11px] text-emerald-100 font-mono whitespace-pre-wrap">
+                    <pre className="mt-2 max-h-72 overflow-auto rounded bg-black/80 p-3 text-2xs text-emerald-100 font-mono whitespace-pre-wrap">
                       {j.log_lines.join("\n") || "(no output yet)"}
                     </pre>
                   </details>

@@ -27,7 +27,7 @@ export function ModelPicker({ value, models, onChange, align = "left" }: ModelPi
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-2 py-0.5 text-[11px] text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover rounded-md transition-all"
+        className="flex items-center gap-1.5 px-2 py-0.5 text-2xs text-th-text-tertiary hover:text-th-text-primary hover:bg-th-surface-hover rounded-md transition-all"
       >
         <span className="truncate max-w-[200px]">{displayName}</span>
         {open ? <ChevronDown size={10} /> : <ChevronUp size={10} />}

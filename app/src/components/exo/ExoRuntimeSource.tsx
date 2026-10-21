@@ -36,7 +36,7 @@ export default function ExoRuntimeSource({
   return (
     <div className="space-y-5">
       <div className="space-y-1">
-        <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
+        <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
           Runtime
         </p>
         <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
@@ -64,7 +64,7 @@ export default function ExoRuntimeSource({
               Build from source
             </button>
           </div>
-          <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+          <p className="text-2xs text-th-text-tertiary leading-relaxed">
             {isSource
               ? "Clones exo and runs uv sync locally. Requires git, uv, node, and a Rust nightly toolchain; first run takes several minutes."
               : "Downloads a notarized, prebuilt runtime on demand (~600 MB, Apple Silicon). No build toolchain needed — Otto fetches it when you start the cluster."}
@@ -74,7 +74,7 @@ export default function ExoRuntimeSource({
 
       {!isSource && (
         <div className="space-y-1">
-          <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
+          <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
             Prebuilt source
           </p>
           <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">
@@ -90,7 +90,7 @@ export default function ExoRuntimeSource({
                 placeholder="https://github.com/ottoappmac/otto/releases/latest/download/exo-runtime-manifest.json"
               />
             </div>
-            <p className="text-[11px] text-th-text-tertiary leading-relaxed">
+            <p className="text-2xs text-th-text-tertiary leading-relaxed">
               Where to fetch the prebuilt runtime. Leave blank to use the default GitHub releases.
               Accepts a manifest <code className="font-mono">.json</code> URL, a direct{" "}
               <code className="font-mono">.tar.gz</code> URL, or a{" "}
@@ -102,7 +102,7 @@ export default function ExoRuntimeSource({
 
       {isSource && sourceFields && (
         <div className="space-y-1">
-          <p className="text-[10px] font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
+          <p className="text-2xs font-semibold text-th-text-muted uppercase tracking-widest px-0.5">
             Source &amp; Build
           </p>
           <div className="rounded-xl border border-th-border bg-th-inset-bg p-4 space-y-3">

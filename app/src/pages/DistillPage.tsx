@@ -100,11 +100,11 @@ function StatCard({
         <Icon size={18} className={warn ? "text-amber-400" : "text-th-text-muted"} />
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] text-th-text-tertiary uppercase tracking-wider">{label}</p>
+        <p className="text-2xs text-th-text-tertiary uppercase tracking-wider">{label}</p>
         <p className={`text-lg font-semibold tabular-nums mt-0.5 ${warn ? "text-amber-300" : "text-th-text-primary"}`}>
           {value}
         </p>
-        {hint && <p className="text-[10px] text-th-text-muted mt-0.5 truncate">{hint}</p>}
+        {hint && <p className="text-2xs text-th-text-muted mt-0.5 truncate">{hint}</p>}
       </div>
     </div>
   );
@@ -140,7 +140,7 @@ function Toggle({
       </button>
       <div className="min-w-0">
         <span className="text-sm text-th-text-secondary">{label}</span>
-        {description && <p className="text-[11px] text-th-text-muted mt-0.5 leading-relaxed">{description}</p>}
+        {description && <p className="text-2xs text-th-text-muted mt-0.5 leading-relaxed">{description}</p>}
       </div>
     </label>
   );
@@ -173,19 +173,19 @@ function InputField({
 function EvalBadge({ row }: { row: DistillDatasetSession }) {
   if (row.eval_verdict === true) {
     return (
-      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+      <span className="text-2xs font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
         eval {row.eval_overall_score != null ? row.eval_overall_score.toFixed(2) : "pass"}
       </span>
     );
   }
   if (row.eval_verdict === false) {
     return (
-      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25">
+      <span className="text-2xs font-medium px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/25">
         eval {row.eval_overall_score != null ? row.eval_overall_score.toFixed(2) : "fail"}
       </span>
     );
   }
-  return <span className="text-[10px] text-th-text-muted">no eval</span>;
+  return <span className="text-2xs text-th-text-muted">no eval</span>;
 }
 
 export default function DistillPage() {
@@ -520,7 +520,7 @@ export default function DistillPage() {
                 {Object.entries(stats.reject_histogram).map(([reason, n]) => (
                   <span
                     key={reason}
-                    className="text-[11px] px-2 py-1 rounded-lg bg-th-inset-bg border border-th-border text-th-text-tertiary"
+                    className="text-2xs px-2 py-1 rounded-lg bg-th-inset-bg border border-th-border text-th-text-tertiary"
                   >
                     {REASON_LABEL[reason] || reason} · {n}
                   </span>
@@ -533,7 +533,7 @@ export default function DistillPage() {
                 {Object.entries(stats.tool_histogram).slice(0, 12).map(([name, n]) => (
                   <span
                     key={name}
-                    className="text-[11px] px-2 py-1 rounded-lg bg-violet-500/8 border border-violet-500/20 text-violet-300 font-mono"
+                    className="text-2xs px-2 py-1 rounded-lg bg-violet-500/8 border border-violet-500/20 text-violet-300 font-mono"
                   >
                     {name} · {n}
                   </span>
@@ -556,7 +556,7 @@ export default function DistillPage() {
                   key={id}
                   type="button"
                   onClick={() => setFilter(id)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
+                  className={`px-2.5 py-1 rounded-lg text-2xs font-medium border transition-colors ${
                     filter === id
                       ? "bg-violet-500/15 text-violet-300 border-violet-500/30"
                       : "bg-th-inset-bg text-th-text-tertiary border-th-border hover:text-th-text-primary"
@@ -595,11 +595,11 @@ export default function DistillPage() {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-th-border/50">
-                        <th className="pl-4 pr-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted">Session</th>
-                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted text-right">Msgs</th>
-                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted text-right">Tools</th>
-                        <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted">Eval</th>
-                        <th className="pl-2 pr-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-th-text-muted">Gate</th>
+                        <th className="pl-4 pr-2 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted">Session</th>
+                        <th className="px-2 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted text-right">Msgs</th>
+                        <th className="px-2 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted text-right">Tools</th>
+                        <th className="px-2 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted">Eval</th>
+                        <th className="pl-2 pr-4 py-2 text-2xs font-semibold uppercase tracking-wider text-th-text-muted">Gate</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-th-border/20">
@@ -617,7 +617,7 @@ export default function DistillPage() {
                               <p className="text-[12px] font-medium text-th-text-primary truncate">
                                 {row.title || row.preview || row.session_id.slice(0, 8)}
                               </p>
-                              <p className="text-[10px] text-th-text-muted truncate mt-0.5">
+                              <p className="text-2xs text-th-text-muted truncate mt-0.5">
                                 {row.preview && row.title !== row.preview ? row.preview : row.session_id.slice(0, 8)}
                                 {row.model ? ` · ${shortModel(row.model)}` : " · no model"}
                                 {row.llm_provider ? ` · ${row.llm_provider}` : ""}
@@ -629,15 +629,15 @@ export default function DistillPage() {
                             <td className="px-2 py-2.5 text-right text-[12px] tabular-nums text-th-text-secondary">
                               {row.n_tool_calls}
                               {row.n_unanswered > 0 && (
-                                <span className="block text-[9px] text-amber-400">{row.n_unanswered} open</span>
+                                <span className="block text-2xs text-amber-400">{row.n_unanswered} open</span>
                               )}
                             </td>
                             <td className="px-2 py-2.5"><EvalBadge row={row} /></td>
                             <td className="pl-2 pr-4 py-2.5">
                               {row.eligible ? (
-                                <span className="text-[10px] font-medium text-emerald-400">in</span>
+                                <span className="text-2xs font-medium text-emerald-400">in</span>
                               ) : (
-                                <span className="text-[10px] text-amber-400">
+                                <span className="text-2xs text-amber-400">
                                   {REASON_LABEL[row.reject_reasons[0]] || "out"}
                                 </span>
                               )}
@@ -649,7 +649,7 @@ export default function DistillPage() {
                   </table>
                 )}
                 {dataset && (
-                  <p className="px-4 py-2 text-[10px] text-th-text-muted border-t border-th-border/40">
+                  <p className="px-4 py-2 text-2xs text-th-text-muted border-t border-th-border/40">
                     Showing {visible.length} of {dataset.sessions.length}
                     {dist.filter_sessions_by_teacher ? " · teacher filter on" : ""}
                   </p>
@@ -848,44 +848,44 @@ function SessionDetailPanel({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-medium text-th-text-primary truncate">{detail.title}</p>
-          <p className="text-[10px] text-th-text-muted font-mono truncate">{detail.session_id}</p>
+          <p className="text-2xs text-th-text-muted font-mono truncate">{detail.session_id}</p>
         </div>
         <Link
           to={`/chat/${detail.session_id}`}
-          className="shrink-0 text-[11px] text-violet-400 hover:text-violet-300 inline-flex items-center gap-0.5"
+          className="shrink-0 text-2xs text-violet-400 hover:text-violet-300 inline-flex items-center gap-0.5"
         >
           Open chat <ChevronRight size={12} />
         </Link>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+        <span className={`text-2xs px-1.5 py-0.5 rounded-full border ${
           detail.eligible
             ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
             : "bg-amber-500/10 text-amber-400 border-amber-500/25"
         }`}>
           {detail.eligible ? "Eligible" : (REASON_LABEL[detail.reject_reasons[0]] || "Excluded")}
         </span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-th-inset-bg border border-th-border text-th-text-tertiary">
+        <span className="text-2xs px-1.5 py-0.5 rounded-full bg-th-inset-bg border border-th-border text-th-text-tertiary">
           {detail.n_messages} msgs
         </span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-th-inset-bg border border-th-border text-th-text-tertiary">
+        <span className="text-2xs px-1.5 py-0.5 rounded-full bg-th-inset-bg border border-th-border text-th-text-tertiary">
           {detail.n_tool_calls} tools
         </span>
         {detail.n_unanswered > 0 && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25">
+          <span className="text-2xs px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/25">
             {detail.n_unanswered} unanswered
           </span>
         )}
         <EvalBadge row={detail} />
       </div>
-      <p className="text-[11px] text-th-text-muted">
+      <p className="text-2xs text-th-text-muted">
         {detail.model ? shortModel(detail.model) : "No model id"}
         {detail.llm_provider ? ` · ${detail.llm_provider}` : ""}
       </p>
       {detail.tools_used.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {detail.tools_used.map((t) => (
-            <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-th-inset-bg text-th-text-tertiary">
+            <span key={t} className="text-2xs font-mono px-1.5 py-0.5 rounded bg-th-inset-bg text-th-text-tertiary">
               {t}
             </span>
           ))}
@@ -895,7 +895,7 @@ function SessionDetailPanel({
         {detail.messages.map((msg, i) => (
           <div key={`${msg.role}-${i}`} className="rounded-lg border border-th-border/50 bg-th-inset-bg/50 px-2.5 py-2">
             <div className="flex items-center gap-2 mb-1">
-              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
+              <span className={`text-2xs font-semibold uppercase tracking-wider ${
                 msg.role === "user"
                   ? "text-blue-400"
                   : msg.role === "assistant"
@@ -906,15 +906,15 @@ function SessionDetailPanel({
                 {msg.name ? ` · ${msg.name}` : ""}
               </span>
               {msg.tool_calls?.map((tc) => (
-                <span key={tc.id || tc.name} className="text-[9px] font-mono text-th-text-muted">
+                <span key={tc.id || tc.name} className="text-2xs font-mono text-th-text-muted">
                   {tc.name}
                 </span>
               ))}
             </div>
-            <p className="text-[11px] text-th-text-secondary whitespace-pre-wrap break-words leading-relaxed line-clamp-8">
+            <p className="text-2xs text-th-text-secondary whitespace-pre-wrap break-words leading-relaxed line-clamp-8">
               {msg.content || (msg.tool_calls?.length ? "(tool call)" : "—")}
             </p>
-            {msg.truncated && <p className="text-[10px] text-th-text-muted mt-1">Truncated</p>}
+            {msg.truncated && <p className="text-2xs text-th-text-muted mt-1">Truncated</p>}
           </div>
         ))}
       </div>

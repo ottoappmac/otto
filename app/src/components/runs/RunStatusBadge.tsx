@@ -13,7 +13,7 @@ export function RunStatusBadge({ status, showLabel = true, size = "sm" }: RunSta
   const textColor = getStatusColor(status);
 
   const iconSize = size === "md" ? 13 : 11;
-  const textSize = size === "md" ? "text-xs" : "text-[11px]";
+  const textSize = size === "md" ? "text-xs" : "text-2xs";
 
   return (
     <span className={`inline-flex items-center gap-1 font-medium ${textSize} ${textColor}`}>
