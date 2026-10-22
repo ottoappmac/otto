@@ -231,6 +231,7 @@ export default function CodePage() {
   const pendingDelete = useRef<{ id: string; timer: number } | null>(null);
   const [showJump, setShowJump] = useState(false);
   const [runningProcs, setRunningProcs] = useState(0);
+  const [editRequest, setEditRequest] = useState<{ id: string; nonce: number } | null>(null);
   const [narrow, setNarrow] = useState(false);
   const [dockPref, setDockPref] = useState<"right" | "bottom">(() => (localStorage.getItem(DOCK_KEY) === "bottom" ? "bottom" : "right"));
   const [bottomHeight, setBottomHeight] = useState(() => storedWidth(BOTTOM_HEIGHT_KEY, 300, BOTTOM_MIN, 900));
@@ -985,14 +986,36 @@ export default function CodePage() {
   }, [sessionId, streaming, messages, changes, refreshChanges]);
 
   const handleEditMessage = useCallback((messageIndex: number, newContent: string, restore?: boolean) => {
-    if (streaming || !sessionId) return;
+    if (!sessionId) return;
     const ordinal = userOrdinal(messages, messageIndex);
     const go = async () => {
+      // Editing while the agent works stops it first, so the files stop changing
+      // before they are restored and the new turn starts from a quiet session.
+      if (streaming) {
+        try {
+          await api.stopSession(sessionId);
+        } catch (e) {
+          setError(apiMessage(e));
+          return;
+        }
+        setStreaming(false);
+        setAwaitingPoll(false);
+      }
       if (restore) {
         const checkpoint = (changes?.checkpoints || []).find((item) => item.user_index === ordinal);
         if (checkpoint?.turn != null) {
           try {
-            const result = await api.revertWorkspace(sessionId, undefined, checkpoint.turn);
+            let result;
+            for (let attempt = 0; ; attempt += 1) {
+              try {
+                result = await api.revertWorkspace(sessionId, undefined, checkpoint.turn);
+                break;
+              } catch (e) {
+                // The run may need a moment to wind down after Stop.
+                if (attempt >= 4 || !/Wait until the run finishes/i.test(apiMessage(e))) throw e;
+                await new Promise((resolve) => window.setTimeout(resolve, 400));
+              }
+            }
             setToast(describeRevert(result));
           } catch (e) {
             setError(revertFailure(e));
@@ -1843,6 +1866,8 @@ export default function CodePage() {
             currentSessionId={sessionId ?? null}
             resolveSubagentModel={resolveSubagentModel}
             onEditMessage={handleEditMessage}
+            editWhileRunning
+            editRequest={editRequest}
             restorable={restorable}
             onRestoreMessage={(index) => { void restoreToMessage(index); }}
             onHitlDecision={handleHitlDecision}
@@ -2073,6 +2098,18 @@ export default function CodePage() {
                   if (e.key === "ArrowUp") { e.preventDefault(); setAtIndex((index) => Math.max(index - 1, 0)); return; }
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); insertMention(mentions[Math.min(atIndex, mentions.length - 1)].path); return; }
                   if (e.key === "Escape") { e.preventDefault(); setAtOpen(false); return; }
+                }
+                if (e.key === "ArrowUp" && !e.shiftKey && !e.metaKey && !e.altKey && input === "" && !hasAttachments) {
+                  // Like Cursor: Up in an empty box edits your last message.
+                  for (let i = messages.length - 1; i >= 0; i -= 1) {
+                    const item = messages[i];
+                    if (item.type === "user" && !item.metadata?.isContext) {
+                      e.preventDefault();
+                      setEditRequest({ id: item.id, nonce: Date.now() });
+                      break;
+                    }
+                  }
+                  return;
                 }
                 if (e.key === "Escape" && streaming) {
                   e.preventDefault();

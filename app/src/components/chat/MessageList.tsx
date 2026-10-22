@@ -22,6 +22,9 @@ interface MessageListProps {
   /** Message indexes whose turn has a file checkpoint. */
   restorable?: Set<number>;
   onRestoreMessage?: (idx: number) => void;
+  /** Let a user message be edited while the agent is running (it stops first). */
+  editWhileRunning?: boolean;
+  editRequest?: { id: string; nonce: number } | null;
   onHitlDecision: (id: string, decisions: Array<Record<string, unknown>>, requestId?: string) => void;
   onApproveAllSession?: (id: string, decisions: Array<Record<string, unknown>>) => void;
   onOpenArtifact: (path: string, fileUrl: string, type: ArtifactType) => void;
@@ -37,10 +40,21 @@ export const MessageList = memo(function MessageList({
   onEditMessage,
   restorable,
   onRestoreMessage,
+  editWhileRunning,
+  editRequest,
   onHitlDecision,
   onApproveAllSession,
   onOpenArtifact,
 }: MessageListProps) {
+  // Typed user messages after each message index, for the "what an edit removes" note.
+  const laterUsers = new Map<number, number>();
+  let seen = 0;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (item.kind !== "message") continue;
+    laterUsers.set(item.index, seen);
+    if (item.message.type === "user" && !item.message.metadata?.isContext) seen += 1;
+  }
   return (
     <>
       {items.map((item) => {
@@ -74,7 +88,10 @@ export const MessageList = memo(function MessageList({
             message={msg}
             isThought={thoughtFlags[idx]}
             isLatestTodo={latestTodoFlags[idx]}
-            canEdit={Boolean(onEditMessage) && msg.type === "user" && !isStreaming}
+            canEdit={Boolean(onEditMessage) && msg.type === "user" && !msg.metadata?.isContext && (editWhileRunning || !isStreaming)}
+            laterTurns={laterUsers.get(idx) ?? 0}
+            running={isStreaming}
+            editRequest={editRequest}
             canRestore={Boolean(onRestoreMessage) && restorable?.has(idx)}
             sessionId={currentSessionId ?? undefined}
             onEdit={onEditMessage ? (newContent, restore) => onEditMessage(idx, newContent, restore) : undefined}
