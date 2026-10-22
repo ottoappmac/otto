@@ -5591,6 +5591,21 @@ class SessionManager:
             yield {"type": "error", "content": "Session not found"}
             return
 
+        try:
+            from backend.decision_tools import reset_decision_turn
+            reset_decision_turn(session_id)
+        except Exception:
+            logger.debug("jev turn reset failed", exc_info=True)
+
+        # An edit starts a new turn, so a model, Jev or guardrail change made
+        # since the chat was built has to apply here as it does to a new
+        # message. The saved checkpoint is keyed by thread id and survives the
+        # rebuild, so the history lookup below still finds the target.
+        reconcile_err = await self._reconcile_decide(session)
+        if reconcile_err:
+            yield reconcile_err
+            return
+
         privacy_err = await self._check_privacy_lock(session)
         if privacy_err:
             yield privacy_err
