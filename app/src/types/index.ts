@@ -218,6 +218,18 @@ export interface FolderGrant {
   network?: boolean;
   network_hosts?: string[];
   shell_allow?: string[];
+  dev_command?: string;
+  dev_autostart?: boolean;
+}
+
+export interface DevState {
+  /** The command that would run: the saved one, else a detected one. */
+  command: string;
+  configured: boolean;
+  detected: string;
+  autostart: boolean;
+  running_id: string | null;
+  started?: boolean;
 }
 
 export interface FolderGrantPreview {
@@ -266,6 +278,20 @@ export interface WorkspaceGitStatus {
   git: boolean;
   branch: string | null;
   dirty: number;
+}
+
+export interface TerminalInfo {
+  id: string;
+  /** "shell" is a terminal the user types in. "process" is a command the agent started. */
+  kind: "shell" | "process";
+  title: string;
+  command: string | null;
+  cwd: string;
+  running: boolean;
+  exit_code: number | null;
+  pid: number;
+  created: number;
+  ports: number[];
 }
 
 export interface WorkspaceTreeEntry {

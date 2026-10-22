@@ -3,8 +3,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle, ArrowDown, Bot, Bug, Check, ClipboardList, Clock, Copy, ExternalLink, FileDiff, FileMinus2, FilePen, FilePlus2,
-  FileText, Folder, FolderPlus, GitBranch, Globe, Hammer, HelpCircle, Lock, MessageSquare, PanelLeft, PanelRight, Plus,
-  RotateCcw, SendHorizontal, Square, Terminal, Trash2, Undo2, X,
+  FileText, Folder, FolderPlus, GitBranch, Globe, Hammer, HelpCircle, Lock, Maximize2, MessageSquare, Minimize2, PanelBottom, PanelLeft, PanelRight, Plus,
+  RotateCcw, SendHorizontal, Square, SquareTerminal, Terminal, Trash2, Undo2, X,
 } from "lucide-react";
 import { Badge, type BadgeTone } from "../components/ui/Badge";
 import { Button, IconButton } from "../components/ui/Button";
@@ -40,7 +40,9 @@ import { pickDirectory } from "../utils/pickFolder";
 import { FolderGrantDialog } from "../components/action/FolderGrantDialog";
 import { PatchView } from "../components/code/PatchView";
 import { FileEditor } from "../components/code/FileEditor";
+import { TerminalPanel } from "../components/code/TerminalPanel";
 import { splitDroppedPaths } from "../utils/droppedPaths";
+import { formatSnippets, isTerminalPaste, makeSnippet, type Snippet } from "../utils/terminalClip";
 import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/InlineUrlInput";
 import type {
   ChatMessage,
@@ -54,7 +56,7 @@ import type {
   WSMessage,
 } from "../types";
 
-type Inspector = "changes" | "files" | "output" | "timeline" | "plan";
+type Inspector = "changes" | "files" | "terminal" | "output" | "timeline" | "plan";
 
 const LAST_GRANT = "otto.code.lastGrant";
 const LAST_MODE = "otto.code.mode";
@@ -69,6 +71,11 @@ const LEFT_MAX = 480;
 const RIGHT_MIN = 220;
 const RIGHT_MAX = 720;
 const CENTER_MIN = 280;
+const DOCK_KEY = "otto.code.dock";
+const BOTTOM_HEIGHT_KEY = "otto.code.bottomHeight";
+const BOTTOM_MIN = 160;
+// Below this width a side inspector would squeeze the conversation, so it docks under it.
+const SIDE_DOCK_MIN_WIDTH = 940;
 
 function storedWidth(key: string, fallback: number, min: number, max: number): number {
   const raw = Number(localStorage.getItem(key));
@@ -223,7 +230,14 @@ export default function CodePage() {
   const [undoDelete, setUndoDelete] = useState<{ id: string; title: string } | null>(null);
   const pendingDelete = useRef<{ id: string; timer: number } | null>(null);
   const [showJump, setShowJump] = useState(false);
+  const [runningProcs, setRunningProcs] = useState(0);
   const [narrow, setNarrow] = useState(false);
+  const [dockPref, setDockPref] = useState<"right" | "bottom">(() => (localStorage.getItem(DOCK_KEY) === "bottom" ? "bottom" : "right"));
+  const [bottomHeight, setBottomHeight] = useState(() => storedWidth(BOTTOM_HEIGHT_KEY, 300, BOTTOM_MIN, 900));
+  const [maximized, setMaximized] = useState(false);
+  const [shellWidth, setShellWidth] = useState(0);
+  const dock: "right" | "bottom" = dockPref === "bottom" || (shellWidth > 0 && shellWidth < SIDE_DOCK_MIN_WIDTH) ? "bottom" : "right";
+  const compact = shellWidth > 0 && shellWidth < 760;
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [mentions, setMentions] = useState<{ path: string; is_dir: boolean }[]>([]);
@@ -233,11 +247,13 @@ export default function CodePage() {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingFilePaths, setPendingFilePaths] = useState<string[]>([]);
   const [pendingFolders, setPendingFolders] = useState<string[]>([]);
+  const [pendingSnippets, setPendingSnippets] = useState<Snippet[]>([]);
+  const [openSnippet, setOpenSnippet] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const composerRef = useRef<InlineUrlInputHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const hasAttachments = pendingFiles.length > 0 || pendingFilePaths.length > 0 || pendingFolders.length > 0;
+  const hasAttachments = pendingFiles.length > 0 || pendingFilePaths.length > 0 || pendingFolders.length > 0 || pendingSnippets.length > 0;
   // Same model selection as Chat: it changes the global model in Settings.
   // A model change does not discard the open coding session; the backend
   // notices the new model at the start of the next turn and rebuilds the
@@ -337,6 +353,20 @@ export default function CodePage() {
   // Titles and the running dot change after a turn, and a chat started
   // elsewhere can bind this folder. Keep the list current without leaving Code.
   usePolling(loadSessions, SESSIONS_POLL_MS, Boolean(grantId));
+
+  const pollProcesses = useCallback(async () => {
+    if (!sessionId) {
+      setRunningProcs(0);
+      return;
+    }
+    try {
+      const { terminals } = await api.listTerminals(sessionId);
+      setRunningProcs(terminals.filter((item) => item.running && item.kind === "process").length);
+    } catch {
+      setRunningProcs(0);
+    }
+  }, [sessionId]);
+  usePolling(pollProcesses, 4000, Boolean(sessionId));
 
   const reloadSession = useCallback((sid: string) => {
     const ticket = ++sessionLoad.current;
@@ -563,6 +593,45 @@ export default function CodePage() {
       loadSessions();
     }
   }, [loadSessions, refreshPlan, unwatchSession]);
+
+  useEffect(() => {
+    const node = shellRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(() => setShellWidth(node.clientWidth));
+    observer.observe(node);
+    setShellWidth(node.clientWidth);
+    return () => observer.disconnect();
+  }, []);
+
+  const chooseDock = (next: "right" | "bottom") => {
+    setDockPref(next);
+    setMaximized(false);
+    try { localStorage.setItem(DOCK_KEY, next); } catch { /* storage unavailable */ }
+  };
+
+  const startBottomResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const startY = event.clientY;
+    const start = bottomHeight;
+    const limit = Math.max(BOTTOM_MIN, (shellRef.current?.clientHeight ?? 800) - 260);
+    document.body.style.userSelect = "none";
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.round(Math.min(limit, Math.max(BOTTOM_MIN, start - (ev.clientY - startY))));
+      setBottomHeight(next);
+      try { localStorage.setItem(BOTTOM_HEIGHT_KEY, String(next)); } catch { /* storage unavailable */ }
+    };
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+      document.body.style.userSelect = "";
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 1100px)");
@@ -1093,8 +1162,19 @@ export default function CodePage() {
     const allFiles = [...uploaded, ...linkedFiles];
     if (allFiles.length > 0) parts.push(`[Uploaded files: ${allFiles.join(", ")}]`);
     if (linkedFolders.length > 0) parts.push(`[Context folders: ${linkedFolders.join(", ")}]`);
+    if (pendingSnippets.length > 0) {
+      parts.push(formatSnippets(pendingSnippets));
+      setPendingSnippets([]);
+      setOpenSnippet(null);
+    }
     return parts.length > 0 ? `${parts.join("\n")}\n\n${text}` : text;
   };
+
+  const addSnippet = useCallback((snippet: Snippet, prefill?: string) => {
+    setPendingSnippets((prev) => [...prev, snippet]);
+    if (prefill) setInput((current) => (current.trim() ? current : prefill));
+    window.setTimeout(() => composerRef.current?.focus(), 0);
+  }, []);
 
   // First message of a session started from the composer. `sendText` is read
   // through a ref so the send uses the render that has the new session open.
@@ -1263,6 +1343,258 @@ export default function CodePage() {
   const events = [...timeline, ...live];
   const selected = grants.find((g) => g.id === grantId);
 
+  // Start the project's dev server once per session when the user turned that on.
+  const autoStartedRef = useRef<string | null>(null);
+  const sessionGrant = grants.find((item) => item.id === session?.workspace?.grant_id);
+  useEffect(() => {
+    if (!sessionId || !connected || !sessionGrant?.dev_autostart || mode !== "agent") return;
+    if (session?.workspace?.mode === "read" || autoStartedRef.current === sessionId) return;
+    autoStartedRef.current = sessionId;
+    api.startDev(sessionId).then((state) => {
+      if (state.started) setToast("Started the dev server. It is running in the Terminal tab.");
+      void pollProcesses();
+    }).catch((e) => {
+      const message = apiMessage(e);
+      if (!/No dev command|mode cannot/i.test(message)) setToast(`Dev server did not start: ${message}`);
+    });
+  }, [sessionId, connected, sessionGrant?.dev_autostart, mode, session?.workspace?.mode, pollProcesses]);
+
+  // A terminal is unusable at the default inspector width.
+  useEffect(() => {
+    if (inspector === "terminal" && inspectorOpen && dock === "right" && !narrow && rightWidth < 460) resizePanel("right", 480);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inspector, inspectorOpen]);
+
+  const inspectorPane = (
+    <>
+        <div className="flex border-b border-th-border px-1 pt-1 text-xs" role="tablist" aria-label="Inspector">
+          {(["changes", "files", "terminal", "output", "timeline", ...(hasPlan || mode === "plan" ? ["plan"] : [])] as Inspector[]).map((tab) => {
+            const TabIcon = { changes: FileDiff, files: Folder, terminal: SquareTerminal, output: Terminal, timeline: Clock, plan: ClipboardList }[tab];
+            return (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={inspector === tab}
+                onClick={() => setInspector(tab)}
+                title={tab[0].toUpperCase() + tab.slice(1)}
+                className={`relative flex-1 min-w-0 flex items-center justify-center gap-1.5 py-2 capitalize transition-colors duration-fast ${inspector === tab ? "text-th-text-primary font-medium" : "text-th-text-muted hover:text-th-text-secondary"}`}
+              >
+                <TabIcon size={13} className="shrink-0" />
+                <span className={inspector === tab ? "truncate" : "sr-only"}>{tab}</span>
+                {tab === "changes" && reviewStats.count > 0 && (
+                  <span className="rounded-full bg-th-accent/15 px-1.5 text-2xs font-medium text-th-accent">{reviewStats.count}</span>
+                )}
+                {tab === "terminal" && runningProcs > 0 && (
+                  <span className="rounded-full bg-th-success/15 px-1.5 text-2xs font-medium text-th-success" aria-label={`${runningProcs} running`}>{runningProcs}</span>
+                )}
+                {inspector === tab && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-th-accent" />}
+              </button>
+            );
+          })}
+          <span className="ml-1 flex shrink-0 items-center gap-0.5 self-center border-l border-th-border pl-1">
+            <IconButton
+              label={dock === "bottom" ? "Dock to the side" : "Dock below the conversation"}
+              icon={dock === "bottom" ? <PanelRight size={14} /> : <PanelBottom size={14} />}
+              onClick={() => chooseDock(dock === "bottom" ? "right" : "bottom")}
+            />
+            {dock === "bottom" && (
+              <IconButton
+                label={maximized ? "Restore" : "Fill the window"}
+                icon={maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                aria-pressed={maximized}
+                onClick={() => setMaximized((value) => !value)}
+              />
+            )}
+            <IconButton label="Close inspector" icon={<X size={14} />} onClick={() => { setInspectorOpen(false); setMaximized(false); }} />
+          </span>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 text-xs">
+          {inspector === "changes" && (
+            <div className="space-y-2">
+              {(changes?.checkpoints?.length || 0) > 1 && (
+                <label className="flex items-center gap-2 text-th-text-muted">
+                  Turn
+                  <select
+                    className="bg-th-inset-bg border border-th-border rounded px-1 py-0.5 text-th-text-primary"
+                    value={changeTurn ?? changes?.checkpoint?.turn ?? ""}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      const latest = changes?.checkpoints?.[changes.checkpoints.length - 1]?.turn;
+                      setChangeTurn(next === latest ? null : next);
+                      setDiffPath(null);
+                    }}
+                  >
+                    {(changes?.checkpoints || []).map((item) => (
+                      <option key={item.turn} value={item.turn}>Turn {item.turn}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {changes?.message && <p className="text-th-text-muted">{changes.message}</p>}
+              {sessionId && (changes?.files || []).some((file) => file.origin !== "outside") && (
+                confirmRevert ? (
+                  <div role="alertdialog" aria-label="Revert turn" className="flex flex-wrap items-center gap-2 rounded-xl border border-th-danger/25 bg-th-danger/8 p-2">
+                    <span className="flex-1 min-w-[10rem] text-th-text-secondary">Revert Otto's changes? Edits made outside Otto stay.</span>
+                    <Button variant="ghost" onClick={() => setConfirmRevert(false)}>Cancel</Button>
+                    <Button variant="danger" className="!bg-th-danger/10" onClick={() => { void runRevert(undefined, changeTurn ?? undefined); }}>Revert</Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 text-th-text-secondary">
+                      <span className="font-medium text-th-text-primary">{reviewStats.count} file{reviewStats.count === 1 ? "" : "s"}</span>
+                      <span className="text-th-diff-add"> +{reviewStats.added}</span>
+                      <span className="text-th-diff-del"> −{reviewStats.deleted}</span>
+                    </span>
+                    <Button variant="ghost" onClick={() => setConfirmRevert(true)}><RotateCcw size={12} /> Revert turn</Button>
+                  </div>
+                )
+              )}
+              {revertNote && <p className="text-th-text-secondary">{revertNote}</p>}
+              {(changes?.files || []).length === 0 && !changes?.message && (
+                <p className="text-th-text-muted">No changes since this checkpoint.</p>
+              )}
+              {(changes?.files || []).map((file) => {
+                const outside = file.origin === "outside";
+                const { name, dir } = splitPath(file.path);
+                const StatusIcon = file.status === "added" ? FilePlus2 : file.status === "deleted" ? FileMinus2 : FilePen;
+                const statusTone = file.status === "added" ? "text-th-success" : file.status === "deleted" ? "text-th-danger" : "text-th-warning";
+                const open = diffPath === file.path;
+                return (
+                  <div key={file.path} className="space-y-1.5">
+                    <div className={`group flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition-colors duration-fast ${open ? "bg-th-surface-hover" : "hover:bg-th-surface-hover/60"}`}>
+                      <StatusIcon size={14} className={`shrink-0 ${statusTone}`} aria-label={file.status} />
+                      <button
+                        type="button"
+                        aria-expanded={open}
+                        title={file.path}
+                        className="min-w-0 flex-1 truncate text-left"
+                        onClick={() => setDiffPath(open ? null : file.path)}
+                      >
+                        <span className="font-medium text-th-text-primary">{name}</span>
+                        {dir && <span className="ml-1.5 text-th-text-muted">{dir}</span>}
+                      </button>
+                      {outside && <Badge title="Changed outside Otto and not reverted">outside</Badge>}
+                      {file.added != null && <span className="shrink-0 text-th-diff-add">+{file.added}</span>}
+                      {file.deleted != null && <span className="shrink-0 text-th-diff-del">−{file.deleted}</span>}
+                      {file.status !== "deleted" && (
+                        <IconButton label={`Open ${file.path}`} icon={<ExternalLink size={12} />} onClick={() => openFile(file.path)} />
+                      )}
+                      {!outside && (
+                        <IconButton
+                          label={`Revert ${file.path}`}
+                          icon={<Undo2 size={13} />}
+                          className="hover:!text-th-danger"
+                          onClick={() => { void runRevert([file.path], changeTurn ?? undefined); }}
+                        />
+                      )}
+                    </div>
+                    {open && diff && (
+                      <PatchView
+                        diff={diff}
+                        path={file.path}
+                        truncated={diffTruncated}
+                        onAcceptHunk={() => {}}
+                        onUndoHunk={
+                          sessionId && changes?.git && !outside
+                            ? (hunk) => { void runRevert([file.path], changeTurn ?? undefined, hunk); }
+                            : undefined
+                        }
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {inspector === "files" && artifact && sessionId && (artifact.type === "code" || artifact.type === "txt" || artifact.type === "md" || artifact.type === "json") && (
+            <FileEditor sessionId={sessionId} path={artifact.path} fileUrl={artifact.fileUrl} revision={artifact.revision} />
+          )}
+          {inspector === "files" && artifact && !(artifact.type === "code" || artifact.type === "txt" || artifact.type === "md" || artifact.type === "json") && (
+            <ArtifactPanel artifact={artifact} onClose={() => setArtifact(null)} />
+          )}
+          {inspector === "files" && !artifact && (
+            sessionId && session?.workspace ? (
+              <WorkspaceTree
+                sessionId={sessionId}
+                fileUrl={(rel) => api.getWorkspaceFileUrl(sessionId, rel)}
+                onOpenFile={(rel) => openFile(rel)}
+              />
+            ) : (
+              <p className="text-th-text-muted">
+                {sessionId ? "This session has no project folder." : "Start a session to browse the project files."}
+              </p>
+            )
+          )}
+          {inspector === "terminal" && (
+            sessionId && session?.workspace ? (
+              <div className="h-full min-h-[10rem]">
+                <TerminalPanel
+                  sessionId={sessionId}
+                  grant={grants.find((item) => item.id === session.workspace?.grant_id) ?? null}
+                  onGrantChange={(grant) => setGrants((prev) => prev.map((item) => (item.id === grant.id ? grant : item)))}
+                  onAddToChat={addSnippet}
+                />
+              </div>
+            ) : (
+              <p className="text-th-text-muted">{sessionId ? "This session has no project folder." : "Start a session to open a terminal."}</p>
+            )
+          )}
+          {inspector === "output" && (
+            <div className="space-y-3">
+              {output.length === 0 && <p className="text-th-text-muted">Command output shows up here.</p>}
+              {output.map((item, index) => {
+                const exit = item.done ? commandExit(item.text) : null;
+                const showTurn = item.turn > 0 && (index === 0 || output[index - 1].turn !== item.turn);
+                return (
+                  <div key={item.id} className="space-y-1">
+                    {showTurn && <p className="text-2xs uppercase tracking-wider text-th-text-muted pt-1">Turn {item.turn}</p>}
+                    <div className="flex items-center gap-2">
+                      {item.command && <p className="font-mono text-2xs text-th-text-muted break-all flex-1">$ {item.command}</p>}
+                      {item.done && exit != null && (
+                        <span className={exit === 0 ? "text-emerald-400" : "text-red-300"}>
+                          {exit === 0 ? "passed" : `exit ${exit}`}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="text-th-text-muted hover:text-th-text-primary"
+                        title="Copy output"
+                        onClick={() => { void navigator.clipboard.writeText(item.text || ""); }}
+                      >
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                    <pre className="whitespace-pre-wrap font-mono text-2xs text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.text || (item.done ? "(no output)" : "Running…")}</pre>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {inspector === "timeline" && <RunTimeline events={events} />}
+          {inspector === "plan" && sessionId && (
+            hasPlan || planFromChat ? (
+              <div className="space-y-2">
+                <ArtifactPanel
+                  artifact={hasPlan
+                    ? { path: PLAN_PATH, fileUrl: api.getSessionFileUrl(sessionId, PLAN_PATH), type: "md", revision: planRev }
+                    : { path: "plan.md", fileUrl: `data:text/markdown;charset=utf-8,${encodeURIComponent(planFromChat)}`, type: "md" }}
+                  onClose={() => setInspector("changes")}
+                />
+                {planReady && (
+                  <button type="button" onClick={() => { void buildPlan(); }} className="flex items-center gap-1 px-2 py-1 rounded-lg border border-th-border text-th-text-primary hover:bg-th-surface-hover">
+                    <Hammer size={12} /> Build this plan
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-th-text-muted">In Plan mode the plan shows up here.</p>
+            )
+          )}
+        </div>
+    </>
+  );
+
   return (
     <div ref={shellRef} className="flex h-full min-h-0 min-w-0 overflow-hidden">
       {projectsOpen && <aside style={{ width: narrow ? 200 : leftWidth }} className="shrink-0 border-r border-th-border flex flex-col min-h-0 min-w-0 overflow-hidden bg-th-bg-secondary">
@@ -1405,7 +1737,7 @@ export default function CodePage() {
           )}
           {modeBadge(mode) && <Badge tone={modeBadge(mode)!.tone}>{modeBadge(mode)!.label}</Badge>}
           {session?.workspace?.mode === "read" && <Badge tone="accent"><Lock size={10} /> Read only</Badge>}
-          {session?.workspace?.mode === "write" && mode === "agent" && <Badge tone="success" title="Edits are checkpointed and can be reverted">Editable</Badge>}
+          {!compact && session?.workspace?.mode === "write" && mode === "agent" && <Badge tone="success" title="Edits are checkpointed and can be reverted">Editable</Badge>}
           <span className="ml-auto flex items-center gap-1 shrink-0">
             {selected && (
               <Button
@@ -1419,7 +1751,12 @@ export default function CodePage() {
                 }}
                 className={selected.network ? "!text-th-success" : ""}
               >
-                <Globe size={13} /> {selected.network ? "Network on" : "Network off"}
+                <Globe size={13} aria-hidden /> {compact ? <span className="sr-only">{selected.network ? "Network on" : "Network off"}</span> : (selected.network ? "Network on" : "Network off")}
+              </Button>
+            )}
+            {runningProcs > 0 && (
+              <Button variant="ghost" onClick={() => { setInspector("terminal"); setInspectorOpen(true); }} title="Servers and commands the agent started">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-th-success" /> {runningProcs} running
               </Button>
             )}
             <span className="flex items-center gap-1.5 px-1.5 text-2xs text-th-text-muted" role="status">
@@ -1460,7 +1797,7 @@ export default function CodePage() {
             {changes?.debug_markers} otto-debug log marker{changes?.debug_markers === 1 ? "" : "s"} still in your files. Remove them before you commit.
           </p>
         )}
-        <div className="relative flex-1 min-h-0 flex flex-col">
+        <div className={`relative flex-1 min-h-0 flex flex-col ${inspectorOpen && dock === "bottom" && maximized ? "hidden" : ""}`}>
         <div
           ref={scrollRef}
           className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4"
@@ -1535,6 +1872,32 @@ export default function CodePage() {
           </button>
         )}
         </div>
+        {inspectorOpen && dock === "bottom" && (
+          <div
+            style={maximized ? undefined : { height: bottomHeight }}
+            className={`relative flex min-h-0 flex-col border-t border-th-border bg-th-bg-secondary animate-panel-in ${maximized ? "flex-1" : "shrink-0"}`}
+          >
+            {!maximized && (
+              <div
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Inspector height"
+                aria-valuemin={BOTTOM_MIN}
+                aria-valuenow={bottomHeight}
+                tabIndex={0}
+                title="Drag to resize. Double-click to reset."
+                onPointerDown={startBottomResize}
+                onDoubleClick={() => { setBottomHeight(300); try { localStorage.setItem(BOTTOM_HEIGHT_KEY, "300"); } catch { /* storage unavailable */ } }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp") setBottomHeight((h) => Math.min(900, h + 24));
+                  if (event.key === "ArrowDown") setBottomHeight((h) => Math.max(BOTTOM_MIN, h - 24));
+                }}
+                className="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize bg-transparent hover:bg-sky-400/50 active:bg-sky-400/70 focus:outline-none focus:bg-sky-400/40"
+              />
+            )}
+            {inspectorPane}
+          </div>
+        )}
         {showReview && sessionId && (
           <div className="mx-3 mb-2 flex items-center gap-3 rounded-xl border border-th-border bg-th-surface px-3 py-2 text-xs shadow-sm animate-panel-in">
             <FileDiff size={15} className="shrink-0 text-th-text-muted" />
@@ -1571,6 +1934,13 @@ export default function CodePage() {
         <form
           className={`p-3 space-y-2 transition-colors duration-fast ${isDragging ? "bg-th-accent/8" : ""}`}
           onSubmit={(e) => { e.preventDefault(); submit(); }}
+          onPasteCapture={(event) => {
+            const pasted = event.clipboardData?.getData("text/plain") ?? "";
+            if (!pasted || event.clipboardData?.files?.length || !isTerminalPaste(pasted)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            addSnippet(makeSnippet("Terminal", pasted));
+          }}
           onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={(event) => {
@@ -1591,6 +1961,34 @@ export default function CodePage() {
           />
           {hasAttachments && (
             <div className="flex flex-wrap gap-2">
+              {pendingSnippets.map((snippet) => (
+                <div key={snippet.id} className="max-w-full">
+                  <div className="flex items-center gap-1.5 rounded-lg border border-th-border bg-th-inset-bg px-2.5 py-1.5 text-xs text-th-text-secondary">
+                    <SquareTerminal size={12} className="shrink-0 text-th-text-muted" />
+                    <button
+                      type="button"
+                      aria-expanded={openSnippet === snippet.id}
+                      onClick={() => setOpenSnippet((current) => (current === snippet.id ? null : snippet.id))}
+                      className="flex min-w-0 items-center gap-1.5"
+                      title="Show what will be sent"
+                    >
+                      <span className="max-w-[150px] truncate font-medium text-th-text-primary">{snippet.label}</span>
+                      <span className="shrink-0 text-th-text-muted">{snippet.lines} line{snippet.lines === 1 ? "" : "s"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingSnippets((prev) => prev.filter((item) => item.id !== snippet.id))}
+                      className="text-th-text-muted hover:text-th-text-primary"
+                      aria-label={`Remove ${snippet.label} output`}
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                  {openSnippet === snippet.id && (
+                    <pre className="mt-1 max-h-40 w-full overflow-auto whitespace-pre-wrap rounded-lg border border-th-border bg-th-code-bg p-2 font-mono text-2xs text-th-text-secondary">{snippet.text}</pre>
+                  )}
+                </div>
+              ))}
               {pendingFiles.map((file, index) => (
                 <div key={`file-${file.name}-${index}`} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-th-inset-bg border border-th-border rounded-lg text-xs text-th-text-secondary">
                   <FileText size={12} className="text-th-text-muted shrink-0" />
@@ -1704,8 +2102,8 @@ export default function CodePage() {
               }}
               placeholder={
                 streaming ? "Add context for the running turn…"
-                  : hasAttachments ? "Add a message about your files…"
-                  : !sessionId ? (grantId ? `Describe a change to start a session in ${selected?.label ?? "this project"}` : "Allow a project folder to start")
+                  : hasAttachments ? "Add a message about this…"
+                  : !sessionId ? (grantId ? `Describe a change to start in ${selected?.label ?? "this project"}` : "Allow a project folder to start")
                   : !session?.workspace ? "No project folder on this session"
                     : mode === "ask" ? "Ask about the code…"
                       : mode === "plan" ? "Describe what to plan…"
@@ -1774,7 +2172,7 @@ export default function CodePage() {
         </form>
       </section>
 
-      {inspectorOpen && <div
+      {inspectorOpen && dock === "right" && <div
         role="separator"
         aria-orientation="vertical"
         aria-label="Inspector width"
@@ -1792,199 +2190,8 @@ export default function CodePage() {
         }}
         className="w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-sky-400/50 active:bg-sky-400/70 focus:outline-none focus:bg-sky-400/40"
       />}
-      {inspectorOpen && <aside style={{ width: narrow ? 280 : rightWidth }} className="shrink-0 border-l border-th-border flex flex-col min-h-0 overflow-hidden">
-        <div className="flex border-b border-th-border px-1 pt-1 text-xs" role="tablist" aria-label="Inspector">
-          {(["changes", "files", "output", "timeline", ...(hasPlan || mode === "plan" ? ["plan"] : [])] as Inspector[]).map((tab) => {
-            const TabIcon = { changes: FileDiff, files: Folder, output: Terminal, timeline: Clock, plan: ClipboardList }[tab];
-            return (
-              <button
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={inspector === tab}
-                onClick={() => setInspector(tab)}
-                title={tab[0].toUpperCase() + tab.slice(1)}
-                className={`relative flex-1 min-w-0 flex items-center justify-center gap-1.5 py-2 capitalize transition-colors duration-fast ${inspector === tab ? "text-th-text-primary font-medium" : "text-th-text-muted hover:text-th-text-secondary"}`}
-              >
-                <TabIcon size={13} className="shrink-0" />
-                <span className="truncate">{tab}</span>
-                {tab === "changes" && reviewStats.count > 0 && (
-                  <span className="rounded-full bg-th-accent/15 px-1.5 text-2xs font-medium text-th-accent">{reviewStats.count}</span>
-                )}
-                {inspector === tab && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-th-accent" />}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex-1 overflow-y-auto p-3 text-xs">
-          {inspector === "changes" && (
-            <div className="space-y-2">
-              {(changes?.checkpoints?.length || 0) > 1 && (
-                <label className="flex items-center gap-2 text-th-text-muted">
-                  Turn
-                  <select
-                    className="bg-th-inset-bg border border-th-border rounded px-1 py-0.5 text-th-text-primary"
-                    value={changeTurn ?? changes?.checkpoint?.turn ?? ""}
-                    onChange={(event) => {
-                      const next = Number(event.target.value);
-                      const latest = changes?.checkpoints?.[changes.checkpoints.length - 1]?.turn;
-                      setChangeTurn(next === latest ? null : next);
-                      setDiffPath(null);
-                    }}
-                  >
-                    {(changes?.checkpoints || []).map((item) => (
-                      <option key={item.turn} value={item.turn}>Turn {item.turn}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {changes?.message && <p className="text-th-text-muted">{changes.message}</p>}
-              {sessionId && (changes?.files || []).some((file) => file.origin !== "outside") && (
-                confirmRevert ? (
-                  <div role="alertdialog" aria-label="Revert turn" className="flex flex-wrap items-center gap-2 rounded-xl border border-th-danger/25 bg-th-danger/8 p-2">
-                    <span className="flex-1 min-w-[10rem] text-th-text-secondary">Revert Otto's changes? Edits made outside Otto stay.</span>
-                    <Button variant="ghost" onClick={() => setConfirmRevert(false)}>Cancel</Button>
-                    <Button variant="danger" className="!bg-th-danger/10" onClick={() => { void runRevert(undefined, changeTurn ?? undefined); }}>Revert</Button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="flex-1 text-th-text-secondary">
-                      <span className="font-medium text-th-text-primary">{reviewStats.count} file{reviewStats.count === 1 ? "" : "s"}</span>
-                      <span className="text-th-diff-add"> +{reviewStats.added}</span>
-                      <span className="text-th-diff-del"> −{reviewStats.deleted}</span>
-                    </span>
-                    <Button variant="ghost" onClick={() => setConfirmRevert(true)}><RotateCcw size={12} /> Revert turn</Button>
-                  </div>
-                )
-              )}
-              {revertNote && <p className="text-th-text-secondary">{revertNote}</p>}
-              {(changes?.files || []).length === 0 && !changes?.message && (
-                <p className="text-th-text-muted">No changes since this checkpoint.</p>
-              )}
-              {(changes?.files || []).map((file) => {
-                const outside = file.origin === "outside";
-                const { name, dir } = splitPath(file.path);
-                const StatusIcon = file.status === "added" ? FilePlus2 : file.status === "deleted" ? FileMinus2 : FilePen;
-                const statusTone = file.status === "added" ? "text-th-success" : file.status === "deleted" ? "text-th-danger" : "text-th-warning";
-                const open = diffPath === file.path;
-                return (
-                  <div key={file.path} className="space-y-1.5">
-                    <div className={`group flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition-colors duration-fast ${open ? "bg-th-surface-hover" : "hover:bg-th-surface-hover/60"}`}>
-                      <StatusIcon size={14} className={`shrink-0 ${statusTone}`} aria-label={file.status} />
-                      <button
-                        type="button"
-                        aria-expanded={open}
-                        title={file.path}
-                        className="min-w-0 flex-1 truncate text-left"
-                        onClick={() => setDiffPath(open ? null : file.path)}
-                      >
-                        <span className="font-medium text-th-text-primary">{name}</span>
-                        {dir && <span className="ml-1.5 text-th-text-muted">{dir}</span>}
-                      </button>
-                      {outside && <Badge title="Changed outside Otto and not reverted">outside</Badge>}
-                      {file.added != null && <span className="shrink-0 text-th-diff-add">+{file.added}</span>}
-                      {file.deleted != null && <span className="shrink-0 text-th-diff-del">−{file.deleted}</span>}
-                      {file.status !== "deleted" && (
-                        <IconButton label={`Open ${file.path}`} icon={<ExternalLink size={12} />} onClick={() => openFile(file.path)} />
-                      )}
-                      {!outside && (
-                        <IconButton
-                          label={`Revert ${file.path}`}
-                          icon={<Undo2 size={13} />}
-                          className="hover:!text-th-danger"
-                          onClick={() => { void runRevert([file.path], changeTurn ?? undefined); }}
-                        />
-                      )}
-                    </div>
-                    {open && diff && (
-                      <PatchView
-                        diff={diff}
-                        path={file.path}
-                        truncated={diffTruncated}
-                        onAcceptHunk={() => {}}
-                        onUndoHunk={
-                          sessionId && changes?.git && !outside
-                            ? (hunk) => { void runRevert([file.path], changeTurn ?? undefined, hunk); }
-                            : undefined
-                        }
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {inspector === "files" && artifact && sessionId && (artifact.type === "code" || artifact.type === "txt" || artifact.type === "md" || artifact.type === "json") && (
-            <FileEditor sessionId={sessionId} path={artifact.path} fileUrl={artifact.fileUrl} revision={artifact.revision} />
-          )}
-          {inspector === "files" && artifact && !(artifact.type === "code" || artifact.type === "txt" || artifact.type === "md" || artifact.type === "json") && (
-            <ArtifactPanel artifact={artifact} onClose={() => setArtifact(null)} />
-          )}
-          {inspector === "files" && !artifact && (
-            sessionId && session?.workspace ? (
-              <WorkspaceTree
-                sessionId={sessionId}
-                fileUrl={(rel) => api.getWorkspaceFileUrl(sessionId, rel)}
-                onOpenFile={(rel) => openFile(rel)}
-              />
-            ) : (
-              <p className="text-th-text-muted">
-                {sessionId ? "This session has no project folder." : "Start a session to browse the project files."}
-              </p>
-            )
-          )}
-          {inspector === "output" && (
-            <div className="space-y-3">
-              {output.length === 0 && <p className="text-th-text-muted">Command output shows up here.</p>}
-              {output.map((item, index) => {
-                const exit = item.done ? commandExit(item.text) : null;
-                const showTurn = item.turn > 0 && (index === 0 || output[index - 1].turn !== item.turn);
-                return (
-                  <div key={item.id} className="space-y-1">
-                    {showTurn && <p className="text-2xs uppercase tracking-wider text-th-text-muted pt-1">Turn {item.turn}</p>}
-                    <div className="flex items-center gap-2">
-                      {item.command && <p className="font-mono text-2xs text-th-text-muted break-all flex-1">$ {item.command}</p>}
-                      {item.done && exit != null && (
-                        <span className={exit === 0 ? "text-emerald-400" : "text-red-300"}>
-                          {exit === 0 ? "passed" : `exit ${exit}`}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className="text-th-text-muted hover:text-th-text-primary"
-                        title="Copy output"
-                        onClick={() => { void navigator.clipboard.writeText(item.text || ""); }}
-                      >
-                        <Copy size={12} />
-                      </button>
-                    </div>
-                    <pre className="whitespace-pre-wrap font-mono text-2xs text-th-text-secondary bg-th-inset-bg rounded-lg p-2">{item.text || (item.done ? "(no output)" : "Running…")}</pre>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {inspector === "timeline" && <RunTimeline events={events} />}
-          {inspector === "plan" && sessionId && (
-            hasPlan || planFromChat ? (
-              <div className="space-y-2">
-                <ArtifactPanel
-                  artifact={hasPlan
-                    ? { path: PLAN_PATH, fileUrl: api.getSessionFileUrl(sessionId, PLAN_PATH), type: "md", revision: planRev }
-                    : { path: "plan.md", fileUrl: `data:text/markdown;charset=utf-8,${encodeURIComponent(planFromChat)}`, type: "md" }}
-                  onClose={() => setInspector("changes")}
-                />
-                {planReady && (
-                  <button type="button" onClick={() => { void buildPlan(); }} className="flex items-center gap-1 px-2 py-1 rounded-lg border border-th-border text-th-text-primary hover:bg-th-surface-hover">
-                    <Hammer size={12} /> Build this plan
-                  </button>
-                )}
-              </div>
-            ) : (
-              <p className="text-th-text-muted">In Plan mode the plan shows up here.</p>
-            )
-          )}
-        </div>
+      {inspectorOpen && dock === "right" && <aside style={{ width: narrow ? 280 : rightWidth }} className="shrink-0 border-l border-th-border flex flex-col min-h-0 overflow-hidden">
+        {inspectorPane}
       </aside>}
       {planConfirm && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6 animate-fade-in" role="dialog" aria-modal="true" aria-label="Build this plan" onKeyDown={(event) => { if (event.key === "Escape") setPlanConfirm(false); }}>

@@ -710,7 +710,7 @@ const InlineUrlInput = forwardRef<InlineUrlInputHandle, Props>(function InlineUr
         }}
       />
       {value.length === 0 && placeholder && (
-        <span className="pointer-events-none absolute left-10 top-3 text-sm text-th-text-muted select-none">
+        <span className="pointer-events-none absolute left-10 right-3 top-3 truncate text-sm text-th-text-muted select-none">
           {placeholder}
         </span>
       )}

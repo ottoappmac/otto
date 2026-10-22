@@ -47,6 +47,7 @@ from backend.routes.mcp import router as mcp_router
 from backend.routes.mcp_config import router as mcp_config_router
 from backend.routes.agents import router as agents_router
 from backend.routes.sessions import router as sessions_router, ws_router
+from backend.routes.terminals import router as terminals_router, ws_router as terminals_ws_router
 from backend.routes.schedules import router as schedules_router
 from backend.routes.triggers import router as triggers_router
 from backend.routes.hooks import router as hooks_router
@@ -764,6 +765,8 @@ app.include_router(mcp_config_router)
 app.include_router(agents_router)
 app.include_router(sessions_router)
 app.include_router(ws_router)
+app.include_router(terminals_router)
+app.include_router(terminals_ws_router)
 app.include_router(schedules_router)
 app.include_router(triggers_router)
 app.include_router(hooks_router)
@@ -893,6 +896,11 @@ if __name__ == "__main__":
 
     def _force_kill_managed_processes() -> None:
         """Last-resort cleanup: kill any managed process groups on exit."""
+        try:
+            from backend.terminal import close_all as close_all_terminals
+            close_all_terminals()
+        except Exception:  # noqa: BLE001
+            pass
         for proc in mcp_mgr._processes.values():
             if proc._proc is not None and proc._proc.returncode is None:
                 try:

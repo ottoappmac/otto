@@ -112,6 +112,12 @@ async def api_update_grant(grant_id: str, body: dict = Body(...)):
     network = body.get("network") if "network" in body else None
     network_hosts = body.get("network_hosts") if "network_hosts" in body else None
     shell_allow = body.get("shell_allow") if "shell_allow" in body else None
+    dev_command = body.get("dev_command") if "dev_command" in body else None
+    dev_autostart = body.get("dev_autostart") if "dev_autostart" in body else None
+    if dev_command is not None and not isinstance(dev_command, str):
+        return _error(400, "dev_command must be text")
+    if dev_autostart is not None and not isinstance(dev_autostart, bool):
+        return _error(400, "dev_autostart must be true or false")
     if mode is not None and mode not in ("read", "write"):
         return _error(400, "mode must be read or write")
     if network is not None and not isinstance(network, bool):
@@ -129,6 +135,8 @@ async def api_update_grant(grant_id: str, body: dict = Body(...)):
             network=network,
             network_hosts=network_hosts,
             shell_allow=shell_allow,
+            dev_command=dev_command,
+            dev_autostart=dev_autostart,
         )
     except Exception as exc:
         return _error(400, str(exc))

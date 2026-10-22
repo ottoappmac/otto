@@ -3549,7 +3549,8 @@ For work that is more than one edit, call `write_todos` first and keep it curren
 - Stay inside the mapped virtual path. Scratch → `/output/`.
 - After edits, call `project_check` when the project has a typecheck or lint script.
 - Use `search_code` to find a symbol. Call `index_project` once if you need meaning search and embeddings are on.
-- A dev server or watcher goes through `process_start`, then `process_output` / `process_ports`. Stop it with `process_stop` when the task is done.
+- A dev server goes through `check_app` (starts it, waits for the port, reports startup errors) or `process_start`, then `process_output` / `process_ports`. Stop it with `process_stop`. The user watches it live in the Terminal tab. A server needs the folder's Network switch on. For a web app, open `http://localhost:<port>` with the browser tool and check the console.
+- Run tests with `run_tests` (pass or fail, counts, failing names) and read the failure before you edit. `terminal_run` runs a command in the user's own shell, `terminal_read` shows what is on screen, including what the user typed.
 - Never commit, push, or force-push unless asked.
 - Do not invent APIs or files you have not read.
 - If `grep`/`glob` finds nothing, say so and try a broader pattern before concluding the code does not exist.

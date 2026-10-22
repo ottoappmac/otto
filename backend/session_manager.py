@@ -4533,6 +4533,9 @@ class SessionManager:
         import shutil
 
         from backend.session_transcript import delete_transcript
+        from backend.terminal import close_session as close_terminals
+
+        close_terminals(session_id)
 
         session = self._active.pop(session_id, None)
         host: str | None = None

@@ -205,6 +205,10 @@ class FolderGrant(BaseModel):
     network: bool = False
     # When set, shell network is limited to these hosts (``host`` or ``host:port``).
     network_hosts: list[str] = Field(default_factory=list)
+    # Command that starts this project's dev server. Empty means "detect one".
+    dev_command: str = ""
+    # Start ``dev_command`` when a session opens in this folder, without a click.
+    dev_autostart: bool = False
     # Command prefixes that skip the shell approval card. ``npm test*`` is a prefix.
     shell_allow: list[str] = Field(default_factory=list)
 
