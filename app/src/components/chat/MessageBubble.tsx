@@ -35,6 +35,12 @@ interface MessageBubbleProps {
   sessionId?: string;
   onEdit?: (content: string, restore?: boolean) => void;
   onRestore?: () => void;
+  /** User messages after this one. Shown so the user knows what an edit discards. */
+  laterTurns?: number;
+  /** The agent is working. Saving an edit stops it first. */
+  running?: boolean;
+  /** Open the editor from outside (the up-arrow shortcut). */
+  editRequest?: { id: string; nonce: number } | null;
   onHitlDecision?: (decisions: Array<Record<string, unknown>>) => void;
   onApproveAllSession?: (decisions: Array<Record<string, unknown>>) => void;
   onOpenArtifact?: (path: string, fileUrl: string, type: ArtifactType) => void;
@@ -269,13 +275,32 @@ export function ThoughtBlock({ messages }: { messages: ChatMessage[] }) {
   );
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, isThought, isLatestTodo, canEdit, canRestore, inGroup, sessionId, onEdit, onRestore, onHitlDecision, onApproveAllSession, onOpenArtifact }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, isThought, isLatestTodo, canEdit, canRestore, laterTurns = 0, running, editRequest, inGroup, sessionId, onEdit, onRestore, onHitlDecision, onApproveAllSession, onOpenArtifact }: MessageBubbleProps) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [restoreFiles, setRestoreFiles] = useState(false);
   const [editText, setEditText] = useState("");
   const editRef = useRef<HTMLTextAreaElement>(null);
   const [hitlEditing, setHitlEditing] = useState(false);
+  const startEdit = () => {
+    setEditText(message.content);
+    // Rewinding the conversation without rewinding the files leaves the agent
+    // looking at changes it no longer remembers, so undo them unless told not to.
+    setRestoreFiles(Boolean(canRestore));
+    setEditing(true);
+  };
+  // Focus the box as soon as it exists, with the caret after the text.
+  useEffect(() => {
+    if (!editing) return;
+    const box = editRef.current;
+    if (!box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }, [editing]);
+  useEffect(() => {
+    if (editRequest && editRequest.id === message.id && canEdit) startEdit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editRequest?.nonce]);
   const [hitlEditCommand, setHitlEditCommand] = useState("");
 
   if (message.type === "run_depth") {
@@ -331,9 +356,10 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
           {canEdit && !editing && (
             <div className="absolute -left-8 top-2.5 flex flex-col gap-1 opacity-0 group-hover/msg:opacity-100 transition-opacity">
               <button
-                onClick={() => { setEditText(message.content); setRestoreFiles(false); setEditing(true); setTimeout(() => editRef.current?.focus(), 50); }}
+                onClick={startEdit}
                 className="text-th-text-muted hover:text-th-text-primary"
                 title="Edit & resend"
+                aria-label="Edit and resend from this message"
               >
                 <Pencil size={13} />
               </button>
@@ -349,7 +375,16 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
               )}
             </div>
           )}
-          <div className="bg-th-surface-hover border border-th-border rounded-2xl rounded-br-sm px-4 py-3">
+          <div
+            className={`bg-th-surface-hover border border-th-border rounded-2xl rounded-br-sm px-4 py-3 transition-colors duration-fast ${canEdit && !editing ? "cursor-pointer hover:border-th-border-strong" : ""}`}
+            title={canEdit && !editing ? "Click to edit and resend from here" : undefined}
+            onClick={(event) => {
+              if (!canEdit || editing) return;
+              if ((event.target as HTMLElement).closest("a, button")) return;
+              if (window.getSelection()?.toString()) return;
+              startEdit();
+            }}
+          >
             {editing ? (
               <div className="space-y-2">
                 <textarea
@@ -362,6 +397,13 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                     if (e.key === "Escape") setEditing(false);
                   }}
                 />
+                <p className="text-2xs text-th-text-muted">
+                  {running
+                    ? "The agent is still working. Saving stops it and restarts from here."
+                    : laterTurns > 0
+                      ? `Saving removes ${laterTurns} later message${laterTurns === 1 ? "" : "s"} and restarts the agent from here.`
+                      : "Saving restarts the agent from here."}
+                </p>
                 <div className="flex gap-2 justify-end items-center">
                   {canRestore && (
                     <label className="mr-auto flex items-center gap-1.5 text-2xs text-th-text-tertiary">
@@ -370,7 +412,7 @@ export const MessageBubble = memo(function MessageBubble({ message, isThought, i
                         checked={restoreFiles}
                         onChange={(e) => setRestoreFiles(e.target.checked)}
                       />
-                      Also restore files
+                      Also undo file changes made after this message
                     </label>
                   )}
                   <button

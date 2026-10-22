@@ -165,6 +165,8 @@ def update_grant(
     network: bool | None = None,
     network_hosts: list[str] | None = None,
     shell_allow: list[str] | None = None,
+    dev_command: str | None = None,
+    dev_autostart: bool | None = None,
 ) -> FolderGrant | None:
     if mode is not None and mode not in ("read", "write"):
         raise GrantStoreError(f"mode must be read or write, got {mode!r}")
@@ -184,6 +186,10 @@ def update_grant(
                 changes["network_hosts"] = [str(item).strip() for item in network_hosts if str(item).strip()]
             if shell_allow is not None:
                 changes["shell_allow"] = [str(item).strip() for item in shell_allow if str(item).strip()]
+            if dev_command is not None:
+                changes["dev_command"] = str(dev_command).strip()[:300]
+            if dev_autostart is not None:
+                changes["dev_autostart"] = bool(dev_autostart)
             updated = grant.model_copy(update=changes)
             grants[index] = updated
             _save(grants)

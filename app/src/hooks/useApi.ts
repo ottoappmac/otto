@@ -45,6 +45,8 @@ import type {
   FolderGrant,
   FolderGrantPreview,
   WorkspaceChanges,
+  DevState,
+  TerminalInfo,
   WorkspaceGitStatus,
   WorkspaceTreeResult,
   TriggerRunsResponse,
@@ -1001,7 +1003,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path, mode }),
     }),
-  updateFolderGrant: (id: string, patch: { mode?: "read" | "write"; network?: boolean; network_hosts?: string[]; shell_allow?: string[] }) =>
+  updateFolderGrant: (id: string, patch: { mode?: "read" | "write"; network?: boolean; network_hosts?: string[]; shell_allow?: string[]; dev_command?: string; dev_autostart?: boolean }) =>
     request<FolderGrant>(`/api/workspace-grants/${id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
@@ -1020,6 +1022,17 @@ export const api = {
     request<{ status: string }>(`/api/workspace-grants/${id}`, { method: "DELETE" }),
   listSessionsForGrant: (grantId: string) =>
     request<SessionInfo[]>(`/api/sessions?workspace_grant_id=${encodeURIComponent(grantId)}`),
+  listTerminals: (id: string) =>
+    request<{ terminals: TerminalInfo[] }>(`/api/sessions/${id}/terminals`),
+  openTerminal: (id: string, size?: { rows: number; cols: number }) =>
+    request<TerminalInfo>(`/api/sessions/${id}/terminals`, {
+      method: "POST",
+      body: JSON.stringify(size ?? {}),
+    }),
+  getDevState: (id: string) => request<DevState>(`/api/sessions/${id}/dev`),
+  startDev: (id: string) => request<DevState>(`/api/sessions/${id}/dev/start`, { method: "POST" }),
+  closeTerminal: (id: string, terminalId: string) =>
+    request<{ status: string }>(`/api/sessions/${id}/terminals/${terminalId}`, { method: "DELETE" }),
   getWorkspaceGit: (id: string) =>
     request<WorkspaceGitStatus>(`/api/sessions/${id}/workspace/git`),
   getWorkspaceChanges: (id: string, turn?: number) =>

@@ -372,3 +372,51 @@ async def test_a_reconcile_error_stops_the_turn_before_the_privacy_check(monkeyp
     events = [event async for event in mgr.stream_message("s1", "hello")]
     assert order == ["reconcile"]
     assert events == [error]
+
+
+@pytest.mark.asyncio
+async def test_an_edit_reconciles_before_the_turn_runs(monkeypatch) -> None:
+    """Picking another model, then editing an earlier prompt, must use the new model."""
+    mgr, _ = _manager(monkeypatch, enabled=True)
+    order: list[str] = []
+    session = _session(bound=False)
+
+    async def _ensure(session_id):
+        return session
+
+    async def _reconcile(s):
+        order.append("reconcile")
+
+    async def _privacy(s):
+        order.append("privacy")
+        return {"type": "error", "content": "stop here"}
+
+    monkeypatch.setattr(mgr, "_ensure_session", _ensure)
+    monkeypatch.setattr(mgr, "_reconcile_decide", _reconcile)
+    monkeypatch.setattr(mgr, "_check_privacy_lock", _privacy)
+
+    events = [event async for event in mgr.stream_edit("s1", 0, "edited")]
+    assert order == ["reconcile", "privacy"]
+    assert events == [{"type": "error", "content": "stop here"}]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_model_switch_stops_an_edit(monkeypatch) -> None:
+    mgr, _ = _manager(monkeypatch, enabled=True)
+    session = _session(bound=False)
+
+    async def _ensure(session_id):
+        return session
+
+    async def _reconcile(s):
+        return {"type": "error", "content": "could not switch", "metadata": {"error_code": "model_switch_failed"}}
+
+    async def _privacy(s):
+        raise AssertionError("the turn must not go on after a failed switch")
+
+    monkeypatch.setattr(mgr, "_ensure_session", _ensure)
+    monkeypatch.setattr(mgr, "_reconcile_decide", _reconcile)
+    monkeypatch.setattr(mgr, "_check_privacy_lock", _privacy)
+
+    events = [event async for event in mgr.stream_edit("s1", 0, "edited")]
+    assert events[0]["metadata"]["error_code"] == "model_switch_failed"

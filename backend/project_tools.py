@@ -355,28 +355,19 @@ def build_project_tools(session_id: str) -> list:
         """Start a long-running command in the mapped project (a dev server or watcher).
 
         Returns an id. Read it with process_output, stop it with process_stop.
-        The shell approval card still applies.
+        The user sees it live in the Terminal tab. The shell approval card still applies.
         """
-        ctx = _shell_context(session_id)
-        if ctx is None:
+        if _root(session_id) is None:
             return "No project folder is mapped."
         from backend.background_proc import start
-        mgr_mode = "agent"
-        try:
-            from backend.state import session_mgr
-            mgr_mode = session_mgr._mode_for(session_id)
-        except Exception:
-            pass
-        if mgr_mode in ("plan", "ask"):
-            return f"{mgr_mode} mode cannot start a background process."
-        cwd, sandbox, network, hosts = ctx
-        result = start(
-            session_id, command, cwd,
-            sandbox=sandbox, network=network, network_hosts=hosts, write_paths=[cwd],
-        )
+        from backend.terminal_context import session_mode
+        mode = session_mode(session_id)
+        if mode in ("plan", "ask"):
+            return f"{mode} mode cannot start a background process."
+        result = start(session_id, command)
         if not result.get("ok"):
             return str(result.get("error") or "Could not start the process.")
-        return f"Started {result['id']} (pid {result.get('pid')})"
+        return f"Started {result['id']} (pid {result.get('pid')}). Shown live in the Terminal tab."
 
     @tool
     def process_output(proc_id: str) -> str:
@@ -408,10 +399,155 @@ def build_project_tools(session_id: str) -> list:
             return note or "No listening TCP ports."
         return "Listening: " + ", ".join(str(port) for port in found)
 
+    @tool
+    def terminal_run(command: str, terminal_id: str = "", timeout_seconds: int = 120) -> str:
+        """Run a command in the user's Terminal tab and return its output and exit code.
+
+        Uses the first open shell terminal (opening one if none exists), so the
+        user watches it run and the shell keeps its directory and variables
+        between calls. Same sandbox and approval card as execute. Use
+        process_start for a server that must keep running.
+        """
+        from backend import terminal
+        from backend.terminal_context import open_terminal, session_mode
+        if _root(session_id) is None:
+            return "No project folder is mapped."
+        if session_mode(session_id) in ("plan", "ask"):
+            return "Plan and Ask modes cannot use the terminal. Use execute for read-only commands."
+        term = terminal.get(session_id, terminal_id) if terminal_id else None
+        if term is None:
+            term = next((t for t in terminal.list_terminals(session_id) if t.kind == "shell" and t.alive), None)
+        if term is None:
+            opened = open_terminal(session_id, kind="shell")
+            if not opened.get("ok"):
+                return str(opened.get("error") or "Could not open a terminal.")
+            term = opened["terminal"]
+            import time
+            time.sleep(1.0)
+        result = terminal.run_in_terminal(term, command, timeout=max(5, min(int(timeout_seconds), 600)))
+        if not result.get("ok"):
+            return str(result.get("error"))
+        text = result.get("output") or "<no output>"
+        if len(text) > 12000:
+            text = "... (earlier output cut)\n" + text[-12000:]
+        if result.get("exit_code") is None:
+            return f"[terminal {term.id}] still running after {timeout_seconds}s. Read more with terminal_read.\n{text}"
+        suffix = "" if result["exit_code"] == 0 else f"\n\nExit code: {result['exit_code']}"
+        return f"[terminal {term.id}]\n{text}{suffix}"
+
+    @tool
+    def terminal_read(terminal_id: str = "", lines: int = 80) -> str:
+        """Read the latest lines shown in a terminal (the user's shell or a process).
+
+        With no id, reads the most recently opened terminal. Use it to see what
+        the user ran or to check a server for new errors.
+        """
+        from backend import terminal
+        terms = terminal.list_terminals(session_id)
+        term = terminal.get(session_id, terminal_id) if terminal_id else (terms[-1] if terms else None)
+        if term is None:
+            return "No terminal is open."
+        text, _ = term.text_since(0)
+        tail = terminal.strip_ansi(text).rstrip().split("\n")[-max(1, min(int(lines), 400)):]
+        state = "running" if term.alive else f"exited {term.exit_code}"
+        return f"[terminal {term.id} {term.kind} {state}]\n" + "\n".join(tail)
+
+    @tool
+    def run_tests(command: str = "", timeout_seconds: int = 300) -> str:
+        """Run the project's tests and return a short result: pass or fail, counts, failing test names.
+
+        With no command it detects pytest, npm test, go test, cargo test, or
+        make test. Sandboxed like execute. Read the failure output before you edit.
+        """
+        from backend.exec_sandbox import passthrough_names, run_shell, scrub_env
+        from backend.output_analysis import detect_test_command, summarize_tests
+        from backend.terminal_context import build_context
+        ctx, reason = build_context(session_id)
+        if ctx is None:
+            return reason or "No project folder is mapped."
+        chosen = (command or "").strip() or detect_test_command(ctx.cwd)
+        if not chosen:
+            return "No test command found. Pass one, for example run_tests('pytest -q')."
+        result = run_shell(
+            chosen,
+            cwd=ctx.cwd,
+            env=scrub_env(os.environ, extra=ctx.env, passthrough=passthrough_names()),
+            timeout=max(10, min(int(timeout_seconds), 900)),
+            sandbox=ctx.sandbox,
+            network=ctx.network,
+            network_hosts=ctx.network_hosts,
+            write_paths=ctx.write_paths,
+            read_paths=ctx.read_paths,
+        )
+        if result.error:
+            return result.error
+        text = "\n".join(piece for piece in (result.stdout, result.stderr) if piece)
+        report = summarize_tests(text, result.returncode)
+        lines = [f"$ {chosen}", f"{report['status'].upper()}: {report['summary']}"]
+        if report["failures"]:
+            lines.append("Failing: " + ", ".join(report["failures"]))
+        if report["status"] != "passed":
+            lines.append("--- output (tail) ---")
+            lines.append(text.strip()[-5000:])
+        return "\n".join(lines)
+
+    @tool
+    def check_app(command: str, wait_seconds: int = 30) -> str:
+        """Start an app or dev server, wait for it to listen, and report startup errors.
+
+        Returns the process id, the port it opened (if any), and error blocks
+        from its log. If the same command is already running it is checked
+        instead of started twice. For a web app, open the port with the browser
+        tool next.
+        """
+        import time
+        from backend import terminal
+        from backend.output_analysis import extract_errors
+        from backend.terminal_context import session_mode
+        if _root(session_id) is None:
+            return "No project folder is mapped."
+        if session_mode(session_id) in ("plan", "ask"):
+            return "Plan and Ask modes cannot start an app."
+        term = next(
+            (t for t in terminal.list_terminals(session_id)
+             if t.kind == "process" and t.alive and (t.command or "").strip() == command.strip()),
+            None,
+        )
+        if term is None:
+            from backend.background_proc import start
+            started = start(session_id, command)
+            if not started.get("ok"):
+                return str(started.get("error") or "Could not start the app.")
+            term = terminal.get(session_id, started["id"])
+        deadline = time.time() + max(3, min(int(wait_seconds), 120))
+        found: list[int] = []
+        while time.time() < deadline:
+            if term is None or not term.alive:
+                break
+            found = terminal.listening_ports(term)
+            if found:
+                time.sleep(1.0)  # let a first request's error reach the log
+                break
+            time.sleep(1.0)
+        text, _ = term.text_since(0) if term else ("", 0)
+        errors = extract_errors(text)
+        if term is not None and term.alive:
+            state = f"running, listening on {', '.join(str(p) for p in found)}" if found else "running, no port opened yet"
+        else:
+            state = f"exited with code {term.exit_code if term else '?'}"
+        lines = [f"[process {term.id if term else '-'}] {state}"]
+        if errors:
+            lines.append("Errors in the log:")
+            lines.extend(f"---\n{block}" for block in errors)
+        else:
+            lines.append("No errors in the log.")
+        return "\n".join(lines)
+
     return [
         git_commit, git_branch, git_worktree, git_pr, project_check,
         search_code, index_project, process_start, process_output,
-        process_stop, process_ports,
+        process_stop, process_ports, terminal_run, terminal_read,
+        run_tests, check_app,
     ]
 
 
