@@ -267,6 +267,14 @@ The Triggers page also hosts two session watchers that are not cron or filesyste
 
 **exo cluster** — pool multiple Apple Silicon machines into a single inference cluster. The backend can provision remote nodes over SSH, start and stop the local exo process, and score the model catalog against the live cluster topology. Configure the cluster from the Exo tab in the UI.
 
+### Benchmark: SWE-bench Verified
+
+[SWE-bench](https://www.swebench.com/) measures whether an AI agent can fix real software bugs. Each task is a GitHub issue from a popular open-source Python project (Django, SymPy, scikit-learn, Sphinx, and others) together with the repository at the commit it was filed against. The agent has to write a patch; the benchmark then applies it and runs the project's own hidden tests. A task counts as **resolved** only if the tests that reproduce the bug now pass and the tests that passed before still do. **SWE-bench Verified** is the 500-task subset whose issues and tests were checked by human reviewers, and it is the version most often quoted.
+
+**Result: 327 of 500 tasks resolved (65.4%)**, running OTTO's `swebench-coding-agent` fully on-device with `Qwen3.6-35B-A3B-8bit` on Apple Silicon through oMLX. That includes one task whose tests timed out and three where the agent produced no patch, all counted as unresolved. Best repos were scikit-learn (88%), xarray (73%) and Django (70%); the weakest were pylint (20%) and requests (13%).
+
+Read the number with care: it was scored on LogicStar's prebuilt images rather than the official SWE-bench ones, and the instances that first returned an empty patch were re-run once (the single-attempt figure is 63.8%). It is not a leaderboard submission. Per-repo results, settings and caveats are in [`scripts/swebench/README.md`](./scripts/swebench/README.md), which also explains how to run the benchmark yourself, and the predictions, scores and full trajectories are in [ottoappmac/otto-swebench-runs](https://github.com/ottoappmac/otto-swebench-runs).
+
 ### Safety
 
 Multiple runtime guards run on every agent turn, independent of the prompt. They are layered so each catches what the others miss:
