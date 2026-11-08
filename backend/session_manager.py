@@ -1698,7 +1698,42 @@ _RESERVED_SUBAGENT_NAMES = frozenset({"general-purpose"})
 # claim MCP server IDs.  Other empty-tools agents (e.g.
 # ``schedule-builder-agent``) stay skipped so they do not duplicate
 # ``general-purpose``.
-_FILESYSTEM_SUBAGENT_NAMES = frozenset({"coding-agent"})
+# Agents that must run with a narrow toolbox. Every tool schema is sent on
+# every model call, so the full Otto toolbox costs prefill and decode time on
+# each step. File and shell tools come from the filesystem backend, not from
+# this list, so they are unaffected.
+_AGENT_TOOL_ALLOWLIST: dict[str, frozenset[str]] = {
+    "swebench-coding-agent": frozenset({
+        "run_tests", "search_code", "project_check", "index_project",
+        "grep_large_results",
+    }),
+}
+
+
+def _restrict_agent_tools(agent_name: str | None, tools: list[Any]) -> list[Any]:
+    allowed = _AGENT_TOOL_ALLOWLIST.get(agent_name or "")
+    if allowed is None:
+        return tools
+    kept = [t for t in tools if getattr(t, "name", None) in allowed]
+    logger.info(
+        "Agent %r restricted to %d of %d tools: %s",
+        agent_name, len(kept), len(tools), sorted(getattr(t, "name", "?") for t in kept),
+    )
+    return kept
+
+
+# Agents that must work alone. deepagents always binds ``task``, so it is
+# hidden from them instead. Their subagents get neither the agent's prompt nor
+# its environment rules; in SWE-bench runs ``task`` calls spent many minutes
+# searching the wrong folders.
+_AGENTS_WITHOUT_SUBAGENTS = frozenset({"swebench-coding-agent"})
+
+# Agents whose runs must not carry anything into later runs. Learnings are
+# written into the agent's AGENTS.md (its system prompt), so one SWE-bench
+# instance's notes would reach every later instance.
+_AGENTS_WITHOUT_MEMORY = frozenset({"swebench-coding-agent"})
+
+_FILESYSTEM_SUBAGENT_NAMES = frozenset({"coding-agent", "swebench-coding-agent"})
 
 
 def _build_named_agent_subagent(
@@ -3407,8 +3442,9 @@ class SessionManager:
         # neither.  ``inject_enabled`` is a legacy combined flag kept for
         # backward compatibility — it implicitly enables both layers.
         memory_middleware: list[Any] = []
-        l1_enabled = config.memory.effective_inject_on_session_start
-        l2_enabled = config.memory.effective_inject_realtime
+        no_memory = agent_name in _AGENTS_WITHOUT_MEMORY
+        l1_enabled = config.memory.effective_inject_on_session_start and not no_memory
+        l2_enabled = config.memory.effective_inject_realtime and not no_memory
 
         if l1_enabled:
             from backend.memory import _index_path
@@ -3527,6 +3563,7 @@ class SessionManager:
                 + ask_user_tools
                 + agent_extra_tools
             )
+            all_tools = _restrict_agent_tools(agent_name, all_tools)
             # In direct-agent mode there are no sub-agents to claim MCP tools,
             # so the orchestrator owns every connected tool.  ``pw_pool`` is
             # created iff the ``playwright-mcp`` server is actually connected.
@@ -3734,7 +3771,10 @@ class SessionManager:
         # Guard first so a mis-named sub-agent call is rewritten before
         # the policy classifies it. Policy before live output so the
         # approval card shows the command, not the tee wrapper.
-        if subagents:
+        if agent_name in _AGENTS_WITHOUT_SUBAGENTS:
+            from middleware.no_subagents import NoSubagentsMiddleware
+            extra_middleware.append(NoSubagentsMiddleware())
+        elif subagents:
             extra_middleware.append(
                 SubagentAsToolGuardMiddleware(
                     subagent_names=[sa["name"] for sa in subagents],
@@ -3752,13 +3792,14 @@ class SessionManager:
             memory_path = _agents_dir() / _slugify(agent_name) / "AGENTS.md"
         else:
             memory_path = files_dir / "learnings.md"
-        extra_middleware.append(
-            MemoryExtractionMiddleware(
-                model=graph_llm,
-                memory_path=memory_path,
-                extract_every_n_turns=_MEMORY_EXTRACTION_INTERVAL,
+        if agent_name not in _AGENTS_WITHOUT_MEMORY:
+            extra_middleware.append(
+                MemoryExtractionMiddleware(
+                    model=graph_llm,
+                    memory_path=memory_path,
+                    extract_every_n_turns=_MEMORY_EXTRACTION_INTERVAL,
+                )
             )
-        )
 
         extra_middleware.extend(memory_middleware)
 

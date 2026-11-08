@@ -52,7 +52,7 @@ def _spec(name: str, tools: list[str]) -> AgentSpec:
 
 
 def test_filesystem_subagent_allowlist_is_coding_only():
-    assert _FILESYSTEM_SUBAGENT_NAMES == frozenset({"coding-agent"})
+    assert _FILESYSTEM_SUBAGENT_NAMES == frozenset({"coding-agent", "swebench-coding-agent"})
 
 
 def test_build_subagents_registers_coding_agent_without_mcp(monkeypatch):
