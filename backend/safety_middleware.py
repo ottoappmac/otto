@@ -585,15 +585,13 @@ class LiveOutputMiddleware(AgentMiddleware):
         actual_request = request
 
         try:
-            import shlex as _shlex
             tmp_fd, tmp_path = tempfile.mkstemp(
                 dir=self._files_dir,
                 prefix=".live_",
                 suffix=".log",
             )
             os.close(tmp_fd)
-            safe_log = _shlex.quote(tmp_path)
-            wrapped_cmd = f"{{ {command}; }} 2>&1 | tee {safe_log}"
+            wrapped_cmd = tee_wrap(command, tmp_path, tmp_path + ".rc")
             new_call = {**request.tool_call, "args": {**args, "command": wrapped_cmd}}
             actual_request = request.override(tool_call=new_call)
             poll_task = asyncio.create_task(self._poll_file(tmp_path, tc_id))
@@ -610,8 +608,26 @@ class LiveOutputMiddleware(AgentMiddleware):
                 poll_task.cancel()
                 await asyncio.gather(poll_task, return_exceptions=True)
             if tmp_path is not None:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_path)
+                for path in (tmp_path, tmp_path + ".rc"):
+                    with contextlib.suppress(OSError):
+                        os.unlink(path)
+
+
+def tee_wrap(command: str, log_path: str, rc_path: str) -> str:
+    """Wrap *command* so its output is also copied to *log_path*.
+
+    A plain ``cmd | tee log`` exits with tee's status (always 0), so every
+    failed command looked like a success to the agent. The command's own
+    status is saved to *rc_path* and used as the exit status. ``( )`` keeps an
+    ``exit`` inside the command from skipping that save. ``pipefail`` is not
+    used: it would also change pipes inside the command (``pytest | tail``).
+    """
+    import shlex as _shlex
+    log, rc = _shlex.quote(log_path), _shlex.quote(rc_path)
+    return (
+        f"{{ ( {command}\n) 2>&1; echo $? > {rc}; }} | tee {log}; "
+        f'_rc=$(cat {rc} 2>/dev/null); exit "${{_rc:-1}}"'
+    )
 
 
 __all__ = [

@@ -1,0 +1,4 @@
+datasets>=2.19
+httpx>=0.27
+websockets>=12
+swebench==4.1.0
