@@ -3,6 +3,12 @@
 Runs Otto's `swebench-coding-agent` on SWE-bench instances through the local
 backend API, then scores the patches with SWE-bench's own Docker harness.
 
+**Latest result: 327 of 500 resolved (65.4%) on SWE-bench Verified** with a local
+Qwen3.6-35B-A3B model, scored on the LogicStar images (not yet re-scored with the official ones).
+Details, caveats and per-repo numbers are under [Results](#results-full-swe-bench-verified-run-500-instances);
+predictions, scores and trajectories are in
+[ottoappmac/otto-swebench-runs](https://github.com/ottoappmac/otto-swebench-runs).
+
 ## One command
 
 ```bash
@@ -133,6 +139,15 @@ Run `202610271735`, Oct 27 to Nov 8 2026, on a MacBook Pro (Apple Silicon).
 | Scoring | `--method local` with the LogicStar bundle images |
 
 **Resolved: 327 of 500 (65.4%).**
+
+Accuracy: 65.4% of all 500 instances, or 65.5% of the 499 that were scored (the one scoring
+error is excluded from that figure). The single-attempt figure, before the 19 empty patches
+were re-run once, is 319 of 500 (63.8%).
+
+The full outputs of this run (`preds.jsonl`, `results.json`, `score_ledger.jsonl`, the harness
+reports and every trajectory) are in
+[ottoappmac/otto-swebench-runs](https://github.com/ottoappmac/otto-swebench-runs), under
+`out/202610271735/`. Its README repeats the numbers below.
 
 | Outcome | Instances |
 |---|---|
