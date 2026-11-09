@@ -293,17 +293,23 @@ async def ddg_search_urls(
     Uses the ``ddgs`` package with worldwide region to avoid
     locale-biased results.
 
-    Pinned to the ``duckduckgo`` backend explicitly rather than ``ddgs``'s
-    default ``backend="auto"``, which randomly rotates through other
-    engines (Yahoo, Wikipedia, Brave, ...) on every call. Two of those are
-    unreliable: Yahoo's WAF frequently hard-blocks the ``primp`` client
-    (TLS reset, no ``close_notify``), and ``ddgs``'s Wikipedia engine
-    builds its URL as ``https://{region_lang}.wikipedia.org`` — with our
-    worldwide region (``"wt-wt"``) that resolves to the nonexistent
-    ``wt.wikipedia.org``, a guaranteed DNS failure every time it's picked.
-    ``_search_sync`` only raises once *every* engine tried that round
-    failed, so either of these alone can end up being the error shown to
-    the agent even though the query itself was fine.
+    Explicitly lists the backends to use, excluding two that ``ddgs``'s
+    default ``backend="auto"`` would otherwise rotate through:
+
+    - ``wikipedia`` — has the highest fixed priority of any text engine,
+      so "auto" tries it first on nearly every call. Its URL builder does
+      ``https://{region_lang}.wikipedia.org`` — with our worldwide region
+      (``"wt-wt"``) that resolves to the nonexistent ``wt.wikipedia.org``,
+      a guaranteed DNS failure every time it's picked.
+    - ``yahoo`` — its WAF frequently hard-blocks the ``primp`` client with
+      an abrupt TLS reset (no ``close_notify``) instead of a clean error.
+
+    ``_search_sync`` only raises once *every* engine tried that round has
+    failed, so don't narrow this list down to a single engine: any one
+    scraped backend (DuckDuckGo included) can itself get temporarily rate
+    limited/anti-bot-blocked, and with only one engine in play that takes
+    the whole search down with it. Keeping several non-broken engines
+    here preserves the fallback ``auto`` was providing.
 
     Searches are serialised via semaphore because the Rust-backed
     ``primp.Client`` inside ``ddgs`` deadlocks under concurrent use
@@ -317,7 +323,7 @@ async def ddg_search_urls(
         ddgs = _get_ddgs()
         results = [
             {"url": r["href"], "title": r["title"], "snippet": r["body"]}
-            for r in ddgs.text(query, region="wt-wt", backend="duckduckgo", max_results=max_results)
+            for r in ddgs.text(query, region="wt-wt", backend="duckduckgo,brave,mojeek,yandex", max_results=max_results)
         ]
         logger.debug("[ddg] thread=%s query=%r — done in %.1fs (%d results)", tid, query, time.monotonic() - t0, len(results))
         return results
