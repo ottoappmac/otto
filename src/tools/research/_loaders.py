@@ -283,6 +283,50 @@ def _get_ddg_semaphore() -> asyncio.Semaphore:
     return _ddg_semaphore
 
 
+# Preferred order of ddgs text engines. ddgs tries them in this order (a
+# couple in parallel) and stops once it has enough results, so put the
+# historically best-quality ones first. Engines missing from the installed
+# ddgs version are dropped at runtime; engines not listed here but present
+# in ddgs are appended at the end.
+_PREFERRED_TEXT_BACKENDS = (
+    "duckduckgo", "bing", "brave", "startpage", "mojeek", "yandex", "yahoo",
+)
+# Never use these: ``wikipedia`` builds ``https://{region_lang}.wikipedia.org``,
+# which for our worldwide region ("wt-wt") is the nonexistent
+# ``wt.wikipedia.org`` — a guaranteed DNS failure. ``grokipedia`` is an
+# encyclopedia lookup, not a web search, and returns nothing for most queries.
+_EXCLUDED_TEXT_BACKENDS = frozenset({"wikipedia", "grokipedia"})
+
+_text_backends_cache: str | None = None
+
+
+def _text_backends() -> str:
+    """Comma-separated ddgs text backends available in the *installed* ddgs.
+
+    The set of engines changes between ddgs releases (e.g. 9.16 disabled
+    ``yandex`` and added ``startpage``), and the packaged app resolves
+    ``ddgs>=9`` independently of the dev venv. A hard-coded list silently
+    loses engines on upgrade — that is how the packaged build ended up with
+    only duckduckgo/brave/mojeek, all of which were anti-bot-blocking at the
+    same time, so every search failed. Building the list from ddgs's own
+    registry keeps every working engine in play.
+    """
+    global _text_backends_cache
+    if _text_backends_cache is None:
+        try:
+            from ddgs.engines import ENGINES
+
+            available = set(ENGINES.get("text", {})) - _EXCLUDED_TEXT_BACKENDS
+        except Exception:  # pragma: no cover - defensive against ddgs internals moving
+            logger.warning("[ddg] could not read ddgs engine registry", exc_info=True)
+            available = set(_PREFERRED_TEXT_BACKENDS)
+        ordered = [b for b in _PREFERRED_TEXT_BACKENDS if b in available]
+        ordered += sorted(available - set(ordered))
+        _text_backends_cache = ",".join(ordered) if ordered else "auto"
+        logger.info("[ddg] text backends: %s", _text_backends_cache)
+    return _text_backends_cache
+
+
 async def ddg_search_urls(
     query: str,
     max_results: int = 10,
@@ -293,23 +337,11 @@ async def ddg_search_urls(
     Uses the ``ddgs`` package with worldwide region to avoid
     locale-biased results.
 
-    Explicitly lists the backends to use, excluding two that ``ddgs``'s
-    default ``backend="auto"`` would otherwise rotate through:
-
-    - ``wikipedia`` — has the highest fixed priority of any text engine,
-      so "auto" tries it first on nearly every call. Its URL builder does
-      ``https://{region_lang}.wikipedia.org`` — with our worldwide region
-      (``"wt-wt"``) that resolves to the nonexistent ``wt.wikipedia.org``,
-      a guaranteed DNS failure every time it's picked.
-    - ``yahoo`` — its WAF frequently hard-blocks the ``primp`` client with
-      an abrupt TLS reset (no ``close_notify``) instead of a clean error.
-
-    ``_search_sync`` only raises once *every* engine tried that round has
-    failed, so don't narrow this list down to a single engine: any one
-    scraped backend (DuckDuckGo included) can itself get temporarily rate
-    limited/anti-bot-blocked, and with only one engine in play that takes
-    the whole search down with it. Keeping several non-broken engines
-    here preserves the fallback ``auto`` was providing.
+    Uses every usable text engine in the installed ddgs (see
+    ``_text_backends``). ``_search_sync`` only raises once *every* engine
+    tried has failed, so keep the list wide: any scraped engine can get
+    temporarily rate limited / anti-bot-blocked (DuckDuckGo 202, Brave 429
+    and Mojeek/Startpage empty pages have all been seen at once).
 
     Searches are serialised via semaphore because the Rust-backed
     ``primp.Client`` inside ``ddgs`` deadlocks under concurrent use
@@ -323,7 +355,7 @@ async def ddg_search_urls(
         ddgs = _get_ddgs()
         results = [
             {"url": r["href"], "title": r["title"], "snippet": r["body"]}
-            for r in ddgs.text(query, region="wt-wt", backend="duckduckgo,brave,mojeek,yandex", max_results=max_results)
+            for r in ddgs.text(query, region="wt-wt", backend=_text_backends(), max_results=max_results)
         ]
         logger.debug("[ddg] thread=%s query=%r — done in %.1fs (%d results)", tid, query, time.monotonic() - t0, len(results))
         return results
