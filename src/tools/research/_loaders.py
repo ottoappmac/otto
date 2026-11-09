@@ -293,6 +293,18 @@ async def ddg_search_urls(
     Uses the ``ddgs`` package with worldwide region to avoid
     locale-biased results.
 
+    Pinned to the ``duckduckgo`` backend explicitly rather than ``ddgs``'s
+    default ``backend="auto"``, which randomly rotates through other
+    engines (Yahoo, Wikipedia, Brave, ...) on every call. Two of those are
+    unreliable: Yahoo's WAF frequently hard-blocks the ``primp`` client
+    (TLS reset, no ``close_notify``), and ``ddgs``'s Wikipedia engine
+    builds its URL as ``https://{region_lang}.wikipedia.org`` — with our
+    worldwide region (``"wt-wt"``) that resolves to the nonexistent
+    ``wt.wikipedia.org``, a guaranteed DNS failure every time it's picked.
+    ``_search_sync`` only raises once *every* engine tried that round
+    failed, so either of these alone can end up being the error shown to
+    the agent even though the query itself was fine.
+
     Searches are serialised via semaphore because the Rust-backed
     ``primp.Client`` inside ``ddgs`` deadlocks under concurrent use
     in PyInstaller frozen binaries.
@@ -305,7 +317,7 @@ async def ddg_search_urls(
         ddgs = _get_ddgs()
         results = [
             {"url": r["href"], "title": r["title"], "snippet": r["body"]}
-            for r in ddgs.text(query, region="wt-wt", max_results=max_results)
+            for r in ddgs.text(query, region="wt-wt", backend="duckduckgo", max_results=max_results)
         ]
         logger.debug("[ddg] thread=%s query=%r — done in %.1fs (%d results)", tid, query, time.monotonic() - t0, len(results))
         return results
