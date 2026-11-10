@@ -299,6 +299,67 @@ _EXCLUDED_TEXT_BACKENDS = frozenset({"wikipedia", "grokipedia"})
 
 _text_backends_cache: str | None = None
 
+# Yahoo A/B-serves two result-page layouts. ddgs only parses the one with
+# ``<div class="... relsrch ...">`` result blocks; the other wraps results
+# in ``<section class="... algo-sr ...">`` and ddgs extracts zero results
+# from it even though the page is full of real hits. That happens on
+# roughly half of requests. When every other engine is anti-bot-blocking
+# (DuckDuckGo 202, Brave 429, Mojeek/Startpage JS challenges — common on
+# residential IPs), Yahoo is the only engine left, so this coin flip
+# decided whether web_research worked at all.
+_YAHOO_ALT_ITEMS_XPATH = "//section[contains(concat(' ', normalize-space(@class), ' '), ' algo-sr ')]"
+_yahoo_patched = False
+
+
+def _patch_yahoo_alt_layout() -> None:
+    """Teach ddgs's Yahoo engine to parse its alternate result layout.
+
+    Wraps ``Yahoo.extract_results``: the stock parser runs first and its
+    output is used whenever it finds anything, so this only adds results
+    for pages that would otherwise come back empty. Idempotent, and a no-op
+    if the installed ddgs has no Yahoo engine.
+    """
+    global _yahoo_patched
+    if _yahoo_patched:
+        return
+    _yahoo_patched = True
+    try:
+        from ddgs.engines.yahoo import Yahoo
+    except Exception:  # pragma: no cover - engine removed in some ddgs version
+        return
+
+    original = Yahoo.extract_results
+
+    def _join(parts: list) -> str:
+        return " ".join("".join(parts).split())
+
+    def extract_results(self, html_text: str):
+        results = original(self, html_text)
+        if results:
+            return results
+        try:
+            tree = self.extract_tree(self.pre_process_html(html_text))
+            items = tree.xpath(_YAHOO_ALT_ITEMS_XPATH)
+        except Exception:
+            return results
+        alt = []
+        for item in items:
+            href = _join(item.xpath("(.//div[contains(@class, 'compTitle')]//a/@href)[1]"))
+            if not href:
+                continue
+            res = self.result_type()
+            # The <a>'s aria-label is the clean title; its text content also
+            # contains a "site.com https://site.com" breadcrumb.
+            res.title = _join(item.xpath("(.//div[contains(@class, 'compTitle')]//a/@aria-label)[1]")) or _join(
+                item.xpath(".//div[contains(@class, 'compTitle')]//h3//text()")
+            )
+            res.href = href
+            res.body = _join(item.xpath(".//div[contains(@class, 'compText')]//text()"))
+            alt.append(res)
+        return alt
+
+    Yahoo.extract_results = extract_results
+
 
 def _text_backends() -> str:
     """Comma-separated ddgs text backends available in the *installed* ddgs.
@@ -313,6 +374,7 @@ def _text_backends() -> str:
     """
     global _text_backends_cache
     if _text_backends_cache is None:
+        _patch_yahoo_alt_layout()
         try:
             from ddgs.engines import ENGINES
 
