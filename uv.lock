@@ -111,7 +111,7 @@ requires-dist = [
     { name = "apscheduler", specifier = ">=3.10.0,<4" },
     { name = "asyncssh", specifier = ">=2.17.0" },
     { name = "certifi", specifier = ">=2024.0.0" },
-    { name = "ddgs", specifier = ">=9.0.0" },
+    { name = "ddgs", specifier = "==9.14.1" },
     { name = "deepagents", specifier = ">=0.4.5" },
     { name = "deepeval", specifier = ">=3.9.8,<4" },
     { name = "fastapi", specifier = ">=0.115.0" },

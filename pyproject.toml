@@ -106,7 +106,7 @@ dependencies = [
     "anthropic>=0.40.0",
 
     # Research tools (web/doc researcher)
-    "ddgs>=9.0.0",
+    "ddgs==9.14.1",  # pinned: 9.16 disables yandex; CI ignores uv.lock
     "markdownify>=0.13.0",
     "rank-bm25>=0.2.0",
     "langchain-text-splitters>=0.3.0",
