@@ -23,13 +23,11 @@ Check the result against what you asked for (for the flange: seven holes, six on
 
 | Piece | What it is |
 |---|---|
-| `cad-tools` MCP | [`backend/builtin_mcps/cad_tools/`](../backend/builtin_mcps/cad_tools): `cad_run`, `cad_render`, `cad_export`, `cad_compare`, `step_inspect`, `answer_checkpoint`, plus tools for the benchmark (`cad_autoplace`, `assembly_status`, `budget_status`, `netlist_validate`). Programs run under Seatbelt on macOS (no network, writes only to the work folder). |
+| `cad-tools` MCP | [`backend/builtin_mcps/cad_tools/`](../backend/builtin_mcps/cad_tools): `cad_run`, `cad_render`, `cad_export`, `cad_compare`, `step_inspect`, `answer_checkpoint`, and a few helpers for multi-part work. Programs run under Seatbelt on macOS (no network, writes only to the work folder). |
 | `cad-agent` | The general agent. Subagents: `drawing-reader` (dense drawing sheets) and `cad-critic` (second opinion on a render). |
-| `benchcad-agent` | Headless benchmark agent for BenchCAD; not for interactive use. |
 | Folder confinement | [`backend/cad_workdir_middleware.py`](../backend/cad_workdir_middleware.py): CAD tools only touch the session's mapped folder. |
 
-`benchcad-agent`, `drawing-reader`, `cad-critic` and `swebench-coding-agent` are installed but hidden from the Agents
-list: scripts or `cad-agent` start them by name.
+`drawing-reader` and `cad-critic` are installed but hidden from the Agents list: `cad-agent` calls them by name.
 
 ## Checks the agent gets
 
@@ -39,26 +37,17 @@ list: scripts or `cad-agent` start them by name.
   cylinder at the same scale.
 - Optional `spec.json` in the work folder (see [`cad_spec.py`](../backend/builtin_mcps/cad_tools/cad_spec.py)): when
   present, `cad_run` and `cad_export` check the result against stated size, through-holes, pieces and volume and print
-  `SPEC OK` or `SPEC MISMATCH`. The shipped `cad-agent` prompt does not ask for it (see below).
+  `SPEC OK` or `SPEC MISMATCH`. The shipped `cad-agent` prompt does not ask for one; add it yourself if you want the checks.
 
-## What is known and not known
+## Limits
 
-- **Plan-first was tried and taken out.** Asking the agent to write `spec.json` before any code did not help in a first
-  A/B run on a local model (7 of 10 right with it, 8 of 9 without, run stopped at 19 of 32): it wrote wrong specs
-  (forgot a bore, called a tube a solid bar) that its own check then confirmed. The prompt with the step is kept as
-  `_CAD_AGENT_PROMPT_WITH_SPEC` for the eval.
-- **BenchCAD scores are low and noisy.** On `task4/case1` (a chuck assembly from four views) the local Qwen3.6 35B
-  scored between 0.000 and 0.015 across versions, one run each. Dev-harness scores are not comparable with reported
-  BenchCAD numbers. See [`scripts/benchcad/README.md`](../scripts/benchcad/README.md).
-- **The eval set is small.** [`scripts/cadeval/`](../scripts/cadeval) has 16 text prompts with fixed expected figures,
-  scored by measuring the exported STEP. It shows large effects only, and covers no drawings, photos, or assemblies that
-  need placement.
-- **Right numbers, wrong shape passes.** Size, hole and volume checks do not see a part that looks wrong.
-- **Not tested here:** a real-user session in the Otto app end to end, and models other than the local Qwen.
+- A part with the right size, hole count and volume passes those checks even if it looks wrong. Look at the render.
+- Quality depends on the model. A small local model can miss a feature (a centre bore, a slot) or get proportions wrong:
+  check hole counts and overall size against what you asked for.
+- Not yet tried end to end in the app by a user: enable CAD Tools, chat with `cad-agent`, view a render.
 
-## Run the checks
+## Run the tests
 
 ```bash
-scripts/cadeval/eval.sh selftest        # reference programs pass their own check; no model needed
-.venv/bin/python -m pytest tests/test_cad_tools.py tests/test_cad_autoplace.py tests/test_cad_spec.py tests/test_cadeval.py
+.venv/bin/python -m pytest tests/test_cad_tools.py tests/test_cad_autoplace.py tests/test_cad_spec.py
 ```

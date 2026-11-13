@@ -61,19 +61,10 @@ Output goes to `../otto-benchcad-runs/out/<run>/`: `results.jsonl` (resumable), 
 
 ## Status
 
-Tested: the tool server end to end with real CadQuery 2.3.0, the unit tests (`tests/test_cad_tools.py`,
-`tests/test_cad_autoplace.py`), and `bench.sh run` against BenchCAD's `task4/case1` with the local Qwen3.6 35B-A3B
-through oMLX. Eight runs of that one case with different versions of the agent and tools scored between 0.000 and 0.015
-(the latest 0.012: average part score 0.137, assembly score 0.088). One run each, so that spread is noise as much as
-signal, and these are dev scores, not reportable BenchCAD numbers.
+Tested: the tool server end to end with real CadQuery 2.3.0, and the unit tests (`tests/test_cad_tools.py`,
+`tests/test_cad_autoplace.py`). Scores from this harness are dev scores only.
 
-What the runs showed: `cad_autoplace` places all instances correctly, and the score is limited by part shape. Most
-parts were no better than a plain box or cylinder, which the scorer counts as zero. The shape-gain check in
-`cad_compare` was added for that; it helps on simple parts and is blind to a part whose outline is a plain cylinder
-(the chuck body).
-
-**Not tested**: other cases and tasks (only `task4/case1` was run), models other than the local one, and the Docker
-scoring path.
+**Not tested**: other cases and tasks, models other than the local one, and the Docker scoring path.
 
 ## Not done
 
@@ -98,11 +89,5 @@ CADPY="$HOME/Library/Application Support/Otto/mcp_server/cad-tools/.venv/bin/pyt
   --base-url https://api.openai.com/v1 --model <model> --api-key "$KEY"
 ```
 
-Tested with a mock model only (pipeline, scoring hand-off and `cad_compare` run; the compare score gives 0.96 for the
-true shape and 0.83 for a plain cylinder). Not tested with a real model. Single parts only; the overlap score needs a
+Tested with a mock model only (the pipeline, scoring hand-off and `cad_compare` run). Not tested with a real model. Single parts only; the overlap score needs a
 2x2 `views.png` (task 3), so drawing cases (task 1) are repaired on errors only. The scorer's scale handling is unchecked.
-
-## Not BenchCAD: the general CAD eval
-
-[`scripts/cadeval/`](../cadeval) is a separate, small eval for the general `cad-agent`: 16 text prompts with fixed
-expected figures. See its README.

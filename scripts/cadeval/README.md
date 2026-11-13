@@ -1,10 +1,7 @@
 # CAD eval set
 
 Sixteen prompts a user might type, to find out where the general CAD agent fails and whether a change helps.
-First result (19 of 32 runs, stopped early): the spec step passed 7 of 10, the control 8 of 9. The agent's wrong specs
-(it forgot a bore, called a tube a solid bar) were confirmed by its own check, so the spec step was taken out of the
-shipped prompt. See the git history of this note before trusting any number here.
-Not BenchCAD: no reference pictures, and the scores are pass/fail counts, not a benchmark score.
+Results are pass/fail counts per case.
 
 ## How a case is judged
 Each case in `cases.py` has figures fixed by hand from the prompt's own dimensions (overall size, through-holes,
