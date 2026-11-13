@@ -153,7 +153,7 @@ Beyond the built-ins, any **MCP server** (stdio or SSE) adds its tools to the se
 | `discord` | Read/write access to a Discord server via a bot token |
 | `microsoft-teams` | Read-only access to Microsoft Teams via Graph app-only auth |
 | `microsoft-onedrive` | Browse/search OneDrive/SharePoint (ships disabled) |
-| `blender` | Live control of a running Blender session via the BlenderMCP addon — scene info, viewport screenshots, and `bpy` Python |
+| `cad-tools` | Build 3D CAD with CadQuery in a sandbox, render it, export STEP/STL/OBJ/Blender (ships disabled; see [cad_agent.md](cad_agent.md)) |
 | `atlassian` | Jira and Confluence on Atlassian Cloud — search, page and issue CRUD, comments, and workflow transitions |
 
 Every tool call is wrapped with a loop guard that detects repeated identical-argument failures and injects a recovery hint. MCP results are scrubbed for known credential patterns before they reach the model context.

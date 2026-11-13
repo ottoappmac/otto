@@ -45,7 +45,12 @@ export default function AgentsPage() {
     refresh();
   };
 
-  const HIDDEN_AGENT_IDS = new Set(["claude-session-eval-agent", "openclaw-session-eval-agent"]);
+  // Not meant to be picked: benchmark agents (started by their scripts) and subagents that cad-agent calls by name.
+  // They must stay installed; this only keeps them out of the list.
+  const HIDDEN_AGENT_IDS = new Set([
+    "claude-session-eval-agent", "openclaw-session-eval-agent",
+    "benchcad-agent", "swebench-coding-agent", "cad-critic", "drawing-reader",
+  ]);
   const customAgents = useMemo(() => agents.filter((a) => !a.builtin && !HIDDEN_AGENT_IDS.has(a.name)), [agents]);
   const managedAgents = useMemo(() => agents.filter((a) => a.builtin && !HIDDEN_AGENT_IDS.has(a.name)), [agents]);
 

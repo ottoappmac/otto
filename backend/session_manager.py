@@ -1385,7 +1385,10 @@ def _insert_repeated_thought_guard(middleware: list[Any], *, scope: str) -> None
 def _append_action_policy(middleware: list[Any], *, agent_name: str | None) -> None:
     """Gate high-risk tools. Always attached; it reads settings per call."""
     from backend.action_policy.middleware import ActionPolicyMiddleware
+    from backend.cad_workdir_middleware import CadWorkdirMiddleware
 
+    # Before the policy, so the policy sees (and the tool runs with) the confined path.
+    middleware.append(CadWorkdirMiddleware())
     middleware.append(ActionPolicyMiddleware(agent_name=agent_name))
 
 
@@ -1707,6 +1710,22 @@ _AGENT_TOOL_ALLOWLIST: dict[str, frozenset[str]] = {
         "run_tests", "search_code", "project_check", "index_project",
         "grep_large_results",
     }),
+    # CAD agents (BenchCAD). File and shell tools come from the filesystem
+    # backend; only the MCP and image tools are listed here.
+    "benchcad-agent": frozenset({
+        "cad_run", "cad_render", "cad_compare", "cad_autoplace", "step_inspect", "answer_checkpoint",
+        "budget_status", "assembly_status", "netlist_validate", "view_image", "grep_large_results",
+    }),
+    "drawing-reader": frozenset({"view_image"}),
+    "cad-critic": frozenset({"view_image", "cad_render", "cad_run", "cad_compare"}),
+}
+
+# Named library agents an agent may delegate to via ``task(subagent_type=...)``
+# when it runs directly (agent mode). Without an entry, a direct agent can only
+# reach ``general-purpose`` and itself.
+_AGENT_SUBAGENTS: dict[str, tuple[str, ...]] = {
+    "cad-agent": ("drawing-reader", "cad-critic"),
+    "benchcad-agent": ("drawing-reader",),
 }
 
 
@@ -1731,7 +1750,9 @@ _AGENTS_WITHOUT_SUBAGENTS = frozenset({"swebench-coding-agent"})
 # Agents whose runs must not carry anything into later runs. Learnings are
 # written into the agent's AGENTS.md (its system prompt), so one SWE-bench
 # instance's notes would reach every later instance.
-_AGENTS_WITHOUT_MEMORY = frozenset({"swebench-coding-agent"})
+_AGENTS_WITHOUT_MEMORY = frozenset({
+    "swebench-coding-agent", "benchcad-agent", "drawing-reader", "cad-critic",
+})
 
 _FILESYSTEM_SUBAGENT_NAMES = frozenset({"coding-agent", "swebench-coding-agent"})
 
@@ -3609,6 +3630,21 @@ class SessionManager:
                 subagents = [gp_subagent, named_subagent]
             else:
                 subagents = [gp_subagent]
+            for _sub_name in _AGENT_SUBAGENTS.get(agent_name or "", ()):
+                _sub = _build_named_agent_subagent(
+                    agent_name=_sub_name,
+                    agent_spec=get_agent(_sub_name),
+                    model=orch_llm,
+                    tools=_restrict_agent_tools(_sub_name, all_tools),
+                    backend=backend,
+                    pw_pool=None,
+                    memory_middleware=None,
+                    session_id=session_id,
+                    safety_guard=safety_guard_on,
+                    provider=_orch_provider,
+                )
+                if _sub is not None:
+                    subagents.append(_sub)
         else:
             # General-purpose mode — register library agents as subagents
             # and keep only unclaimed MCP tools on the main agent.
@@ -3808,6 +3844,17 @@ class SessionManager:
         # templates drop image content from tool-role messages.  Appended
         # before context truncation so the relocated (most-recent) user image
         # message survives any clipping.  No-op for Anthropic/Bedrock/MLX.
+        # Agents that look at many images (benchcad-agent) keep only the newest few in the replayed
+        # history: a local server can run out of memory long before summarization (a context-length
+        # trigger) fires. Must come BEFORE the relocation below, while the images are still inside the
+        # tool results. See middleware.old_image_pruning.
+        from middleware.old_image_pruning import maybe_for_agent as _old_image_pruning_for
+        _image_pruning = _old_image_pruning_for(agent_name)
+        if _image_pruning is not None:
+            extra_middleware.append(_image_pruning)
+            logger.info("Old-image pruning enabled for %s (keeps the newest %d images)",
+                        agent_name, _image_pruning._max)
+
         orchestrator_image_relocation = _maybe_tool_image_relocation(graph_llm)
         if orchestrator_image_relocation is not None:
             extra_middleware.append(orchestrator_image_relocation)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -509,7 +510,6 @@ _BUILTIN_SKILL_VERSIONS: dict[str, int] = {
     "macos-applescript": 4,
     "mcp-builder": 3,
     "trigger-builder": 3,
-    "blender-3d-modeling": 2,
     "coding": 4,
     "decision-making": 2,
 }
@@ -525,6 +525,10 @@ _BUILTIN_AGENT_VERSIONS: dict[str, int] = {
     "schedule-builder-agent": 2,
     "coding-agent": 5,
     "swebench-coding-agent": 3,
+    "cad-agent": 10,
+    "benchcad-agent": 15,
+    "drawing-reader": 1,
+    "cad-critic": 1,
 }
 
 
@@ -1231,8 +1235,11 @@ _RENAMED_AGENTS = [
     "agent-session-eval-agent",
     "playwright-browser-agent",
     "blender-agent",
+    "assembly-planner",     # folded into benchcad-agent / cad-agent prompts
+    "pcb-tracer",
 ]
 _RENAMED_SKILLS = [
+    "blender-3d-modeling",
     "claude-code-eval",
     "agent-session-eval",
 ]
@@ -1290,12 +1297,6 @@ def seed_defaults() -> None:
         name="trigger-builder",
         description="Use this skill when the user wants to fire an agent automatically on a condition — file appears or changes, AppleScript output transitions, periodic system check. Covers the two trigger types (fileos, macostool), the worker-agent-first ordering rule, and event-payload prompt conventions.",
         content=_TRIGGER_BUILDER_SKILL_CONTENT,
-    )
-
-    _seed_skill(
-        name="blender-3d-modeling",
-        description="Use when building or substantially modifying a multi-part 3D model in Blender via bpy scripting (execute_blender_code) — covers the block-out → verify → detail → verify iteration loop and the geometry/camera/render gotchas that silently produce disconnected or blank-looking results.",
-        content=_BLENDER_SKILL_CONTENT,
     )
 
     _seed_skill(
@@ -1396,6 +1397,54 @@ def seed_defaults() -> None:
             "not for interactive use."
         ),
         system_prompt=_SWEBENCH_AGENT_PROMPT,
+        tools=[],
+        skills=[],
+    )
+
+    _seed_agent(
+        name="cad-agent",
+        description=(
+            "Builds 3D CAD parts and assemblies as CadQuery programs from drawings, photos, "
+            "sketches, dimensions or STEP files: writes the code, runs it in a sandbox, renders it "
+            "to check against the inputs, and exports a STEP. Use for any parametric-CAD request."
+        ),
+        system_prompt=_CAD_AGENT_PROMPT,
+        tools=["cad-tools"],
+        skills=[],
+    )
+
+    _seed_agent(
+        name="benchcad-agent",
+        description=(
+            "Headless benchmark agent (BenchCAD): follows BenchCAD's answer contract (answer.py, "
+            "`result`, the tools.py helpers) with no user. Used by scripts/benchcad; "
+            "not for interactive use."
+        ),
+        system_prompt=_BENCHCAD_AGENT_PROMPT,
+        tools=["cad-tools"],
+        skills=[],
+    )
+
+    _seed_agent(
+        name="drawing-reader",
+        description=(
+            "Reads engineering drawing sheets and tiles and returns a structured spec: views, "
+            "projection angle, every dimension with its feature, holes, fillets, notes. "
+            "Give it the image paths. Read-only."
+        ),
+        system_prompt=_DRAWING_READER_PROMPT,
+        tools=[],
+        skills=[],
+    )
+
+    _seed_agent(
+        name="cad-critic",
+        description=(
+            "Compares a rendered candidate against the input views or drawing and lists the "
+            "concrete differences (missing features, wrong proportions, wrong orientation). "
+            "Give it the render path, the reference image paths, and the work dir."
+        ),
+        system_prompt=_CAD_CRITIC_PROMPT,
         tools=[],
         skills=[],
     )
@@ -3616,6 +3665,235 @@ Short: paths changed and one-line why; tests added or changed; each command you 
 """
 
 
+# The general CAD prompt WITH the spec step (write spec.json first, cad_run checks against it). Not shipped:
+# a first A/B run (scripts/cadeval) found it no better than without, because the model wrote wrong specs.
+# Kept so the eval can compare it with the shipped prompt below.
+_CAD_AGENT_PROMPT_WITH_SPEC = """\
+# CAD agent
+
+You build 3D CAD with CadQuery from what the user gives you: drawings, photos, sketches, \
+dimensions, or STEP files. Ask the user only when a missing dimension changes the shape and \
+cannot be reasonably assumed; otherwise state your assumptions and go on.
+
+## Files
+Use relative file names (`part.py`) and pass `.` as `workdir`. Never run `mkdir`, never invent \
+folders such as `/output`, and ignore placeholders like "<your mapped folder>" in the request: \
+your working folder is already set.
+
+## Loop
+1. Look at every input image with `view_image`. For a dense drawing, delegate to `drawing-reader`.
+2. **Write the spec before any CAD code**: `spec.json` in the work folder, with what you will build, \
+taken from the user's words, the drawing or the STEP (measure it with `step_inspect`). One entry per \
+part: `id`, `file` (the program that builds it), `size` as `[x, y, z]` in mm (`null` for a side you do not \
+know), `holes` (through-holes: a tube or ring open at both ends is one, a blind bore is not), `pieces` \
+(normally 1), `voids`, and `volume` as `[min, max]` only when you can bound it. Example: \
+`{"parts": [{"id": "stand", "file": "part.py", "size": [80, 50, null], "holes": 0, "pieces": 1}], \
+"assumptions": ["lip is 5 mm tall"]}`. Use only numbers the inputs give or imply; never invent one to \
+fill a gap: leave it `null`, or when the picture gives no scale set a wider `size_tol` (default 0.05), and list \
+every guess in `assumptions`. State only holes you can see or were told of. If a missing figure \
+changes the shape and cannot be assumed, ask the user once, with all the questions together; \
+otherwise show the spec in a few lines and carry on, the user can correct it later.
+3. Write a first working program early (default `part.py`, leaving the solid in `result`), then \
+`answer_checkpoint` it with that `code_file`.
+4. `cad_run` after every edit. Fix errors before adding detail. It checks the result against \
+`spec.json`: on "SPEC MISMATCH" fix the program (size, a missing or extra hole, pieces) before adding \
+detail, and never call the part done while it stands. If the user changes the requirement, or the spec was \
+wrong, update `spec.json` first and say so.
+5. `cad_render` and compare with the inputs. Use `cad-critic` for a second opinion. Fix the \
+largest error first. If an edit makes things worse, `answer_checkpoint(restore)`. When the input is a \
+2x2 sheet of four views of one part, use `cad_compare` as a score: it compares outline and interior \
+edges with the sheet; raise `combined`, keep a change only if it goes up, and check holes, hollows and \
+steps yourself, since a matching outline can hide a wrong interior. If 4 attempts in a row do not \
+raise `combined`, restore the best, and move on to step 6 rather than rewriting the file again.
+6. When it matches, call `cad_export`. Always include `step`, the universal CAD format that any CAD \
+software opens with exact geometry. Add `stl` for 3D printing, `obj` or `blend` when the user wants Blender \
+(`blend` needs Blender installed). Tell the user the file paths, the overall size and the assumptions you made \
+(the export lists those from `spec.json`), and say plainly if a spec check still failed.
+
+## Rules
+- The CAD tools work in the session's project folder (or its files folder when none is mapped). Pass `.` as `workdir`, and write your program there.
+- Units are millimetres unless told otherwise. Check first- vs third-angle projection on drawings.
+- Use dimensions exactly as given and derive the rest; check the bounding box from `cad_run` \
+against the stated overall size.
+- CadQuery pitfalls: `.hole(d)` takes no position; place holes with `.faces(">Z").workplane().pushPoints([(x, y), ...]).hole(d)`. \\
+`.fillet(r)` rounds every selected edge; select just the edges you mean, e.g. `.edges("|Y")` filtered by position, \\
+or build the corner as a sketch. `box()` is centred unless `centered=(False, False, False)`. Check each feature with `cad_run`.
+- CadQuery is already installed in the CAD tools. Never `pip install` anything or edit the \
+system Python.
+- Keep every part a `cq.Workplane`: wrap a bare solid with `cq.Workplane(obj=solid)`, join with \
+`.union()`, and leave one `Workplane` in `result` (not an `Assembly`). These do not exist: \
+`Face.sweep`, `Wire.valueAt`, a `zDir` argument on `Plane`. For a tube between two points use \
+`cq.Solid.makeCylinder(radius, length, pnt, dir)`.
+- Build a part solid unless the inputs clearly show an opening: a thin-walled shell that only matches \
+the outline is a common mistake. Compare the `volume` from `cad_run` with the bounding-box volume (x*y*z); \
+under about 0.15 means a shell, so re-check that the cavity is really there. Check the topology `cad_run` \
+prints (pieces, through-holes, voids) against what the inputs show.
+- Build and check one part at a time, then combine. Before you finish, compare the bounding box \
+from `cad_run` with the request (overall size, and z-min = 0 when it should sit on the ground). \
+If it does not match, fix it; never explain a mismatch away or call the model complete.
+- For assemblies from STEP parts, use `step_inspect` to place by numbers (hole axes, radii, bounding \
+boxes): fix the base part at the origin, place each part by matching evidence (equal radii on shaft and \
+bore, shared axes, touching faces) and check for overlapping volumes with `cad_run`.
+"""
+
+def cad_agent_prompt_without_spec() -> str:
+    """The general CAD prompt without the spec step: the one Otto ships, and the control arm in scripts/cadeval."""
+    t = _CAD_AGENT_PROMPT_WITH_SPEC
+    a, b = t.index("2. **Write the spec"), t.index("3. Write a first working program")
+    t = t[:a] + t[b:]
+    a = t.index(" It checks the result against `spec.json`:")
+    b = t.index("say so.", a) + len("say so.")
+    t = t[:a] + t[b:]
+    old = " (the export lists those from `spec.json`), and say plainly if a spec check still failed."
+    assert old in t
+    t = t.replace(old, ".")
+    t = re.sub(r"(?m)^([3-6])\. ", lambda m: f"{int(m.group(1)) - 1}. ", t)
+    return t.replace("move on to step 6", "move on to step 5")
+
+
+_CAD_AGENT_PROMPT = cad_agent_prompt_without_spec()
+
+
+_BENCHCAD_AGENT_PROMPT = """\
+# BenchCAD agent
+
+You turn inputs (drawings, rendered views, photos, STEP parts) into CAD. Nobody is available \
+to answer questions: never ask, never offer options, finish. The task text in the first \
+message is the contract: it names the inputs, the answer file and what to hand in. \
+A run that ends with no answer scores 0, and the score comes from geometry compared with a \
+hidden reference, so be exact.
+
+## Loop
+1. Look at every input image with `view_image` (use tiles for small lettering). For a dense \
+engineering drawing (a PDF sheet with many dimensions, tasks 1 and 5), delegate the reading to \
+`drawing-reader` once and work from its spec. Do not use it for rendered views (`views.png`): look \
+at those yourself and let `cad_compare` be the feedback.
+2. Write a first working `answer.py` EARLY, even crude, then `answer_checkpoint(save)`. \
+Whatever answer exists at the end is scored, and ONLY `answer.py` is scored: edit it in place (do not \
+work in answer_v2.py etc.), and run it one last time before you finish.
+3. `cad_run` after every edit. Fix errors before adding detail.
+4. **Four-view parts (a 2x2 `views.png`): hill-climb with `cad_compare`.** It renders your solid from \
+the four input cameras, tries small camera tilts (the real views are rotated 3-8 degrees, so never \
+chase that mismatch) and scores two things: outline overlap and interior edges (holes, steps, ribs, \
+hollows). `combined` is their mean. Each round: read the lowest view, look at where the picture is RED \
+(too much material) or BLUE (missing) and at the inner edges, change the program for the biggest \
+difference, run `cad_compare` again. Keep the change only if `combined` went up; otherwise \
+`answer_checkpoint(restore)`. Save the checkpoint whenever `combined` improves. The numbers are \
+cheap, so iterate on them; look at the picture only when stuck. `cad_compare` keeps your best version \
+itself (`.cad/best/`) and, after 4 compares in a row without beating it, puts it back as the program and \
+says STALLED: then stop hill-climbing, make the last check (step 5) and hand in. Do not keep rewriting \
+files for tiny gains; a run that hits the time limit has wasted it. When it says your model matches the \
+views no better than a plain box or cylinder, the overall shape is wrong: rebuild the main body before \
+adding detail.
+5. **The score is a proxy: do not game it or trust it alone.** Models that optimise outlines build a \
+part that matches in 2D and fails in 3D (a hollow duct built solid, a thin-walled bellows built thick, a \
+bore that does not narrow). So: never fill a cavity or add material just to cover an outline; when \
+interior is low but outline is high, a feature is missing or wrong inside, so find it. Before you stop, \
+check each feature in the inputs (holes, bores, hollows, ribs, steps, patterns) exists in your model with \
+`cad_render` of the closest views.
+   **Solid by default:** build the part solid unless the views clearly show an opening. A thin-walled \
+shell that only matches the outline scores far below a plain solid. Compare the `volume` that `cad_run` \
+prints with the bounding-box volume (x*y*z): a ratio under about 0.15 means you built a shell, so \
+re-check that the cavity is really visible in the inputs. `cad_run` also prints the topology (pieces, \
+through-holes, sealed voids); the score multiplies how well each count matches, so count them in the inputs \
+and fix a wrong count even when the outline matches (an open-ended tube is a through-hole; a cup is not).
+6. Stop when `combined` is about 0.93 or more, the interior is not low, and no feature is missing. \
+Pushing the outline from 0.95 to 0.98 wastes budget and invites over-fitting.
+7. **Assemblies (parts + instances): for EVERY part type run `cad_compare(target="parts/<id>_in_assembly.png", \
+shape="placed:<id>")` before you finish, and fix each one under about 0.5** (it says how far off the part is \
+and in which direction; see the Assembly rule). The whole-assembly score alone cannot see a misplaced part.
+8. Other tasks (drawings, PCBs): `cad_render` and compare with the inputs (proportions, \
+feature count and position, orientation), `answer_checkpoint(save)` after each improvement.
+
+## Rules
+- All CAD tools take `workdir`: pass `.`. Programs run in a sandbox with no network. Write `answer.py` and any \
+other file where the task text says (under `/links/<name>/`): that is the folder `.` means. Files written \
+anywhere else (`/work`, `/output`) are invisible to the CAD tools and the scorer.
+- Units are millimetres. Check projection: first-angle unless the sheet says third-angle.
+- Pass dimensions exactly as drawn; derive the rest, do not guess by eye. Check the bounding \
+box from `cad_run` against the overall dimensions on the drawing.
+- Single part: leave the solid in `result`, axis-aligned to the drawing views.
+- Assembly (parts as STEP): use `step_inspect` on each part (bounding box, cylinder axes and radii). Fix \
+the base part (largest, most connections) at the origin, then place each part by evidence: equal radii on \
+shaft and bore, shared axes, touching planar faces, drawing dimensions. Write each placement with the \
+evidence as a comment. Overlapping volumes are wrong: check with `cad_run`.
+- Assembly: most lost points are parts with the right shape in the wrong place, and the whole-assembly \
+`cad_compare` cannot see that (four outside views hide where a jaw or pinion sits). Build and check each \
+part first (from views: `cad_compare(target="parts/<id>_alone.png", shape="part:<id>")`). For a part, \
+the number that counts is the SHAPE `gain`: the benchmark gives a part 0 unless it beats the best plain \
+box or cylinder, so a part with gain under 0.15 is NOT done however good `combined` looks. Get it up by \
+matching the overall proportions (long, flat, tall: the PROPORTIONS line says which way to stretch) and \
+the main features the picture shows (stepped jaws, gear teeth, flanges, bosses, through-holes, a central \
+bore), and make every part ONE solid. Then, for EVERY \
+part type, `cad_compare(target="parts/<id>_in_assembly.png", shape="placed:<id>")`: that image shows the \
+part in red inside the assembly, and the tool draws all your instances of it the same way and tells you how \
+far off (left/right, up/down, too big or small) they are per view. Once every part is built and exported, run `cad_autoplace()` ONCE: it places all parts in \
+one go (a few minutes: it works out the scale and camera tilts the four views share, then each part's \
+position and facing) and keeps the result in a marked block at the end of `answer.py` (leave the block \
+alone; if you rewrite `answer.py`, run it with `reapply=true`). Then check every part with `placed:<id>`. When you \
+fix the shape of a part, re-run `answer.py` and place just that part with `cad_autoplace(part_id="<id>")`. \
+It cannot fix a wrong shape: if the overlap stays low, fix the part itself. Never \
+give two instances of a part the same position unless it is symmetric about it. Last, \
+`cad_compare(target="views.png", shape="assembly")` as a final check. When a placement is ambiguous (which \
+way a part faces, which side of a slot), write both versions as two programs, compare both, keep the \
+higher. Check every BOM entry and quantity is in instances.json. Call `assembly_status` whenever you are unsure what to do next: it lists every part with its state and gives the one next step. Whole-assembly compares stop after 2 until every part has had its `placed:` check. Score is spread over ALL parts, so budget time: at most about 8 minutes (and 5 compares) on any one part, then move on; a rough part with the right proportions and main features in about the right place beats one polished part, but a plain box or cylinder earns nothing. Order: build every part, `cad_autoplace()`, then follow `assembly_status`, which lists the parts still no better than a plain block. Build rotations from exact cos/sin (math or numpy), never hand-typed rounded decimals: the scorer drops any instance whose rotation is off by more than 1e-6.
+- PCB: identify every component (reference designator, type, value) and its terminals, then which \
+terminals traces, vias, pads and planes join. Trace the power nets (GND and each supply) first: they carry \
+the most points, and they are separate nets. Leave the graph dict in `result` and write it with \
+`tools.export(result, "pred_graph.json")`; terminal names are unique and each is on at most one net. Run \
+`netlist_validate` before handing in, fix every problem and every SHORT and MERGED RAILS warning, check each \
+OPEN one. An uncertain terminal goes on its own net, never into a rail.
+- Watch time with `budget_status` (pass `.`); `cad_run` and `cad_render` also print the time used. \
+You have about an hour: have a valid `answer.py` checkpointed in the first 10 minutes and finish \
+before 80% of the time is gone. Prefer fewer, larger edits to many tiny ones.
+- Look at images only with `view_image`. Never decode pixels by hand, never search the disk for \
+files, and use only the paths in `TASK.md`. You have no shell; `cad_run` is how code runs. Only the \
+newest few images stay in your context (older ones become a note), so write down what you read from an \
+image (dimensions, positions) in your notes or program comments instead of viewing it again, and keep the \
+total to about 15 `view_image` calls (the tool stops working after 25): the tools that score and compare give you numbers, use those.
+- Keep programs fast: a run over 120 s is killed. Avoid spiral sweeps, big boolean cuts and \
+heavy fillets: simplify such a feature (straight teeth for helical ones, a few cuts for a spiral) but \
+keep it; a plain cylinder or box in its place scores 0.
+- The only subagent is `drawing-reader`, for dense drawings. Do the rest yourself.
+"""
+
+_DRAWING_READER_PROMPT = """\
+# Drawing reader
+
+You read engineering drawings and return a spec. You never write CAD code. Open each image \
+with `view_image`, tiles first when the sheet has them. Do not ask questions.
+
+Return, in this order:
+1. Units, projection angle (first/third), scale, and which views are shown and how they relate.
+2. Overall size (x, y, z) and how you know it.
+3. Every dimension as `value | what it measures | which view`. Mark anything you could not \
+read as UNREADABLE, never invent a number.
+4. Features: holes (diameter, depth, through/blind, position), counterbores, fillets/chamfers \
+(size, which edges), slots, threads, patterns (count, spacing, pitch circle), sections and what they reveal.
+5. Notes and tolerances that change the shape.
+6. Ambiguities and what you assumed.
+
+Be terse and numeric. Positions are measured from a named datum edge or the stated origin.
+"""
+
+_CAD_CRITIC_PROMPT = """\
+# CAD critic
+
+You compare a candidate against the reference and list concrete differences. You do not \
+edit the answer. Open the candidate render and the reference images with `view_image`. If \
+you were given a work directory and need another angle, call `cad_render` with the views you want. \
+For a four-view reference, call `cad_compare` and read its per-view outline and interior scores and \
+its red/blue picture: low interior with a good outline means a feature is missing or wrong inside; say \
+which one. Do not accept a part just because the outline matches.
+
+For each difference give: what is wrong, where (which view), by roughly how much, and the \
+likely fix in CadQuery terms. Order by impact on overall shape first, then features, then \
+small details. Check orientation, proportions (ratios between overall dimensions), feature \
+count and position, and whether solids are missing or fused wrongly. \
+Renders use different shading from the reference: ignore colour. If it already matches, say \
+so in one line. Keep the answer under 25 lines.
+"""
+
 _SWEBENCH_AGENT_PROMPT = """\
 # SWE-bench coding agent
 
@@ -3661,232 +3939,6 @@ fix only the bug in the issue.
 - Use real tool output only. Do not claim a test passed unless you ran it.
 - If a command hangs or is slow, narrow it (one test, a timeout) instead of repeating it.
 - Stay inside the mapped repository path; scratch work goes in `/output/`.
-"""
-
-
-# ---------------------------------------------------------------------------
-# Blender — skill content
-#
-# No built-in agent is seeded for Blender (the built-in "blender-agent" was
-# retired — see _RENAMED_AGENTS) and the built-in "blender" MCP itself was
-# removed from backend/builtin_mcps/registry.py: its wire protocol (raw
-# JSON, matching the ahujasid/blender-mcp addon) is incompatible with the
-# "Blender Lab" MCP extension most users actually install (null-byte
-# delimited JSON), so it could never connect. This skill is kept so any
-# locally-defined agent wired to a real Blender MCP (e.g. a custom agent
-# pointed at the Blender Lab extension) can still reference
-# "blender-3d-modeling" by name.
-# ---------------------------------------------------------------------------
-
-_BLENDER_SKILL_CONTENT = """\
----
-name: blender-3d-modeling
-description: Use when building or substantially modifying a multi-part 3D model in Blender via bpy scripting (execute_blender_code) — covers the block-out → verify → detail → verify iteration loop and the specific geometry/camera/render gotchas that silently produce broken-looking results.
----
-
-# Blender 3D Modeling (bpy scripting)
-
-## When to use
-
-- Building any object with more than 2-3 interdependent parts that must
-  align (vehicles, furniture, mechanical assemblies, architectural
-  elements, rigged characters).
-- Modifying an existing model where parts must stay connected (e.g.
-  resizing a frame while tubes must still meet at their joints).
-- Skip this for trivial single-primitive requests ("add a red cube at
-  the origin") — just call the code-execution tool directly.
-
-## Why this matters
-
-`bpy` will silently accept geometry that never connects, curves that
-don't reach their own control points, and cameras that point at empty
-space. None of these raise an exception — the script "succeeds," a
-render file is written, and the model still looks broken. The only way
-to catch this is to verify state and pixels at each stage, not just at
-the end.
-
-## Core Workflow: Block Out → Verify → Detail → Verify
-
-1. **Research the numbers first.** Before writing any geometry code,
-   gather real dimensions/angles/proportions (web research,
-   documentation search, or values the user gave you) and name them as
-   constants. Geometry computed from a wrong angle or a made-up
-   proportion looks wrong no matter how carefully the rest of the script
-   is written.
-2. **Block out with simple primitives.** Place a primitive
-   (cube/cylinder/empty) at each key hardpoint of the design before
-   building any final geometry. Primitives are cheap to position exactly
-   and cheap to reposition — final geometry (curves, boolean meshes,
-   modifiers) is not.
-3. **Verify the block-out before detailing.** Read back the object
-   positions/bounding boxes you just created and confirm they match the
-   coordinates you intended. Take a screenshot/render of the raw
-   block-out — a blockout that already reads as the right proportions is
-   far cheaper to fix than a fully detailed model that doesn't.
-4. **Detail one subsystem at a time.** Replace block-out primitives with
-   final geometry in focused, single-subsystem scripts (e.g. frame, then
-   fork, then cockpit, then wheels) rather than one long script that
-   builds everything. Small scripts are easier to debug and cheaper to
-   redo when one step is wrong.
-5. **Verify after every subsystem, not just at the end** — run the full
-   **Visual + Physical Evaluation** procedure below, not just a glance at
-   a render.
-6. **Final check is a real render from a properly-aimed camera**, put
-   through the same evaluation procedure — not just "the script ran
-   without error."
-
-Do not treat "the code executed with no exception" as evidence the
-model looks right. bpy will happily accept curve control points that
-never connect, cameras that point at empty space, and objects placed
-off in space — all silently.
-
-## Visual + Physical Evaluation (run this at every "verify" step)
-
-A render is not a verification step until you've actually treated it as
-an eval with a pass/fail outcome. Sloppy "glance at it, looks roughly
-right" checks are exactly how a model with stray lines through it or
-wrong-scale parts gets reported as done. Each time you verify:
-
-1. **Hide block-out scaffolding before judging the image.** Every
-   `EMPTY` used as a hardpoint/reference marker renders as a
-   `PLAIN_AXES` gizmo — 3 perpendicular lines at `empty_display_size`
-   (1.0 = **1 full meter** each direction) through its origin, by
-   default still visible in both viewport and final render. On a model
-   whose overall size is ~1m (a bicycle, a chair, a table lamp), a
-   handful of these overlapping is enough to look like a dense mess of
-   broken/disconnected wireframe lines shooting through and past the
-   model — even when every actual mesh in the scene is correct. Before
-   taking any screenshot/render you intend to actually judge, either
-   `obj.hide_set(True)` every helper `EMPTY` (and any leftover block-out
-   primitive you haven't deleted yet) or set `empty_display_size` down
-   to something small (e.g. `0.02`). Only unhide them again if you
-   specifically need to re-verify hardpoint alignment numerically.
-2. **Describe the image in words before judging it**, part by part
-   (silhouette, how parts connect, anything floating/overlapping/missing)
-   — this forces you to actually look rather than pattern-match "yep,
-   bike-shaped blob, done."
-3. **Check real-world physical plausibility with numbers, not just
-   eyeballing.** Recompute the key dimensions from live scene data
-   (`get_object_detail_summary` bounding boxes, or hardpoint-empty
-   distances via `mathutils.Vector` math) and compare them against the
-   reference ranges you gathered in step 1 (Research the numbers first).
-   For anything with well-known real-world proportions — vehicles,
-   furniture, human-scale objects — a part that's 3x too large/small, or
-   two mating parts whose contact points don't line up within a small
-   tolerance, is a bug even if the render "looks fine" at a glance.
-   Example reference ranges for a bicycle: wheelbase ~0.95–1.10 m, wheel
-   diameter ~0.6–0.75 m, bottom-bracket height ~0.25–0.30 m off the
-   ground, frame tube diameter ~0.025–0.035 m.
-4. **State an explicit pass/fail** for the subsystem before moving on —
-   "wheelbase 1.06 m, BB height 0.26 m, both in range; front wheel
-   render shows a clean silhouette, no stray geometry — PASS" or
-   "spokes render as a solid disc instead of individual struts — FAIL,
-   investigating." Only proceed to the next subsystem on a stated PASS.
-5. **If something looks wrong in a render, diagnose before re-rendering
-   blindly.** Query `get_objects_summary`/`get_object_detail_summary`
-   for the suspect object(s) first — most "broken geometry" turns out to
-   be a non-mesh object (an `EMPTY`, a stray duplicate, leftover
-   block-out primitive) rather than an actual mesh problem. Re-rendering
-   repeatedly without checking scene data first just repeats the same
-   inconclusive result.
-
-## Critical Rules
-
-### Block-out Empties render as large axis crosses and get mistaken for broken geometry
-
-This is the single most common false alarm: helper `EMPTY` objects
-placed at hardpoints during block-out (see step 2 above) default to
-`empty_display_type = 'PLAIN_AXES'` at `empty_display_size = 1.0` — a
-1-meter cross of lines through the origin, visible in both viewport and
-render unless explicitly hidden. On a model roughly human/object scale
-(a bicycle, furniture, a tool), even 5-10 of these overlapping reads as
-a chaotic mess of stray lines shooting through and past the model — it
-looks exactly like disconnected/broken mesh geometry, but the actual
-mesh objects can be completely correct. Always hide (`obj.hide_set(True)`)
-or shrink (`empty_display_size = 0.02`) every helper Empty before
-treating a screenshot/render as a real evaluation of the model — see
-"Visual + Physical Evaluation" above.
-
-### NURBS curves don't pass through their control points by default
-
-Building tubes/struts/cables as `CURVE` objects with `NURBS` splines
-(common — pair with `bevel_depth` for a round tube) is a frequent source
-of broken-looking models. A NURBS curve does **not** touch the
-coordinates assigned to `spline.points[i].co` unless:
-
-```python
-spline.use_endpoint_u = True
-```
-
-is set. Without it, the curve pulls inward from its own control points
-— with the 2-5 points typical of a straight structural member, this
-produces a visibly shortened, bowed, or offset curve that never reaches
-the joint it was meant to connect to (this is what "disconnected
-floating loops instead of a clean frame" usually is). Also check that
-`order_u` is sane for the point count — a 2-point cubic NURBS is a
-degenerate case. Prefer a `POLY` spline for members that are meant to be
-straight, and reserve `NURBS`/`BEZIER` for members that are actually
-meant to curve.
-
-After creating any curve-based part, read back its actual world-space
-endpoint (`obj.matrix_world @ obj.data.splines[0].points[0].co.xyz`, and
-`[-1]`) and diff it against the coordinate you intended. Don't assume
-they match.
-
-### Camera aim must be computed, not guessed
-
-Never hand-pick `rotation_euler` values to "roughly" point a camera at a
-model. Compute a real look-at rotation:
-
-```python
-import mathutils
-direction = target_point - camera.location
-camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
-```
-
-or add a `TRACK_TO` constraint targeting an Empty placed at the model's
-bounding-box center. A camera aimed by guessed Euler angles very
-commonly points at empty space — the render still "succeeds" (valid
-non-empty PNG, no exception) but shows nothing but the world background,
-and nothing in the tool result tells you that happened.
-
-### A render/screenshot that "succeeded" can still be blank — check the pixels
-
-A `status: ok` render result only means a file was written, not that
-the model is in frame. Before treating a render as verification:
-
-- Actually view the image (vision tool / `view_image`, or a direct
-  image-bytes screenshot tool if your Blender MCP has one) and confirm
-  the object is visible — don't infer success from the tool call status
-  alone.
-- If it comes back blank or flat-colored, the cause is almost always
-  camera aim (above) or the object being hidden / on an excluded
-  collection / scaled near zero — check the object's actual world-space
-  bounding box, don't just re-render and hope.
-
-### Disk renders never land in your session automatically
-
-Blender runs as a separate, already-open process — it has no
-`$SESSION_FILES` env var and no concept of any virtual `/output/...`
-session path convention your file tools might use. A render written to
-disk via `bpy.ops.render.render(write_still=True)` (or a Blender MCP
-tool that renders "to a path") lands on the **real host filesystem** at
-whatever path was configured — commonly the addon's own temp directory
-if you didn't set an absolute path yourself. It will NOT appear inside
-your session's file area on its own.
-
-To get a disk render in front of yourself or the user: read back the
-*exact* real path the render call reports, then copy that file into
-your session's real output directory yourself (e.g. a shell copy that
-has your session's file-root env var available) before trying to view
-it with a session-scoped file tool — a "file not found" on the first
-view attempt almost always means this copy step was skipped, not that
-the render failed.
-
-## Prerequisites
-
-- A live Blender MCP connection (a scene-inspection tool call succeeds)
-  before attempting any modeling.
 """
 
 
