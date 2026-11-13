@@ -117,6 +117,12 @@ class BuiltinMCP:
     npx_package: str = ""
     npx_version: str = ""
     static_env: dict[str, str] = field(default_factory=dict)
+    # Python version for this MCP's venv (``uv venv --python``). Empty means
+    # uv's default. Needed when pinned wheels do not exist for every version.
+    python: str = ""
+    # Packages installed after requirements.txt with ``--no-deps``: for a pin whose
+    # declared deps conflict with the rest but which works with them at runtime.
+    no_deps: tuple[str, ...] = ()
 
 
 # NOTE: a "blender" entry (ahujasid/blender-mcp addon client, 6 tools)
@@ -144,26 +150,6 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
         # can call ``request_credential('edgar-sec', 'EDGAR_USER_AGENT', …)``
         # mid-chat.
         optional_secrets=("EDGAR_USER_AGENT",),
-    ),
-    BuiltinMCP(
-        id="blender",
-        name="Blender",
-        description=(
-            "Live control of a running Blender session via the popular "
-            "open-source BlenderMCP addon (ahujasid/blender-mcp): inspect "
-            "the scene/objects, grab a viewport screenshot, and run "
-            "arbitrary Python for everything else (creating objects, "
-            "materials, etc.). Requires installing that addon inside "
-            "Blender and clicking 'Connect to Claude' — see this MCP's "
-            "README."
-        ),
-        source_dir_name="blender",
-        # Not real secrets — reusing the credential-vault plumbing so
-        # users can override the addon's socket host/port from the
-        # Tools page without editing config files. Sensible defaults
-        # (127.0.0.1:9876) mean the MCP works with zero configuration
-        # once the addon's "Start Server" button has been clicked.
-        optional_secrets=("BLENDER_MCP_HOST", "BLENDER_MCP_PORT"),
     ),
     BuiltinMCP(
         id="macos-osascript",
@@ -324,6 +310,27 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
                 "search_site_files|get_auth_status)$"
             ),
         },
+    ),
+    BuiltinMCP(
+        id="cad-tools",
+        name="CAD Tools",
+        description=(
+            "CadQuery tools for CAD work: run a program in a sandbox, render "
+            "views, export STEP / STL / OBJ / Blender files, inspect STEP files, "
+            "checkpoint the last good version, validate PCB graphs, read the "
+            "BenchCAD token meter. CadQuery is installed in this MCP's own venv; "
+            "no Docker needed on macOS."
+        ),
+        source_dir_name="cad_tools",
+        # Pinned to the BenchCAD sandbox's versions; numpy 1.26 has no 3.13 wheels.
+        python="3.12",
+        # As in the BenchCAD image: nlopt 2.11 declares numpy>=2 but runs with the
+        # pinned 1.26. cadquery imports it for the sketch solver.
+        no_deps=("nlopt==2.11.0",),
+        # Not secrets: reuse the vault plumbing for overrides (see server.py).
+        optional_secrets=("CAD_EXEC", "CADENV_DOCKER_IMAGE", "BLENDER_BIN", "METER_URL"),
+        # Niche; the benchmark profile and the user turn it on.
+        enabled=False,
     ),
 )
 
@@ -506,7 +513,9 @@ async def _ensure_one_venv(mcp: BuiltinMCP, *, uv: str, force: bool) -> str:
     venv = venv_dir(mcp.id)
     py = venv_python(mcp.id)
     marker = sd / ".requirements.sha256"
-    digest = hashlib.sha256(req.read_bytes()).hexdigest()
+    digest = hashlib.sha256(
+        req.read_bytes() + mcp.python.encode() + " ".join(mcp.no_deps).encode()
+    ).hexdigest()
     stored = marker.read_text(encoding="utf-8").strip() if marker.exists() else ""
     needs_rebuild = force or not py.exists() or stored != digest
 
@@ -516,7 +525,8 @@ async def _ensure_one_venv(mcp: BuiltinMCP, *, uv: str, force: bool) -> str:
     if venv.exists():
         await asyncio.to_thread(shutil.rmtree, venv, True)
 
-    rc, out, err = await _run_uv(uv, "venv", str(venv))
+    venv_args = ["venv", *(["--python", mcp.python] if mcp.python else []), str(venv)]
+    rc, out, err = await _run_uv(uv, *venv_args)
     if rc != 0:
         raise VenvProvisionError(
             f"`uv venv` failed for {mcp.id}: {err.strip() or out.strip()}"
@@ -531,6 +541,15 @@ async def _ensure_one_venv(mcp: BuiltinMCP, *, uv: str, force: bool) -> str:
         raise VenvProvisionError(
             f"`uv pip install` failed for {mcp.id}: {err.strip() or out.strip()}"
         )
+
+    if mcp.no_deps:
+        rc, out, err = await _run_uv(
+            uv, "pip", "install", "--python", str(py), "--no-deps", *mcp.no_deps,
+        )
+        if rc != 0:
+            raise VenvProvisionError(
+                f"`uv pip install --no-deps` failed for {mcp.id}: {err.strip() or out.strip()}"
+            )
 
     if not py.exists():
         raise VenvProvisionError(

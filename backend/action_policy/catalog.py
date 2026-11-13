@@ -113,7 +113,7 @@ KNOWN_SERVER_IDS = MACOS_SERVER_IDS | frozenset({
     "microsoft-teams",
     "microsoft-onedrive",
     "edgar-sec",
-    "blender",
+    "cad-tools",
     "playwright-mcp",
     "agent-eval-service",
     "claude-eval-hook",
@@ -122,7 +122,14 @@ KNOWN_SERVER_IDS = MACOS_SERVER_IDS | frozenset({
 
 # Servers that must NOT be seatbelt-wrapped: they exist to send Apple
 # Events or drive the UI, which a sandbox would make impossible.
-UNSANDBOXED_SERVER_IDS = MACOS_SERVER_IDS
+UNSANDBOXED_SERVER_IDS = MACOS_SERVER_IDS | frozenset({
+    # cad-tools writes into task folders outside its own directory and starts
+    # the sandboxed child itself (its own Seatbelt profile on macOS, or the
+    # no-network Docker container), which this server-level profile would
+    # block. The server only works in folders under the session's mapped folder
+    # (backend/cad_workdir_middleware.py) and CAD_WORK_ROOT when set.
+    "cad-tools",
+})
 
 
 def drop_macos_servers(servers, *, macos_automation_enabled: bool):
@@ -228,12 +235,8 @@ _read(
     "get_company_facts", "get_filing_document", "get_xbrl_frames",
 )
 
-_cat("blender", "shell", "execute_blender_code")
-_read(
-    "blender",
-    "ping", "get_addon_info", "get_scene_info", "get_object_info",
-    "get_viewport_screenshot",
-)
+_cat("cad-tools", "shell", "cad_run", "cad_render", "cad_compare", "cad_autoplace", "answer_checkpoint", "cad_export")
+_read("cad-tools", "step_inspect", "budget_status", "assembly_status", "netlist_validate")
 
 _cat("macos-native", "desktop_control",
      "open_app", "activate_app", "press_control", "type_into_control",
@@ -452,8 +455,6 @@ def classify_tool(
             for item in more_extra:
                 if item not in extra and item != category:
                     extra.append(item)
-    if name == "execute_blender_code":
-        labels.append("blender-code")
 
     # Drop an escalation that merely repeats the primary category.
     extra = [item for item in extra if item != category]
@@ -556,7 +557,5 @@ def describe_action(name: str, args: dict | None, category: str | None) -> str:
                 value = value[:180] + "…"
             bits.append(f"{key}={value}")
         return "\n".join(bits) or name
-    if name == "execute_blender_code":
-        return _pick("code")[:800] or "(empty code)"
     text = _pick("command", "script", "text", "content", "url")
     return text[:500] or name

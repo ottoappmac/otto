@@ -193,7 +193,7 @@ Any MCP server — stdio or SSE — can be added through the Settings UI or REST
 | `discord` | `list_guilds`, `list_channels`, `get_channel_messages`, `send_message`, `add_reaction`, `list_guild_members`, and more — read/write access to a Discord server via a bot token |
 | `microsoft-teams` | `list_teams`, `list_channels`, `list_channel_members`, `get_channel_messages`, `list_users`, and more — **read-only** access to Microsoft Teams via Graph app-only auth (sending messages requires delegated auth, which this MCP doesn't implement) |
 | `microsoft-onedrive` | `list_drive_items`, `get_drive_item`, `search_files`, `download_file`, `upload_file`, `list_sites`, `list_site_items`, and more — browses/searches OneDrive/SharePoint via the third-party `microsoft365-mcp-server` npm package (run via `npx`), scoped to just the Files/SharePoint tools. Signs in via a real browser sign-in redirect (personal Microsoft account or guest identity), not a work tenant like `microsoft-teams`. Ships **disabled** — sign-in happens the moment you click Start, not on app launch |
-| `blender` | `ping`, `get_addon_info`, `get_scene_info`, `get_object_info`, `execute_blender_code`, `get_viewport_screenshot` — live control of a running Blender session through the [BlenderMCP](https://github.com/ahujasid/blender-mcp) addon (scene inspection, viewport screenshots, and arbitrary `bpy` Python). Requires the addon inside Blender with its server started |
+| `cad-tools` | `cad_run`, `cad_render`, `cad_export`, `cad_compare`, `step_inspect`, `answer_checkpoint`, and more — builds 3D CAD with [CadQuery](https://cadquery.readthedocs.io/) in a sandbox (no Docker) and exports STEP / STL / OBJ / `.blend`, used by the `cad-agent`. Ships **disabled**; connect it on the Agents page, Tools tab. See [`docs/cad_agent.md`](./docs/cad_agent.md) |
 | `atlassian` | `confluence_search`, `confluence_get_page`, `confluence_create_page`, `confluence_update_page`, `jira_search_issues`, `jira_get_issue`, `jira_create_issue`, `jira_transition_issue`, and more — read/write access to Jira and Confluence on Atlassian Cloud via a site URL, account email, and API token |
 
 ### Agent & Skill library
@@ -588,7 +588,7 @@ agents/
 │   │   │                      #   distillation
 │   ├── auth/                  # static, OAuth device, OAuth auth-code,
 │   │                          #   browser-capture auth flows
-│   ├── builtin_mcps/          # edgar_sec, blender, macos_osascript, macos_mail,
+│   ├── builtin_mcps/          # edgar_sec, cad_tools, macos_osascript, macos_mail,
 │   │                          #   macos_calendar, macos_notes, macos_reminders,
 │   │                          #   macos_messages, slack, discord, atlassian,
 │   │                          #   microsoft_teams, microsoft_onedrive
