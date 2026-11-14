@@ -347,7 +347,7 @@ INGEST_TOOLS = frozenset({
     "browser_snapshot", "browser_navigate", "browser_click",
     "get_message", "search_messages", "read_messages", "list_messages",
     "get_channel_history", "get_thread_replies", "get_channel_messages",
-    "web_research", "doc_research", "semantic_search",
+    "web_research", "image_search", "doc_research", "semantic_search",
     "query_mail_store", "query_outlook_store",
 })
 

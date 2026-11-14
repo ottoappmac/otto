@@ -51,3 +51,11 @@ Check the result against what you asked for (for the flange: seven holes, six on
 ```bash
 .venv/bin/python -m pytest tests/test_cad_tools.py tests/test_cad_autoplace.py tests/test_cad_spec.py
 ```
+
+## Web reference images
+
+When the request names a real-world object and no image is attached, the cad-agent calls
+`image_search` (a standard tool, `backend/file_tools.py`), which saves the top few web images
+to `reference_images/` in the session folder. It opens them with `view_image` and notes
+proportions and features before writing code. Reference photos set the look only; user or
+published dimensions set the size. `benchcad-agent` does not get the tool (offline benchmark).
