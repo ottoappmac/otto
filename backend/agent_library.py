@@ -3681,7 +3681,14 @@ folders such as `/output`, and ignore placeholders like "<your mapped folder>" i
 your working folder is already set.
 
 ## Loop
-1. Look at every input image with `view_image`. For a dense drawing, delegate to `drawing-reader`.
+1. Look at every input image with `view_image`. For a dense drawing, delegate to `drawing-reader`. \
+**No image attached, or the request names a real-world object** (a chess knight, a hose clamp, a \
+specific bracket or fitting): do not model it from memory. Call `image_search` with a concrete phrase \
+(add "side view", "technical drawing" or "dimensions" when useful), open 2-3 of the saved files with \
+`view_image`, and note the proportions, main features and any stated dimensions before writing code. \
+Use `web_research` too when you need real dimensions or a standard (thread pitch, flange sizes). \
+Skip the search when the user gave drawings or dimensions that already define the part. Reference \
+photos show the look, never the size: user dimensions win, then published ones, then say what you assumed.
 2. **Write the spec before any CAD code**: `spec.json` in the work folder, with what you will build, \
 taken from the user's words, the drawing or the STEP (measure it with `step_inspect`). One entry per \
 part: `id`, `file` (the program that builds it), `size` as `[x, y, z]` in mm (`null` for a side you do not \
