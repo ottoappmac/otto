@@ -138,6 +138,23 @@ def _client(*, timeout: float = DEFAULT_TIMEOUT) -> httpx.Client:
     return httpx.Client(timeout=timeout, follow_redirects=True)
 
 
+# XBRL tags that answer most "how is this company doing" questions.
+_CORE_CONCEPTS = frozenset({
+    "Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "SalesRevenueNet", "CostOfRevenue", "GrossProfit", "OperatingIncomeLoss",
+    "NetIncomeLoss", "EarningsPerShareBasic", "EarningsPerShareDiluted",
+    "Assets", "Liabilities", "StockholdersEquity",
+    "CashAndCashEquivalentsAtCarryingValue",
+    "NetCashProvidedByUsedInOperatingActivities",
+    "ResearchAndDevelopmentExpense",
+})
+
+
+def _neg_str(s: str) -> str:
+    """Sort key that orders ISO dates newest-first under an ascending sort."""
+    return "".join(chr(0x10FFFF - ord(c)) for c in s)
+
+
 def _normalize_cik(value: str) -> str:
     """Return a 10-digit zero-padded CIK string from a CIK or ticker."""
     if value is None:
@@ -404,13 +421,23 @@ def get_company_facts(
         data = resp.json()
 
     tax_facts = (data.get("facts", {}) or {}).get(taxonomy, {}) or {}
-    summary: dict[str, Any] = {}
-    for concept_name, concept_data in list(tax_facts.items())[:200]:
+    # Core line items first, then everything else newest-first, so the cap
+    # keeps current figures. Raw dict order is alphabetical and fills the cap
+    # with retired tags (e.g. 2016 share-repurchase values).
+    rows = []
+    for concept_name, concept_data in tax_facts.items():
         latest = _latest_concept_value(concept_data.get("units", {}))
-        summary[concept_name] = {
-            "label": concept_data.get("label", ""),
-            "latest": latest,
-        }
+        rows.append((concept_name, concept_data.get("label", ""), latest))
+    rows.sort(
+        key=lambda r: (
+            r[0] not in _CORE_CONCEPTS,
+            "" if r[2] is None else _neg_str(r[2].get("end") or ""),
+        )
+    )
+    summary: dict[str, Any] = {
+        name: {"label": label, "latest": latest}
+        for name, label, latest in rows[:200]
+    }
     return {
         "cik": cik_padded,
         "entity_name": data.get("entityName"),
