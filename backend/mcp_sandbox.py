@@ -363,7 +363,11 @@ def wrap_builtin_stdio(
     profile_path = folder / f".{server_id}.sb"
     writes = [folder]
     profile_path.write_text(
-        render_profile(write_paths=writes, network=True),
+        # ``session_paths`` re-opens the server folder *after* the sensitive
+        # denies. It lives under ``Application Support/Otto``, which is
+        # denied, and a later deny beats the earlier ``write_paths`` allow,
+        # so without this the venv python and server.py cannot even load.
+        render_profile(write_paths=writes, session_paths=writes, network=True),
         encoding="utf-8",
     )
     profile_path.chmod(0o600)
