@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import platform
+import re
 import secrets
 import shutil
 import subprocess
@@ -316,26 +317,54 @@ class Detection:
         }
 
 
+def _read_cli_version(cli: Path) -> Optional[str]:
+    """First line of ``omlx --version`` (e.g. ``0.8.3``), or None."""
+    try:
+        proc = subprocess.run(
+            [str(cli), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if proc.returncode != 0:
+        return None
+    lines = (proc.stdout or proc.stderr or "").strip().splitlines()
+    return lines[0] if lines else None
+
+
+def normalize_version(raw: Optional[str]) -> Optional[str]:
+    """``"omlx 0.3.10"`` → ``"0.3.10"``, ``"v0.4.2"`` → ``"0.4.2"``; None stays None."""
+    if not raw:
+        return None
+    m = re.search(r"(\d+\.\d+[\w.]*)", raw)
+    return m.group(1) if m else raw.strip().lstrip("v")
+
+
+def version_at_least(installed: str, minimum: str) -> Optional[bool]:
+    """Whether *installed* >= *minimum*; None when either can't be parsed."""
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        return Version(installed) >= Version(minimum)
+    except InvalidVersion:
+        return None
+
+
+def installed_version(cfg: OmlxConfig) -> Optional[str]:
+    """The installed oMLX version (normalised), or None when unknown."""
+    cli = find_cli(cfg.cli_path)
+    return normalize_version(_read_cli_version(cli)) if cli is not None else None
+
+
 def detect(cfg: OmlxConfig) -> Detection:
     """Snapshot the current install state without making any changes."""
     cli = find_cli(cfg.cli_path)
     bundle = find_app_bundle()
     brew = has_homebrew()
 
-    cli_version: Optional[str] = None
-    if cli is not None:
-        try:
-            proc = subprocess.run(
-                [str(cli), "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if proc.returncode == 0:
-                cli_version = (proc.stdout or proc.stderr or "").strip().splitlines()[0:1]
-                cli_version = cli_version[0] if cli_version else None
-        except Exception:  # noqa: BLE001
-            cli_version = None
+    cli_version = _read_cli_version(cli) if cli is not None else None
 
     svc_state: Optional[str] = None
     if brew:
@@ -867,6 +896,16 @@ async def aupgrade(cfg: OmlxConfig) -> OmlxJob:
                     job=job, timeout=30.0,
                 )
 
+            # Refresh the tap first: a stale local tap makes `brew upgrade`
+            # report "already installed" while a newer release exists.
+            job.append("Running: brew update")
+            try:
+                rc = await _run_streaming([brew, "update"], job=job, timeout=300.0)
+            except TimeoutError:
+                rc = -1
+            if rc != 0:
+                job.append(f"brew update failed (exit {rc}) — upgrading from the local tap.")
+
             job.append(f"Running: brew upgrade {cfg.brew_formula}")
             rc = await _run_streaming(
                 [brew, "upgrade", cfg.brew_formula],
@@ -1363,6 +1402,12 @@ async def aload_model(cfg: OmlxConfig, model_id: str) -> OmlxJob:
                     "the oMLX setup screen or Otto session start."
                 )
 
+            # Before asking oMLX: an older oMLX can't load (or even list) some
+            # architectures, and its failure doesn't say a newer one would.
+            too_old = await asyncio.to_thread(check_model_version, cfg, model_id)
+            if too_old:
+                raise RuntimeError(too_old)
+
             resolved = await _resolve_omlx_model_id(cfg, model_id)
             if resolved is None:
                 # The model isn't in oMLX's registry. Try a one-shot
@@ -1706,6 +1751,60 @@ def _read_model_type(snapshot: Path) -> Optional[str]:
         return None
     mt = data.get("model_type")
     return str(mt) if mt else None
+
+
+# The first oMLX release that runs an architecture correctly, keyed by the
+# ``model_type`` in the model's config.json.  Only architectures whose support
+# landed in a known release belong here: a model type that isn't listed is
+# never blocked.  Add a row when a new model needs a newer oMLX.
+MIN_OMLX_VERSION_BY_MODEL_TYPE: dict[str, tuple[str, str]] = {
+    # 0.8.1 added Inkling 2 Mini; 0.8.3 fixed its MTP path (not greedy-exact
+    # on 0.8.2) and FP16 activations returning non-finite logits.
+    "inkling2_loop": ("0.8.3", "Inkling 2 Mini"),
+}
+
+
+def model_version_requirement(model_id: str) -> Optional[tuple[str, str, str]]:
+    """``(model_type, min_version, label)`` when *model_id* needs a minimum oMLX.
+
+    Reads ``model_type`` from the model's config.json in the local HF cache;
+    None when the model isn't cached, or its type has no listed minimum.
+    """
+    snapshot = _find_hf_cache_snapshot(model_id)
+    if snapshot is None:
+        return None
+    model_type = _read_model_type(snapshot)
+    if model_type not in MIN_OMLX_VERSION_BY_MODEL_TYPE:
+        return None
+    minimum, label = MIN_OMLX_VERSION_BY_MODEL_TYPE[model_type]
+    return model_type, minimum, label
+
+
+def check_model_version(
+    cfg: OmlxConfig, model_id: str, installed: Optional[str] = None,
+) -> Optional[str]:
+    """An error message when the installed oMLX is too old for *model_id*, else None.
+
+    *installed* defaults to the version ``omlx --version`` reports.  When the
+    installed version is unknown (no CLI found, unparseable output) the model
+    is not blocked: oMLX gets to try, and its own error still surfaces.
+    """
+    requirement = model_version_requirement(model_id)
+    if requirement is None:
+        return None
+    model_type, minimum, label = requirement
+    installed = normalize_version(installed) if installed else installed_version(cfg)
+    if not installed or version_at_least(installed, minimum) is not False:
+        return None
+    if find_app_bundle() is not None and not has_homebrew():
+        how = "Update the oMLX app in /Applications (download the latest release from github.com/jundot/omlx)."
+    else:
+        how = ("Click Upgrade under Settings → LLM → Turbo inference, or run "
+               "`brew update && brew upgrade omlx`.")
+    return (
+        f"{label} (model_type '{model_type}') needs oMLX {minimum} or newer, "
+        f"but this Mac has oMLX {installed}. {how}"
+    )
 
 
 def _diagnose_unregistered_model(model_id: str) -> str:

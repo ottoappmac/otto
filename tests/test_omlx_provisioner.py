@@ -177,3 +177,121 @@ def test_status_loaded_ids_reads_loaded_models():
         "loaded_models": [{"id": "resident"}],
     }
     assert op.status_loaded_ids(status) == ["resident"]
+
+
+# ── minimum oMLX version per model architecture ---------------------------
+
+
+def _cached_model(monkeypatch, tmp_path, model_type):
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "config.json").write_text(f'{{"model_type": "{model_type}"}}')
+    monkeypatch.setattr(op, "_find_hf_cache_snapshot", lambda repo_id: snap)
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("0.8.3", "0.8.3"), ("omlx 0.3.10", "0.3.10"), ("v0.4.2", "0.4.2"), (None, None), ("", None),
+])
+def test_normalize_version(raw, want):
+    assert op.normalize_version(raw) == want
+
+
+def test_version_at_least():
+    assert op.version_at_least("0.8.3", "0.8.3") is True
+    assert op.version_at_least("0.10.0", "0.8.3") is True
+    assert op.version_at_least("0.8.0rc1", "0.8.3") is False
+    assert op.version_at_least("not-a-version", "0.8.3") is None
+
+
+def test_inkling_on_old_omlx_is_refused_with_upgrade_hint(monkeypatch, tmp_path):
+    _cached_model(monkeypatch, tmp_path, "inkling2_loop")
+    monkeypatch.setattr(op, "find_app_bundle", lambda: None)
+    msg = op.check_model_version(OmlxConfig(), "mlx-community/Inkling-2-Mini-oQ4e-mtp", installed="0.6.3")
+    assert msg is not None
+    assert "Inkling 2 Mini" in msg and "0.8.3" in msg and "0.6.3" in msg
+    assert "brew update && brew upgrade omlx" in msg
+
+
+def test_inkling_on_new_enough_omlx_passes(monkeypatch, tmp_path):
+    _cached_model(monkeypatch, tmp_path, "inkling2_loop")
+    assert op.check_model_version(OmlxConfig(), "x/Inkling", installed="0.8.3") is None
+    assert op.check_model_version(OmlxConfig(), "x/Inkling", installed="omlx 0.9.0") is None
+
+
+def test_unlisted_model_type_is_never_blocked(monkeypatch, tmp_path):
+    _cached_model(monkeypatch, tmp_path, "qwen3_5_moe")
+    assert op.check_model_version(OmlxConfig(), "x/Qwen", installed="0.1.0") is None
+
+
+def test_uncached_model_or_unknown_version_is_not_blocked(monkeypatch, tmp_path):
+    monkeypatch.setattr(op, "_find_hf_cache_snapshot", lambda repo_id: None)
+    assert op.check_model_version(OmlxConfig(), "x/Inkling", installed="0.6.3") is None
+    _cached_model(monkeypatch, tmp_path, "inkling2_loop")
+    monkeypatch.setattr(op, "installed_version", lambda cfg: None)
+    assert op.check_model_version(OmlxConfig(), "x/Inkling") is None
+
+
+def test_dmg_only_install_is_told_to_update_the_app(monkeypatch, tmp_path):
+    _cached_model(monkeypatch, tmp_path, "inkling2_loop")
+    monkeypatch.setattr(op, "find_app_bundle", lambda: tmp_path / "oMLX.app")
+    monkeypatch.setattr(op, "has_homebrew", lambda: False)
+    msg = op.check_model_version(OmlxConfig(), "x/Inkling", installed="0.6.3")
+    assert msg is not None and "/Applications" in msg and "brew" not in msg
+
+
+async def test_load_refuses_before_asking_omlx_when_too_old(monkeypatch):
+    async def reachable(cfg):
+        return {"reachable": True, "models": []}
+
+    async def must_not_resolve(cfg, model_id):
+        raise AssertionError("oMLX was asked to resolve a model it is too old for")
+
+    monkeypatch.setattr(op, "afetch_status", reachable)
+    monkeypatch.setattr(op, "_resolve_omlx_model_id", must_not_resolve)
+    monkeypatch.setattr(op, "check_model_version", lambda cfg, model_id: "needs oMLX 0.8.3")
+
+    job = await op.aload_model(OmlxConfig(), "x/Inkling")
+    await _drain(job)
+
+    assert job.status == "error"
+    assert job.error == "needs oMLX 0.8.3"
+
+
+async def test_upgrade_refreshes_the_tap_before_upgrading(monkeypatch):
+    cmds = []
+
+    async def fake_run(cmd, *, job, timeout=600.0):
+        cmds.append(cmd[1:])
+        return 0
+
+    monkeypatch.setattr(op, "has_homebrew", lambda: True)
+    monkeypatch.setattr(op, "_brew_bin", lambda: "brew")
+    monkeypatch.setattr(op, "_brew_service_state", lambda formula: "stopped")
+    monkeypatch.setattr(op, "_run_streaming", fake_run)
+    monkeypatch.setattr(op, "detect", lambda cfg: op.Detection(None, None, True, "stopped"))
+
+    job = await op.aupgrade(OmlxConfig())
+    await _drain(job)
+
+    assert job.status == "done", job.error
+    assert cmds == [["update"], ["upgrade", OmlxConfig().brew_formula]]
+
+
+async def test_upgrade_continues_when_brew_update_fails(monkeypatch):
+    cmds = []
+
+    async def fake_run(cmd, *, job, timeout=600.0):
+        cmds.append(cmd[1:])
+        return 1 if cmd[1] == "update" else 0
+
+    monkeypatch.setattr(op, "has_homebrew", lambda: True)
+    monkeypatch.setattr(op, "_brew_bin", lambda: "brew")
+    monkeypatch.setattr(op, "_brew_service_state", lambda formula: "stopped")
+    monkeypatch.setattr(op, "_run_streaming", fake_run)
+    monkeypatch.setattr(op, "detect", lambda cfg: op.Detection(None, None, True, "stopped"))
+
+    job = await op.aupgrade(OmlxConfig())
+    await _drain(job)
+
+    assert job.status == "done", job.error
+    assert cmds[-1] == ["upgrade", OmlxConfig().brew_formula]

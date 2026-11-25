@@ -71,18 +71,13 @@ async def omlx_version() -> dict:
     ``homebrew`` indicates whether the brew CLI is present (required for
     in-app upgrade).
     """
-    import re as _re
 
     _, cfg = await _load_cfg()
 
     det = await asyncio.to_thread(op.detect, cfg)
     latest = await op.aget_latest_release_version()
 
-    installed = det.cli_version
-    # Normalise "omlx 0.3.10" → "0.3.10" and "v0.4.2" → "0.4.2"
-    if installed:
-        m = _re.search(r"(\d+\.\d+[\w.]*)", installed)
-        installed = m.group(1) if m else installed.strip().lstrip("v")
+    installed = op.normalize_version(det.cli_version)
 
     upgrade_available = False
     if installed and latest:
