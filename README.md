@@ -587,6 +587,8 @@ Required GitHub secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APP
 
 Runs on pushes to `main`. Uses `semantic-release` to derive the next version from conventional commits, create a GitHub release, and then dispatch `build-app.yml` at the new tag. The `publish` job in `build-app.yml` attaches the `.dmg` and `.app.tar.gz` to the release.
 
+Only the title of the commit that lands on `main` is read, and a squash merge uses the PR title, so start PR titles with a conventional type (`feat:` for a minor release, `fix:` for a patch). A title without one, such as `macOS desktop agent, …`, releases nothing and builds no app.
+
 ---
 
 ## Environment variables
