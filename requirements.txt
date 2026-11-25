@@ -64,6 +64,9 @@ traceloop-sdk>=0.33.0
 # sqlite
 aiosqlite
 
+# Embedding model for semantic memory and procedural memory (all-MiniLM-L6-v2)
+sentence-transformers>=5.0
+
 # Nested event loops (Jupyter, web loader when loop already running)
 nest-asyncio>=1.6.0
 

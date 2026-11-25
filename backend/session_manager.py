@@ -1386,9 +1386,14 @@ def _append_action_policy(middleware: list[Any], *, agent_name: str | None) -> N
     """Gate high-risk tools. Always attached; it reads settings per call."""
     from backend.action_policy.middleware import ActionPolicyMiddleware
     from backend.cad_workdir_middleware import CadWorkdirMiddleware
+    from backend.desktop_run_policy_middleware import DesktopRunPolicyMiddleware
+    from backend.macarena_guard_middleware import MacarenaGuardMiddleware
 
     # Before the policy, so the policy sees (and the tool runs with) the confined path.
     middleware.append(CadWorkdirMiddleware())
+    # Outside the guard, so the guard (and the benchmark bridge) see each retried model call.
+    middleware.append(DesktopRunPolicyMiddleware(agent_name))
+    middleware.append(MacarenaGuardMiddleware(agent_name))
     middleware.append(ActionPolicyMiddleware(agent_name=agent_name))
 
 
@@ -1701,6 +1706,8 @@ _RESERVED_SUBAGENT_NAMES = frozenset({"general-purpose"})
 # claim MCP server IDs.  Other empty-tools agents (e.g.
 # ``schedule-builder-agent``) stay skipped so they do not duplicate
 # ``general-purpose``.
+from backend.macarena_native import AGENT_TOOLS as _MACARENA_NATIVE_TOOLS  # noqa: E402
+
 # Agents that must run with a narrow toolbox. Every tool schema is sent on
 # every model call, so the full Otto toolbox costs prefill and decode time on
 # each step. File and shell tools come from the filesystem backend, not from
@@ -1716,6 +1723,14 @@ _AGENT_TOOL_ALLOWLIST: dict[str, frozenset[str]] = {
         "cad_run", "cad_render", "cad_compare", "cad_autoplace", "step_inspect", "answer_checkpoint",
         "budget_status", "assembly_status", "netlist_validate", "view_image", "grep_large_results",
     }),
+    # MacArena: only the VM tools. File and shell tools are refused by MacarenaGuardMiddleware.
+    "macarena-agent": frozenset({
+        "vm_screenshot", "vm_accessibility_tree", "vm_click", "vm_double_click", "vm_right_click",
+        "vm_move_to", "vm_drag", "vm_scroll", "vm_type", "vm_press", "vm_hotkey", "vm_wait",
+        "vm_done", "vm_fail",
+    }),
+    # MacArena Otto-native track: Otto's macOS desktop tools (run in the VM) + vm_done / vm_fail.
+    "macarena-desktop-agent": _MACARENA_NATIVE_TOOLS,
     "drawing-reader": frozenset({"view_image"}),
     "cad-critic": frozenset({"view_image", "cad_render", "cad_run", "cad_compare"}),
 }
@@ -1745,13 +1760,14 @@ def _restrict_agent_tools(agent_name: str | None, tools: list[Any]) -> list[Any]
 # hidden from them instead. Their subagents get neither the agent's prompt nor
 # its environment rules; in SWE-bench runs ``task`` calls spent many minutes
 # searching the wrong folders.
-_AGENTS_WITHOUT_SUBAGENTS = frozenset({"swebench-coding-agent"})
+_AGENTS_WITHOUT_SUBAGENTS = frozenset({"swebench-coding-agent", "macarena-agent", "macarena-desktop-agent"})
 
 # Agents whose runs must not carry anything into later runs. Learnings are
 # written into the agent's AGENTS.md (its system prompt), so one SWE-bench
 # instance's notes would reach every later instance.
 _AGENTS_WITHOUT_MEMORY = frozenset({
-    "swebench-coding-agent", "benchcad-agent", "drawing-reader", "cad-critic",
+    "swebench-coding-agent", "benchcad-agent", "drawing-reader", "cad-critic", "macarena-agent",
+    "macarena-desktop-agent",
 })
 
 _FILESYSTEM_SUBAGENT_NAMES = frozenset({"coding-agent", "swebench-coding-agent"})
@@ -2641,6 +2657,12 @@ def _compile_library_subagent(
             agent_spec.name,
         )
 
+    try:
+        from backend.procedural_memory.tool import build_procedure_tools
+        extra_tools.extend(build_procedure_tools(agent_spec.name, session_id))
+    except Exception:
+        logger.debug("procedural memory tool unavailable", exc_info=True)
+
     subagent_tools = (
         agent_mcp_tools
         + list(standard_tools)
@@ -2648,6 +2670,11 @@ def _compile_library_subagent(
         + extra_tools
         + list(ask_user_tools or [])
     )
+    try:
+        from backend.procedural_memory.tool import apply_prompt
+        system_prompt = apply_prompt(system_prompt, subagent_tools, agent=agent_spec.name)
+    except Exception:
+        logger.debug("procedural memory prompt unavailable", exc_info=True)
     _apply_universal_loop_guard(
         subagent_tools,
         scope=f"subagent:{agent_spec.name}",
@@ -3547,6 +3574,12 @@ class SessionManager:
             # reflects the active provider (e.g. "frontier") and falls back to
             # the main chat LLM when the orchestrator model can't be created.
             agent_extra_tools: list[Any] = []
+            # Procedural memory (recall_procedure) for the desktop and browser agents, when it is on.
+            try:
+                from backend.procedural_memory.tool import build_procedure_tools
+                agent_extra_tools.extend(build_procedure_tools(agent_name, session_id))
+            except Exception:
+                logger.debug("procedural memory tool unavailable", exc_info=True)
 
             # When the direct agent's model is vision-capable, swap the
             # macos-native text read_screen for the text+image combo and add
@@ -3854,6 +3887,13 @@ class SessionManager:
             extra_middleware.append(_image_pruning)
             logger.info("Old-image pruning enabled for %s (keeps the newest %d images)",
                         agent_name, _image_pruning._max)
+        # Desktop agents: older tool results lose the controls lists read after each action (see
+        # middleware.old_controls_pruning); a 100-step run otherwise outgrew the local server's memory.
+        from middleware.old_controls_pruning import maybe_for_agent as _old_controls_pruning_for
+        _controls_pruning = _old_controls_pruning_for(agent_name)
+        if _controls_pruning is not None:
+            extra_middleware.append(_controls_pruning)
+            logger.info("Old-controls pruning enabled for %s", agent_name)
 
         orchestrator_image_relocation = _maybe_tool_image_relocation(graph_llm)
         if orchestrator_image_relocation is not None:
@@ -4008,6 +4048,11 @@ class SessionManager:
         )
 
         system_prompt += "\n" + build_distilled_adapters_prompt_block(distill_catalog_id)
+        try:
+            from backend.procedural_memory.tool import apply_prompt
+            system_prompt = apply_prompt(system_prompt, all_tools, agent=agent_name)
+        except Exception:
+            logger.debug("procedural memory prompt unavailable", exc_info=True)
 
         _insert_safety_guard(
             extra_middleware,
@@ -5333,6 +5378,7 @@ class SessionManager:
         await session.save_meta_async()
         await self._maybe_start_deferred_distill()
         await self._maybe_evaluate_run(session)
+        self._maybe_save_procedures(session)
         yield {"type": "done", "content": ""}
 
     def _persist_plan(self, session_id: str, state: Any) -> None:
@@ -5383,6 +5429,32 @@ class SessionManager:
             launch_evaluation(session_id)
 
         idle[session_id] = asyncio.create_task(_fire())
+
+    def _maybe_save_procedures(self, session: "Session") -> None:
+        """Save this run's desktop / browser agent runs to procedural memory as pending records (no vectors yet;
+        a trusted label admits them later). App only: benchmark runs are saved by run.py with their score.
+        Fire-and-forget, so the run's ``done`` event is never delayed."""
+        try:
+            from backend.procedural_memory import service as procmem
+            rt = procmem.runtime()
+            if rt.mode != "app":
+                return
+        except Exception:
+            logger.debug("procedural memory runtime unavailable", exc_info=True)
+            return
+
+        async def _save() -> None:
+            try:
+                await procmem.save_session(session.id, track="app")
+            except FileNotFoundError:
+                return
+            except Exception:
+                logger.debug("procedural memory save failed", exc_info=True)
+
+        task = asyncio.create_task(_save())
+        self._bg_tasks = getattr(self, "_bg_tasks", set())
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     async def _maybe_evaluate_run(self, session: "Session") -> None:
         """Kick off a background end-of-run evaluation when enabled.
@@ -5524,8 +5596,17 @@ class SessionManager:
         # First stream uses the actual user query as input.
         # After a context injection we restart with `None` so LangGraph continues
         # from the updated checkpoint (the injected HumanMessage is already in state).
+        model_query = query
+        if is_first_message and session.agent_name:
+            # Procedural memory: when recall_procedure is offered, the first message asks for it (the model's copy
+            # only; the transcript above keeps the user's text).
+            try:
+                from backend.procedural_memory.tool import first_message as _procedure_first_message
+                model_query = _procedure_first_message(session.agent_name, query)
+            except Exception:
+                logger.debug("procedural memory first-message line unavailable", exc_info=True)
         current_input: Any = {
-            "messages": [HumanMessage(content=query, additional_kwargs=depth_meta)],
+            "messages": [HumanMessage(content=model_query, additional_kwargs=depth_meta)],
         }
         # printed_offset for the first leg: skip all historical messages + the user msg we just added.
         current_printed_offset = existing_count + 1

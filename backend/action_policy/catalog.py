@@ -114,6 +114,7 @@ KNOWN_SERVER_IDS = MACOS_SERVER_IDS | frozenset({
     "microsoft-onedrive",
     "edgar-sec",
     "cad-tools",
+    "macarena-vm",
     "playwright-mcp",
     "agent-eval-service",
     "claude-eval-hook",
@@ -129,6 +130,10 @@ UNSANDBOXED_SERVER_IDS = MACOS_SERVER_IDS | frozenset({
     # block. The server only works in folders under the session's mapped folder
     # (backend/cad_workdir_middleware.py) and CAD_WORK_ROOT when set.
     "cad-tools",
+    # macarena-vm only sends HTTP to the benchmark bridge on localhost, which the default
+    # per-MCP profile (no outbound network) would block. It touches no file or app on this
+    # machine; the bridge it talks to runs the actions in a separate macOS VM.
+    "macarena-vm",
 })
 
 
@@ -238,16 +243,27 @@ _read(
 _cat("cad-tools", "shell", "cad_run", "cad_render", "cad_compare", "cad_autoplace", "answer_checkpoint", "cad_export")
 _read("cad-tools", "step_inspect", "budget_status", "assembly_status", "netlist_validate")
 
+# MacArena benchmark VM. Disabled by default; enabled only in scripts/macarena's own backend profile.
+_cat(
+    "macarena-vm", "desktop_control",
+    "vm_click", "vm_double_click", "vm_right_click", "vm_move_to", "vm_drag", "vm_scroll",
+    "vm_type", "vm_press", "vm_hotkey", "vm_wait", "vm_done", "vm_fail",
+)
+_read("macarena-vm", "vm_screenshot", "vm_accessibility_tree")
+
 _cat("macos-native", "desktop_control",
      "open_app", "activate_app", "press_control", "type_into_control",
      "click", "double_click", "right_click", "scroll", "click_app_dom",
      "click_text", "click_at", "double_click_at", "right_click_at",
      "scroll_at", "type_text", "hotkey", "spotlight_search", "batch_actions",
-     "launch_app")
+     "launch_app", "menu_select", "fill_dialog", "drag", "set_text_at", "write_cells",
+     "select_text")
 _read(
     "macos-native",
     "list_apps", "get_screen_controls", "wait_for_controls",
     "get_control_value", "read_app_dom", "read_screen", "find_text_on_screen",
+    "observe", "menu_search", "read_dialog", "read_table", "get_control_values",
+    "wait_until", "app_guide",
 )
 
 _cat(

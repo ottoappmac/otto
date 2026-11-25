@@ -49,6 +49,79 @@ SOURCE_FILE = "file"
 # ---------------------------------------------------------------------------
 
 
+class _OnnxSentenceModel:
+    """A sentence-transformers model run with ONNX Runtime and ``tokenizers``, without torch.
+
+    Only for models whose pipeline is Transformer -> mean pooling (-> Normalize), which covers all-MiniLM-L6-v2
+    and most ``sentence-transformers/*`` models, and whose Hub repo ships ``onnx/model.onnx``. Output is always
+    L2-normalised, like ``encode(normalize_embeddings=True)``. Files come from the Hugging Face cache (the app's
+    model download fetches the whole repo), downloaded once if missing.
+    """
+
+    _BATCH = 32
+
+    def __init__(self, session: Any, tokenizer: Any, dim: int) -> None:
+        self._session = session
+        self._tok = tokenizer
+        self.dim = dim
+        self._inputs = {i.name for i in session.get_inputs()}
+
+    @staticmethod
+    def _file(model_name: str, filename: str) -> str:
+        from huggingface_hub import hf_hub_download  # type: ignore[import]
+        try:
+            return hf_hub_download(model_name, filename, local_files_only=True)
+        except Exception:  # noqa: BLE001 — not cached yet: fetch it
+            return hf_hub_download(model_name, filename)
+
+    @classmethod
+    def load(cls, model_name: str) -> "_OnnxSentenceModel":
+        import json
+
+        import onnxruntime as ort  # type: ignore[import]
+        from tokenizers import Tokenizer  # type: ignore[import]
+
+        pooling = json.loads(Path(cls._file(model_name, "1_Pooling/config.json")).read_text())
+        if not pooling.get("pooling_mode_mean_tokens") or any(
+            pooling.get(k) for k in ("pooling_mode_cls_token", "pooling_mode_max_tokens",
+                                     "pooling_mode_mean_sqrt_len_tokens", "pooling_mode_weightedmean_tokens",
+                                     "pooling_mode_lasttoken")
+        ):
+            raise ValueError("pooling is not plain mean pooling")
+        try:
+            max_len = int(json.loads(Path(cls._file(model_name, "sentence_bert_config.json")).read_text())
+                          .get("max_seq_length") or 256)
+        except Exception:  # noqa: BLE001
+            max_len = 256
+        tok = Tokenizer.from_file(cls._file(model_name, "tokenizer.json"))
+        tok.enable_truncation(max_length=max_len)
+        tok.enable_padding()
+        opts = ort.SessionOptions()
+        opts.log_severity_level = 3
+        session = ort.InferenceSession(cls._file(model_name, "onnx/model.onnx"), sess_options=opts,
+                                       providers=["CPUExecutionProvider"])
+        dim = int(pooling.get("word_embedding_dimension") or 384)
+        return cls(session, tok, dim)
+
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        import numpy as np
+
+        out: list[list[float]] = []
+        for start in range(0, len(texts), self._BATCH):
+            encs = self._tok.encode_batch(list(texts[start:start + self._BATCH]))
+            ids = np.array([e.ids for e in encs], dtype=np.int64)
+            mask = np.array([e.attention_mask for e in encs], dtype=np.int64)
+            feed = {"input_ids": ids, "attention_mask": mask}
+            if "token_type_ids" in self._inputs:
+                feed["token_type_ids"] = np.array([e.type_ids for e in encs], dtype=np.int64)
+            hidden = self._session.run(None, feed)[0]                      # (batch, tokens, dim)
+            m = mask[..., None].astype(hidden.dtype)
+            pooled = (hidden * m).sum(axis=1) / np.clip(m.sum(axis=1), 1e-9, None)
+            pooled /= np.clip(np.linalg.norm(pooled, axis=1, keepdims=True), 1e-12, None)
+            out.extend(pooled.astype(float).tolist())
+        return out
+
+
 class _Embedder:
     """Lazy-loading sentence-transformers embedder.
 
@@ -69,20 +142,37 @@ class _Embedder:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
+        # ONNX Runtime first: the packaged app leaves torch out (scripts/build_backend.py), and sentence-transformers
+        # cannot import without it. The ONNX path gives the same vectors (checked by tests/test_onnx_embedder.py) and
+        # runs identically in dev and in the bundle.
+        try:
+            onnx_model = _OnnxSentenceModel.load(self._model_name)
+        except Exception as exc:  # noqa: BLE001 — no ONNX export, other pooling, or a load error
+            logger.info("[embedding] ONNX path unavailable for %s (%s); trying sentence-transformers",
+                        self._model_name, exc)
+            onnx_model = None
+        if onnx_model is not None:
+            self._model = onnx_model
+            self._dim = onnx_model.dim
+            logger.info("[embedding] model ready (onnxruntime), dim=%d", self._dim)
+            return
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore[import]
         except ImportError as exc:
             raise RuntimeError(
-                "sentence-transformers is not installed. "
-                "Install with: pip install sentence-transformers"
+                f"Cannot load embedding model {self._model_name}: it has no ONNX export Otto can run, and "
+                "sentence-transformers (which needs torch) is not available in this build."
             ) from exc
         logger.info("[embedding] loading model %s …", self._model_name)
         self._model = SentenceTransformer(self._model_name)
-        self._dim = self._model.get_sentence_embedding_dimension() or 384
+        _dim_of = getattr(self._model, "get_embedding_dimension", None) or self._model.get_sentence_embedding_dimension
+        self._dim = _dim_of() or 384
         logger.info("[embedding] model ready, dim=%d", self._dim)
 
     def _embed_sync(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of texts, returning L2-normalised float vectors."""
+        if isinstance(self._model, _OnnxSentenceModel):
+            return self._model.encode(texts)
         vecs = self._model.encode(
             texts,
             normalize_embeddings=True,

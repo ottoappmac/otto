@@ -13,10 +13,11 @@ Covers:
 from __future__ import annotations
 
 from langchain.agents.middleware.types import ModelResponse
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from middleware.repetition_guard import (
     _RECOVERY_MSG,
+    _RETRY_MSG,
     RepetitionGuardMiddleware,
     is_degenerate_repetition,
 )
@@ -67,10 +68,13 @@ def test_ignores_long_unique_list():
 # ── middleware ──────────────────────────────────────────────────────────────
 
 class _Req:
-    """Minimal ModelRequest stand-in (the guard never reads the request)."""
+    """Minimal ModelRequest stand-in: messages plus ``override``, which the retry uses."""
 
     def __init__(self, messages=None) -> None:
         self.messages = messages or []
+
+    def override(self, messages):
+        return _Req(messages)
 
 
 def _resp(content: str, *, tool_calls=None) -> ModelResponse:
@@ -116,3 +120,66 @@ async def test_middleware_async_replaces_degenerate_output():
 
     out = await mw.awrap_model_call(_Req(), handler)
     assert out.result[-1].content == _RECOVERY_MSG
+
+
+# ── retry before ending the turn ───────────────────────────────────────────
+
+def test_middleware_asks_again_and_keeps_a_good_second_reply():
+    # An unattended run has nobody to resume a turn that ended on the recovery note: ask once more first.
+    seen = []
+
+    def handler(r):
+        seen.append(list(r.messages))
+        return _resp(_LOOP_UNIT * 80) if len(seen) == 1 else _resp("Pressed OK; the dialog closed.")
+
+    out = RepetitionGuardMiddleware().wrap_model_call(_Req(["history"]), handler)
+    assert out.result[-1].content == "Pressed OK; the dialog closed."
+    assert len(seen) == 2
+    assert seen[1][0] == "history" and isinstance(seen[1][-1], HumanMessage)
+    assert seen[1][-1].content == _RETRY_MSG
+
+
+def test_middleware_ends_with_recovery_when_retries_also_loop():
+    calls = []
+
+    def handler(r):
+        calls.append(r)
+        return _resp(_LOOP_UNIT * 80)
+
+    out = RepetitionGuardMiddleware(retries=2).wrap_model_call(_Req(), handler)
+    assert len(calls) == 3
+    assert out.result[-1].content == _RECOVERY_MSG
+
+
+def test_middleware_does_not_retry_healthy_output():
+    calls = []
+
+    def handler(r):
+        calls.append(r)
+        return _resp("Done.")
+
+    RepetitionGuardMiddleware(retries=3).wrap_model_call(_Req(), handler)
+    assert len(calls) == 1
+
+
+def test_middleware_retries_off():
+    calls = []
+
+    def handler(r):
+        calls.append(r)
+        return _resp(_LOOP_UNIT * 80)
+
+    out = RepetitionGuardMiddleware(retries=0).wrap_model_call(_Req(), handler)
+    assert len(calls) == 1 and out.result[-1].content == _RECOVERY_MSG
+
+
+async def test_middleware_async_retries():
+    n = 0
+
+    async def handler(r):
+        nonlocal n
+        n += 1
+        return _resp(_LOOP_UNIT * 80) if n == 1 else _resp("ok, clicked Save")
+
+    out = await RepetitionGuardMiddleware().awrap_model_call(_Req(), handler)
+    assert out.result[-1].content == "ok, clicked Save" and n == 2

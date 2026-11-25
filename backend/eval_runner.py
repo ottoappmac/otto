@@ -1330,3 +1330,30 @@ def _stamp_session_meta(session_id: str, payload: dict[str, Any]) -> None:
             live.eval_total = total
     except Exception:
         logger.debug("Failed to update in-memory session eval fields", exc_info=True)
+    _label_procedures(session_id, payload)
+
+
+def _label_procedures(session_id: str, payload: dict[str, Any]) -> None:
+    """Pass the judge's verdict to procedural memory as a ``judge`` label. It admits nothing until calibration has
+    marked the judge trusted (``ProceduralMemoryConfig.judge_*_trusted``); until then it is only recorded."""
+    if payload.get("status") != "done" or not payload.get("total"):
+        return
+    label = "success" if payload.get("pass_count") == payload.get("total") else "failure"
+    try:
+        from backend.procedural_memory import service as procmem
+        if procmem.runtime().mode != "app":
+            return
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    except Exception:
+        logger.debug("procedural memory unavailable for the judge label", exc_info=True)
+        return
+
+    async def _go() -> None:
+        try:
+            await procmem.label_session(session_id, label, "judge", confidence=payload.get("overall_score"))
+        except Exception:
+            logger.debug("judge label not recorded in procedural memory", exc_info=True)
+
+    loop.create_task(_go())

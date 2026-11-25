@@ -43,12 +43,13 @@ import concurrent.futures
 import ctypes
 import io
 import logging
+import os
 import re
 import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import pyautogui
 from langchain_core.tools import tool
@@ -133,6 +134,7 @@ except Exception:  # pragma: no cover - depends on host frameworks
     _CGEVENT_AVAILABLE = False
 
 _kVK_Return = 0x24  # virtual keycode for the Return key
+_kVK_ANSI_A = 0x00  # virtual keycode for A
 
 _logger = logging.getLogger(__name__)
 
@@ -268,6 +270,158 @@ def _press_state_token(element) -> str:
     if val is not None:
         parts.append(str(val))
     return "\u241f".join(parts)
+
+
+# Windows smaller than this are tooltips, popovers or palettes' title strips, not something to read.
+_MIN_READ_WINDOW = (120, 60)
+# Untitled windows up to this size are notices (LibreOffice's "update available" balloon, about 420x140, sat in
+# front in 15 benchmark tasks); they are skipped when the app has another window, so the document is read instead.
+_NOTICE_WINDOW = (520, 220)
+
+
+def _is_notice(rect: tuple[int, int, int, int], title: str) -> bool:
+    return not title.strip() and rect[2] <= _NOTICE_WINDOW[0] and rect[3] <= _NOTICE_WINDOW[1]
+
+
+def pick_app_windows(window_list, pid: int, limit: int = 3) -> list[tuple[int, tuple[int, int, int, int], str]]:
+    """The normal (layer 0) windows of process ``pid`` in ``window_list`` (CGWindowListCopyWindowInfo dicts, which
+    come front to back), as ``(window_id, (x, y, w, h), title)``, front first. Tiny windows are skipped, and so
+    are small untitled notices when the app has another window."""
+    found: list[tuple[int, tuple[int, int, int, int], str]] = []
+    for win in window_list:
+        if int(win.get("kCGWindowOwnerPID", -1)) != pid or int(win.get("kCGWindowLayer", 0)) != 0:
+            continue
+        b = win.get("kCGWindowBounds") or {}
+        x, y, w, h = (int(b.get(k, 0)) for k in ("X", "Y", "Width", "Height"))
+        if w < _MIN_READ_WINDOW[0] or h < _MIN_READ_WINDOW[1]:
+            continue
+        found.append((int(win.get("kCGWindowNumber")), (x, y, w, h), str(win.get("kCGWindowName") or "")))
+    kept = [f for f in found if not _is_notice(f[1], f[2])]
+    return (kept or found)[:limit]
+
+
+def window_rects_of(window_list, pid: int) -> list[tuple[int, int, int, int]]:
+    """Every on-screen window of process ``pid`` (any layer: menus and pop-overs too) as ``(x, y, w, h)``."""
+    out = []
+    for win in window_list:
+        if int(win.get("kCGWindowOwnerPID", -1)) != pid:
+            continue
+        b = win.get("kCGWindowBounds") or {}
+        x, y, w, h = (int(b.get(k, 0)) for k in ("X", "Y", "Width", "Height"))
+        if w > 0 and h > 0:
+            out.append((x, y, w, h))
+    return out
+
+
+def _app_window_rects(pid: int) -> list[tuple[int, int, int, int]]:
+    """``window_rects_of`` for the live window list; [] when it cannot be read (callers then do not guard)."""
+    try:
+        from Quartz import (CGWindowListCopyWindowInfo, kCGNullWindowID, kCGWindowListExcludeDesktopElements,
+                            kCGWindowListOptionOnScreenOnly)
+        info = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID) or []
+    except Exception:  # pragma: no cover - depends on host frameworks
+        return []
+    return window_rects_of([dict(w) for w in info], pid)
+
+
+_SAVE_KEYS = (["command", "s"], ["cmd", "s"])
+
+
+def _front_document(pid: int) -> tuple[str, float | None, Any]:
+    """``(file path, its mtime or None, the focused window)`` of process ``pid``'s focused window."""
+    from urllib.parse import unquote, urlparse
+    root = AXUIElementCreateApplication(pid)
+    win = _ax_get(root, "AXFocusedWindow") or _ax_get(root, kAXMainWindowAttribute)
+    raw = str(_ax_get(win, "AXDocument") or "") if win is not None else ""
+    path = unquote(urlparse(raw).path) if raw.startswith("file://") else raw
+    try:
+        mtime = os.path.getmtime(path) if path else None
+    except OSError:
+        mtime = None
+    return path, mtime, win
+
+
+def _mtime(path: str) -> float | None:
+    try:
+        return os.path.getmtime(path) if path else None
+    except OSError:
+        return None
+
+
+def save_result_note(path: str, before: float | None, after: float | None, dialog: str) -> str:
+    """What the save shortcut did, from the document's mtime before and after and any dialog now open."""
+    if dialog:
+        return (f"A dialog is open after saving: {dialog}. The file is not saved until it is answered "
+                "(read_dialog() shows its buttons).")
+    if not path:
+        return "The window shows no saved file, so check that a save dialog did not open (observe())."
+    name = os.path.basename(path)
+    if after is not None and (before is None or after > before):
+        return f"Saved: {name} on disk was written just now."
+    return (f"Not saved yet: {name} on disk did not change. A dialog may be asking something, or the document "
+            "had no changes; observe() shows what is open.")
+
+
+def _open_dialog_title(pid: int) -> str:
+    """The title of the dialog or sheet in front in process ``pid``, or ""."""
+    root = AXUIElementCreateApplication(pid)
+    win = _ax_get(root, "AXFocusedWindow")
+    if win is None:
+        return ""
+    title = str(_ax_get(win, kAXTitleAttribute) or "")
+    if str(_ax_get(win, "AXSubrole") or "") in ("AXDialog", "AXSystemDialog", "AXFloatingWindow") \
+            or _ax_get(win, "AXModal") is True:
+        return f"'{title}'" if title else "a dialog"
+    for child in _ax_get(win, kAXChildrenAttribute) or []:
+        if str(_ax_get(child, kAXRoleAttribute) or "") == "AXSheet":
+            return f"a sheet on '{title}'" if title else "a sheet"
+    return ""
+
+
+def _text_field_in(element, depth: int = 3):
+    """The first text field, text area or combo box inside ``element`` (breadth-first, ``depth`` levels), or None."""
+    level = list(_ax_get(element, kAXChildrenAttribute) or [])
+    for _ in range(depth):
+        nxt = []
+        for child in level:
+            if str(_ax_get(child, kAXRoleAttribute) or "") in ("AXTextField", "AXTextArea", "AXComboBox"):
+                return child
+            nxt.extend(_ax_get(child, kAXChildrenAttribute) or [])
+        level = nxt
+    return None
+
+
+def _clear_field(element, pid: int) -> bool:
+    """Empty a focused single-line text field before typing. True when it is empty afterwards.
+
+    Sets the value through Accessibility first; where the app refuses that (or keeps the text), selects all of the
+    field's text with ⌘A posted to its process, so the typed text replaces it."""
+    val = _ax_get(element, kAXValueAttribute)
+    if not isinstance(val, str) or not val:
+        return True
+    if AXUIElementSetAttributeValue(element, kAXValueAttribute, "") == 0 and not _ax_get(element, kAXValueAttribute):
+        return True
+    return _select_all_pid(pid)     # the old text is selected, so typing replaces it
+
+
+def _select_all_pid(pid: int) -> bool:
+    """Post ⌘A to process ``pid`` (focus-free). True when the events were posted."""
+    if not (_CGEVENT_AVAILABLE and pid):
+        return False
+    try:
+        from Quartz import CGEventSetFlags, kCGEventFlagMaskCommand
+        src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
+        for key_down in (True, False):
+            ev = CGEventCreateKeyboardEvent(src, _kVK_ANSI_A, key_down)
+            if ev is None:
+                return False
+            CGEventSetFlags(ev, kCGEventFlagMaskCommand)
+            CGEventPostToPid(pid, ev)
+        time.sleep(0.05)
+        return True
+    except Exception:  # pragma: no cover - depends on host frameworks
+        return False
 
 
 def _type_to_pid(pid: int, text: str, submit: bool = False) -> bool:
@@ -596,6 +750,167 @@ def _screen_recording_denied() -> bool:
         return False
 
 
+_APP_DIRS = (
+    Path("/Applications"), Path("/Applications/Utilities"),
+    Path("/System/Applications"), Path("/System/Applications/Utilities"),
+    Path.home() / "Applications",
+)
+
+
+# Background processes that share an app's name as a prefix: a match on one of these is not the app.
+_HELPER_SUFFIXES = ("extension", "helper", "agent", "service", "widget", "daemon", "xpc", "plugin", "renderer",
+                    "gpu", "uiservice", "server")
+
+
+def _is_helper(name: str) -> bool:
+    low = name.lower().rstrip()
+    return low.endswith(_HELPER_SUFFIXES) or ("(" in low and low.endswith(")"))
+
+
+def _is_regular_app(pid) -> bool | None:
+    """True for an app with a Dock icon and windows (NSApplicationActivationPolicyRegular), False for a background
+    agent, extension or plain daemon (``contactsd`` has no NSRunningApplication at all), None if it cannot be
+    asked."""
+    try:
+        from AppKit import NSApplicationActivationPolicyRegular, NSRunningApplication
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(int(pid))
+        return app is not None and app.activationPolicy() == NSApplicationActivationPolicyRegular
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _pick_running_app(target: str, names, is_regular=_is_regular_app) -> str | None:
+    """The running app that ``target`` names: an exact (case-insensitive) match first, else a prefix match on a
+    regular app. A prefix match on a background process is not the app: ``launch_app('Reminders')`` took
+    ``RemindersWidgetExtension`` and ``launch_app('Contacts')`` took the daemon ``contactsd``, returned
+    'Launched' without opening anything, and then waited on controls those processes never have.
+    ``names`` is a name -> pid mapping (a plain list of names is accepted; then only the name is judged)."""
+    items = list(names.items()) if hasattr(names, "items") else [(n, None) for n in names]
+    for n, _ in items:
+        if n.lower() == target:
+            return n
+    for n, pid in items:
+        if not n.lower().startswith(target):
+            continue
+        regular = is_regular(pid) if pid is not None else None
+        if regular is True or (regular is None and not _is_helper(n)):
+            return n
+    return None
+
+
+def _new_regular_apps(before, after, is_regular=_is_regular_app) -> list[str]:
+    """Names that are regular apps in ``after`` (name -> pid) but were not in ``before``: what an app that opens
+    under another name than the one you asked for looks like. Anaconda-Navigator.app is a launcher script that
+    starts ``python anaconda-navigator``, which macOS lists as an app called "python"."""
+    return [n for n, pid in after.items() if n not in before and is_regular(pid) is True]
+
+
+def _squash(name: str) -> str:
+    """Lower-case, letters and digits only: 'Anaconda-Navigator' and 'anaconda navigator' compare equal."""
+    return re.sub(r"[^a-z0-9]", "", name.lower().removesuffix(".app"))
+
+
+def _similar_installed_apps(name: str, dirs=None, limit: int = 5) -> list[str]:
+    """Installed ``.app`` names that resemble *name*, best first. Used only to explain a failed launch, so the
+    caller can retry with the exact name; nothing is launched from here."""
+    import difflib
+    want = _squash(name.split("/")[-1])
+    if not want:
+        return []
+    found: dict[str, str] = {}
+    for d in (dirs if dirs is not None else _APP_DIRS):
+        try:
+            for entry in d.iterdir():
+                if entry.suffix == ".app":
+                    found.setdefault(entry.stem, _squash(entry.stem))
+        except OSError:
+            continue
+    scored = []
+    for stem, key in found.items():
+        if key == want:
+            score = 1.0
+        elif want in key or (len(key) >= 4 and key in want):
+            score = 0.9
+        else:
+            score = difflib.SequenceMatcher(None, want, key).ratio()
+        if score >= 0.6:
+            scored.append((score, stem))
+    return [stem for _, stem in sorted(scored, key=lambda t: (-t[0], t[1]))[:limit]]
+
+
+# Spellings agents use for keys pyautogui names otherwise.
+_KEY_ALIASES = {
+    "cmd": "command", "⌘": "command", "meta": "command", "super": "command", "opt": "option", "⌥": "option",
+    "alt": "option", "control": "ctrl", "⌃": "ctrl", "⇧": "shift", "escape": "esc", "enter": "return",
+    "arrowleft": "left", "arrowright": "right", "arrowup": "up", "arrowdown": "down", "spacebar": "space",
+    "page_up": "pageup", "page_down": "pagedown", "pgdn": "pagedown", "back": "backspace", "plus": "+",
+}
+
+
+def _known_keys() -> frozenset[str]:
+    try:
+        return frozenset(k.lower() for k in pyautogui.KEYBOARD_KEYS)
+    except Exception:  # pragma: no cover - pyautogui always has it
+        return frozenset()
+
+
+def parse_hotkey(keys: str, known: frozenset[str] | None = None) -> tuple[list[str], str]:
+    """``(key names for pyautogui.hotkey, "")``, or ``([], why)`` when ``keys`` is not a key combination.
+
+    pyautogui types an unknown key name's characters one by one, so junk such as ``<parameter=command>\nz`` or
+    ``{return}`` went into cells as text ('sszzz') while the tool reported a shortcut."""
+    known = _known_keys() if known is None else known
+    raw = keys.strip()
+    if not raw:
+        return [], "no keys given"
+    if len(raw) > 60:
+        return [], f"{raw[:60]!r}… is not a key combination"
+    # '+' separates keys, but a lone or trailing '+' is the plus key itself ('command++').
+    parts, cur = [], ""
+    for ch in raw:
+        if ch == "+" and cur.strip():
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        parts.append(cur.strip())
+    out: list[str] = []
+    for part in parts:
+        for p in part.split():
+            k = _KEY_ALIASES.get(p.lower(), p.lower())
+            if known and k not in known:
+                return [], (f"unknown key {p!r}. Use names like command, shift, option, ctrl, return, tab, esc, "
+                            "space, delete, left, up, pageup, home, f5, or one character")
+            out.append(k)
+    return out, ""
+
+
+def point_in_rects(x: int, y: int, rects) -> bool:
+    """Is (x, y) inside one of the ``(x, y, w, h)`` rectangles?"""
+    return any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in rects)
+
+
+def front_change_note(before: str, after: str) -> str:
+    """A warning when the frontmost app changed across a click ('' when it did not, or either is unknown)."""
+    if not before or not after or before == after:
+        return ""
+    return (f"Note: the frontmost app is now '{after}' (it was '{before}'): the click may have landed outside "
+            f"'{before}'. Bring it back with activate_app('{before}') before typing.")
+
+
+def substring_point(r: dict, needle: str) -> tuple[int, int]:
+    """The point of ``needle`` inside OCR line ``r``: Vision boxes a whole line, and its centre can be far from the
+    word asked for (a subscript landed on the wrong character). Uses the line's left edge and width, spread over
+    its characters; falls back to the line's centre."""
+    text, left, width = r.get("text") or "", r.get("left"), r.get("width")
+    i = text.lower().find(needle.strip().lower()) if needle.strip() else -1
+    if i < 0 or left is None or not width or not text:
+        return r["x"], r["y"]
+    mid = i + len(needle.strip()) / 2.0
+    return int(left + width * mid / len(text)), r["y"]
+
+
 def _rank_text_matches(results: list[dict], text: str) -> list[dict]:
     """Filter+rank OCR results that contain *text*, best match first.
 
@@ -620,6 +935,21 @@ def _rank_text_matches(results: list[dict], text: str) -> list[dict]:
     matches = [r for r in results if needle in r["text"].lower()]
     matches.sort(key=_score, reverse=True)
     return matches
+
+
+def _format_ocr_windows(results: list[dict], label: str) -> str:
+    """``_format_ocr_lines``, one section per window when the results come from several of the app's windows."""
+    tags: list[str] = []
+    for r in results:
+        if r.get("win") and r["win"] not in tags:
+            tags.append(r["win"])
+    if len(tags) <= 1:
+        return _format_ocr_lines(results, label)
+    parts = []
+    for tag in tags:
+        part = _format_ocr_lines([r for r in results if r.get("win") == tag], f"{label}, window {tag}")
+        parts.append(part)
+    return "\n\n".join(parts)
 
 
 def _format_ocr_lines(results: list[dict], label: str) -> str:
@@ -687,6 +1017,9 @@ _INTERACTIVE_ROLES = {
     "AXStaticText", "AXCell", "AXRow", "AXTable",
 }
 
+# A window's title-bar buttons, by AX subrole.
+_WINDOW_CHROME_SUBROLES = frozenset({"AXCloseButton", "AXMinimizeButton", "AXZoomButton", "AXFullScreenButton"})
+
 _STRUCTURAL_ROLES = frozenset({
     "AXWindow", "AXToolbar", "AXSplitGroup", "AXScrollArea",
     "AXTabGroup", "AXList", "AXOutline",
@@ -695,6 +1028,180 @@ _STRUCTURAL_ROLES = frozenset({
 })
 
 _MAX_STRUCTURAL_DEPTH = 3
+
+_CELL_ADDR_RE = re.compile(r"[A-Z]{1,3}[0-9]{1,7}")
+# A cell or range reference, optionally on a named sheet: C12, $A$1, A2:B30, Sheet1.A1:A20, 'My sheet'.B3, Sheet2!A1.
+_CELL_REF_RE = re.compile(
+    r"(?:(?:'[^']+'|\$?[A-Za-z_][\w ]*)[.!])?\$?[A-Za-z]{1,3}\$?[0-9]{1,7}"
+    r"(?::(?:(?:'[^']+'|\$?[A-Za-z_][\w ]*)[.!])?\$?[A-Za-z]{1,3}\$?[0-9]{1,7})?")
+
+
+def cell_ref_hint(index: int, text: str, labels: dict[int, tuple[str, str]]) -> str:
+    """A note for when a cell reference was typed into a spreadsheet cell's own field instead of the Name Box.
+
+    Calc lists each on-screen cell as a text field named by its address (``[3]TF'A1'``), which looks just like a
+    Name Box showing "A1"; agents type ``A2:B30`` there to select a range, and it becomes that cell's contents."""
+    role, label = labels.get(index, ("", ""))
+    t = text.strip()
+    if role != "TextField" or not _CELL_ADDR_RE.fullmatch(label) or not _CELL_REF_RE.fullmatch(t):
+        return ""
+    box = next((i for i, (r, lab) in labels.items() if lab == "Name Box" and r in ("TextArea", "TextField")), None)
+    where = f"the Name Box (#{box})" if box is not None else "the Name Box (get_screen_controls(label='Name Box'))"
+    return (f"Note: #{index} is cell {label} itself, not the Name Box, so {t!r} was typed into that cell and may now "
+            f"be its contents (⌘Z undoes it). To go to or select cells, type the reference into {where} with "
+            f"submit=True.")
+
+
+# What the Name Box accepts: a cell or range (also whole columns "A:C" and rows "2:5", optionally sheet-qualified),
+# or a single word, which goes to the range of that name (or names the selection, when there is none).
+_WHOLE_COLS_ROWS_RE = re.compile(
+    r"(?:(?:'[^']+'|\$?[A-Za-z_][\w ]*)[.!])?(?:\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}|\$?[0-9]{1,7}:\$?[0-9]{1,7})")
+_RANGE_NAME_RE = re.compile(r"[A-Za-z_\\][\w.]*")
+
+
+def name_box_refusal(index: int, text: str, labels: dict[int, tuple[str, str]]) -> str:
+    """Why ``text`` must not be typed into the spreadsheet's Name Box, or "" when it may.
+
+    The Name Box only goes to (or names) a cell range: a value, label or formula typed there reaches no cell, and
+    the tool would still report that it typed it. Runs lost 30+ steps typing headers and formulas into it."""
+    _role, label = labels.get(index, ("", ""))
+    if label != "Name Box":
+        return ""
+    t = text.strip()
+    if _CELL_REF_RE.fullmatch(t) or _WHOLE_COLS_ROWS_RE.fullmatch(t):
+        return ""
+    if _RANGE_NAME_RE.fullmatch(t):
+        return ""
+    return (f"Not typed: #{index} is the Name Box. It only goes to a cell or range (B2, A1:C10, Sheet2.A1); "
+            f"{t!r} would reach no cell. Type the cell reference here with submit=True, then type the value or "
+            "formula into the selected cell with type_text(...) (Return moves down, Tab moves right).")
+
+
+_SAVE_NAME_LABEL_RE = re.compile(r"\b(save as|export as)\b", re.I)
+
+
+def save_name_path_refusal(index: int, text: str, labels: dict[int, tuple[str, str]]) -> str:
+    """Why a path must not be typed into a Save / Export sheet's name box, or "" when it may.
+
+    The box takes a file name only: '~/Library/Services/Hello.workflow' typed there saved a file literally named
+    '~:Library:Services:Hello.workflow' (2026-11-24), which the agent then had to find and rename."""
+    _role, label = labels.get(index, ("", ""))
+    t = text.strip().rstrip("/")
+    if not _SAVE_NAME_LABEL_RE.search(label or "") or "/" not in t:
+        return ""
+    folder, name = t.rsplit("/", 1)
+    return (f"Not typed: #{index} ('{label}') takes a file name only; a path typed there becomes part of the name. "
+            f"Use fill_dialog(app, {{'{label.rstrip(':')}': {name!r}}}, path={folder or '/'!r}, press='Save'), or "
+            "type the name here and pick the folder in the sheet.")
+
+
+_TEXT_ROLES = frozenset({"TextField", "TextArea", "ComboBox", "SearchField"})
+# Roles that never take typed text: focusing one and typing sends the keys to whatever had focus before (in Calc,
+# the selected cell). Groups are handled on their own (a group may hold the field, see field_group_redirect).
+_UNTYPEABLE_ROLES = frozenset({"Button", "CheckBox", "RadioButton", "MenuItem", "MenuBarItem", "PopUpButton"})
+
+
+def field_group_redirect(index: int, labels: dict[int, tuple[str, str]]) -> int | None:
+    """The index of the text field inside the named field group ``index`` (Calc's ``G 'Name Box'`` holds
+    ``TA 'Name Box'``; ``G 'Input line'`` holds ``TA 'Formula bar'``), or None.
+
+    The listing shows both the group and its field under one name, and agents pick the group, which comes first.
+    Typing "into" the group sends the keys to the selected cell instead, and the tool reported success: 19 runs
+    wrote "D2:D29" or "C2" into a cell this way and then formatted, froze or copied the wrong cells."""
+    role, label = labels.get(index, ("", ""))
+    if role != "Group":
+        return None
+    field = _NAMED_FIELD_GROUPS.get(label, label if label in _NAMED_FIELD_GROUPS.values() else None)
+    if field is None:
+        return None
+    after = sorted(i for i, (r, lab) in labels.items() if lab == field and r in _TEXT_ROLES)
+    if not after:
+        return None
+    # The field is listed right after its group; take the nearest one after it, else the nearest overall.
+    later = [i for i in after if i > index]
+    return later[0] if later else after[-1]
+
+
+def untypeable_refusal(index: int, labels: dict[int, tuple[str, str]]) -> str:
+    """Why ``index`` cannot take typing (a button, a checkbox, a group with no field in it), or ""."""
+    role, label = labels.get(index, ("", ""))
+    if role in _UNTYPEABLE_ROLES:
+        return (f"Not typed: #{index} is a {role} ('{label[:60]}'), which does not take text; the keys would go to "
+                "whatever had focus before. Use press_control for it, or type into a TextField / TextArea.")
+    if role == "Group":
+        return (f"Not typed: #{index} is a group ('{label[:60]}'), not a text field, and none was found inside it; "
+                "the keys would go to whatever had focus before. Type into the TextField / TextArea listed with it.")
+    return ""
+
+
+def _norm_ref(ref: str) -> str:
+    """A cell reference without sheet name, ``$`` signs or case: ``Sheet1.$a$2`` -> ``A2``."""
+    t = ref.strip().replace("$", "").upper()
+    parts = []
+    for p in t.split(":"):
+        p = re.split(r"[.!]", p)[-1].strip("'")
+        parts.append(p)
+    if len(parts) == 2 and parts[0] == parts[1]:
+        return parts[0]
+    return ":".join(parts)
+
+
+def name_box_readback_note(typed: str, shown: Any) -> str:
+    """What the Name Box shows after a reference was typed into it with Return: confirms where the selection went,
+    or warns that it did not move. "" when there is nothing useful to say (a range name, whole columns)."""
+    t = typed.strip()
+    if not _CELL_REF_RE.fullmatch(t) or not isinstance(shown, str) or not shown.strip():
+        return ""
+    want, now = _norm_ref(t), _norm_ref(shown)
+    if not _CELL_REF_RE.fullmatch(shown.strip()):
+        return f"The Name Box now shows {shown.strip()!r}."
+    if now == want:
+        return f"Selected {now} (the Name Box shows {shown.strip()!r})."
+    return (f"Warning: the Name Box shows {shown.strip()!r}, not {t!r}: the selection did not go where you asked. "
+            "Read it again before typing into cells.")
+
+
+_SINGLE_LINE_ROLES = frozenset({"AXTextField", "AXComboBox", "AXSearchField"})
+
+
+def replaces_contents(role: str, label: str) -> bool:
+    """Does type_into_control clear this field before typing (unless append=True)?
+
+    Single-line fields only: an address bar, search box or form field, where typing after the old text corrupts
+    it ("arxiv.orgarxiv.org"). Not multi-line areas (a document body), not a spreadsheet cell field (typing there
+    already replaces the cell) and not the Name Box (it selects its text when focused)."""
+    if role not in _SINGLE_LINE_ROLES:
+        return False
+    if role == "AXTextField" and _CELL_ADDR_RE.fullmatch(label or ""):
+        return False
+    return label != "Name Box"
+
+
+def typed_value_note(text: str, before: Any, value: Any, *, append: bool, cleared: bool) -> str:
+    """What to tell the agent about a single-line field after typing into it (before Return). ``before`` is the
+    field's value before it was cleared and typed into."""
+    if not isinstance(value, str):
+        return ""
+    shown = value if len(value) <= 160 else value[:157] + "..."
+    old = before if isinstance(before, str) else ""
+    kept_old = bool(old) and value.startswith(old) and value[len(old):].startswith(text) and value != text
+    if not append and text and old and value != text and value == text + old:
+        # The field kept its old text after the cursor (a combo box that selected nothing): '0;0;;@General'.
+        return (f"Warning: the field now reads {shown!r}: the old text {old!r} is still after what you typed"
+                + ("" if cleared else " (it could not be cleared)") + ". Fix the field before going on.")
+    if not append and text and (kept_old or (text in value and not value.startswith(text))):
+        return (f"Warning: the field now reads {shown!r}: text that was there before is still in front of what you "
+                "typed" + ("" if cleared else " (it could not be cleared)") + ". Fix the field before going on.")
+    if text and not value.strip():
+        return "Warning: the field is empty after typing; the text did not go in."
+    return f"The field now reads {shown!r}."
+
+
+# LibreOffice Calc names the group around these two fields but not the field itself: the Name Box's text area is
+# titled with the cell it shows ("G13"), and the formula bar's is described as "Paragraph: 0". A field inside one
+# of these groups is listed under the group's name, so a search for "Name Box" or "Formula bar" finds it.
+_TOOLBARS_FIRST_DEPTH = 3   # how deep under a window toolbars are moved ahead of their siblings
+_NAMED_FIELD_GROUPS = {"Name Box": "Name Box", "Input line": "Formula bar"}
 
 _ROLE_CODES: dict[str, str] = {
     "Button": "B", "TextField": "TF", "TextArea": "TA",
@@ -784,6 +1291,14 @@ class _TypeIntoControlInput(BaseModel):
             "Leave false for multi-line text areas or fields with a separate submit button."
         ),
     )
+    append: bool = Field(
+        default=False,
+        description=(
+            "Single-line fields (address bar, search box, form field) are cleared before typing so the text "
+            "replaces what was there. Set true to add to the end instead. Multi-line text areas always insert "
+            "at the cursor."
+        ),
+    )
 
 
 class _GetControlValueInput(BaseModel):
@@ -826,6 +1341,10 @@ class _TypeTextInput(BaseModel):
             "cannot be obtained, nothing is typed. Use for AX-disabled apps (Slack)."
         ),
     )
+    replace: bool = Field(
+        default=False,
+        description="Select all (⌘A) in the focused field first, so the text replaces its contents.",
+    )
 
 
 class _HotkeyInput(BaseModel):
@@ -837,7 +1356,10 @@ class _SpotlightSearchInput(BaseModel):
 
 
 class _ListAppsInput(BaseModel):
-    query: _AppName = Field(description="Case-insensitive substring to filter running apps, e.g. 'slack'. Must not be empty.")
+    query: str = Field(
+        default="",
+        description="Case-insensitive substring to filter running apps, e.g. 'slack'. Empty = list every running app.",
+    )
 
 
 class _BatchActionsInput(BaseModel):
@@ -903,10 +1425,46 @@ class _ScrollAtInput(BaseModel):
     amount:    Annotated[int, Field(gt=0)] = Field(default=300, description="Pixels to scroll (must be > 0).")
 
 
+class _DragInput(BaseModel):
+    from_index: int = Field(default=-1, description="Control index to drag from (from the latest list). -1 = use from_x/from_y.")
+    to_index: int = Field(default=-1, description="Control index to drop on. -1 = use to_x/to_y.")
+    from_x: int = Field(default=-1, description="Screen x to press at, in logical points (e.g. from find_text_on_screen).")
+    from_y: int = Field(default=-1, description="Screen y to press at.")
+    to_x: int = Field(default=-1, description="Screen x to release at.")
+    to_y: int = Field(default=-1, description="Screen y to release at.")
+
+
+class _SetTextAtInput(BaseModel):
+    x: Annotated[int, Field(ge=0)] = Field(description="Screen x of the field, in logical points (e.g. from find_text_on_screen).")
+    y: Annotated[int, Field(ge=0)] = Field(description="Screen y of the field.")
+    text: str = Field(description="What the field should hold, e.g. '40' or 'photo_edited.png'.")
+    submit: bool = Field(default=True, description="Press Return afterwards to commit (default). False leaves it typed.")
+
+
 _BATCH_TOOL_NAMES = {
-    "press_control", "type_into_control", "get_control_value",
+    "press_control", "type_into_control", "get_control_value", "menu_select",
     "click", "double_click", "right_click", "scroll", "type_text", "hotkey",
+    "click_at", "double_click_at", "right_click_at", "scroll_at", "click_text", "drag", "set_text_at",
+    "select_text",
 }
+
+
+def coerce_args(schema: Any, args: dict) -> dict:
+    """``args`` with values turned into the types ``schema`` (a pydantic model) declares: a number where text is
+    wanted becomes text (type_into_control(text=2015)), and digits where a number is wanted become the number.
+    Anything else is left for the schema to accept or reject."""
+    fields = getattr(schema, "model_fields", None) or {}
+    out = dict(args)
+    for k, v in args.items():
+        f = fields.get(k)
+        if f is None:
+            continue
+        ann = f.annotation
+        if ann is str and isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = str(v)
+        elif ann is int and isinstance(v, str) and re.fullmatch(r"-?\d+", v.strip()):
+            out[k] = int(v)
+    return out
 
 _BATCH_SPLIT_RE = re.compile(
     r"(" + "|".join(re.escape(t) for t in sorted(_BATCH_TOOL_NAMES, key=len, reverse=True)) + r")\(",
@@ -953,7 +1511,10 @@ def _parse_batch_actions(raw: str) -> list[tuple[str, dict]]:
                 val = m.group(2) if m.group(2) is not None else (
                     m.group(3) if m.group(3) is not None else m.group(4).strip()
                 )
-                if not quoted and isinstance(val, str) and val.lower() in ("true", "false"):
+                if quoted:
+                    # A quoted value is text, even when it looks like a number ('2015', '0.0.1').
+                    val = re.sub(r"\\(['\"\\])", r"\1", val)
+                elif isinstance(val, str) and val.lower() in ("true", "false"):
                     val = val.lower() == "true"
                 else:
                     try:
@@ -1041,6 +1602,9 @@ class MacOSToolkit:
 
         # ── Mutable state ─────────────────────────────────────────────────
         self._element_registry: dict[int, object] = {}
+        self._label_registry: dict[int, tuple[str, str]] = {}   # index -> (role, label), from the last scan
+        self._prev_label_registry: dict[int, tuple[str, str]] = {}   # the same map from the scan before it
+        self._chrome_refused: set[tuple[int, str, str]] = set()   # window-button actions refused once (_index_guard)
         self._coord_registry: dict[int, tuple[int, int]] = {}
         self._scan_caches: dict[str, tuple[list[dict], dict[int, object], float]] = {}
         self._fg_apps_cache: tuple[float, dict[str, int]] = (0.0, {})
@@ -1293,6 +1857,7 @@ class MacOSToolkit:
         deadline: float,
         depth: int = 0,
         structural_depth: int = 0,
+        field_name: str = "",
     ) -> None:
         if (
             depth > self.scan_max_depth
@@ -1343,6 +1908,8 @@ class MacOSToolkit:
                     or attrs.get(kAXValueAttribute)
                     or ""
                 )
+                if field_name and role in ("AXTextArea", "AXTextField"):
+                    label = field_name
                 if not label and role == "AXButton":
                     fallback = (
                         self._ax_get_safe(element, "AXHelp")
@@ -1403,12 +1970,21 @@ class MacOSToolkit:
         if not children:
             return
         child_struct_depth = structural_depth + (1 if emit_structural else 0)
+        if role == "AXGroup":
+            field_name = _NAMED_FIELD_GROUPS.get(str(attrs.get(kAXDescriptionAttribute) or "").strip(), field_name)
+        if depth <= _TOOLBARS_FIRST_DEPTH and len(children) > 1:
+            # Walk a window's toolbars before its other parts: a document's content (a spreadsheet's grid of cells)
+            # can use up scan_max_elements, and Calc's Name Box and formula bar sit in a toolbar after the grid.
+            roles = [self._ax_get_safe(c, kAXRoleAttribute) for c in children]
+            if "AXToolbar" in roles:
+                children = ([c for c, r in zip(children, roles) if r == "AXToolbar"]
+                            + [c for c, r in zip(children, roles) if r != "AXToolbar"])
         for child in children:
             if len(results) >= self.scan_max_elements or time.monotonic() > deadline:
                 return
             self._walk(
                 child, results, app_name, viewport, deadline,
-                depth + 1, child_struct_depth,
+                depth + 1, child_struct_depth, field_name,
             )
 
     @staticmethod
@@ -1511,6 +2087,10 @@ class MacOSToolkit:
                     c["index"]: (c["cx"], c["cy"])
                     for c in result if not c.get("_structural")
                 }
+                self._set_labels({
+                    c["index"]: (c["role"], c["label"])
+                    for c in result if not c.get("_structural")
+                })
                 return result
 
         skip = skip_apps or self.skip_apps
@@ -1614,6 +2194,10 @@ class MacOSToolkit:
             c["index"]: (c["cx"], c["cy"])
             for c in deduped if not c.get("_structural")
         }
+        self._set_labels({
+            c["index"]: (c["role"], c["label"])
+            for c in deduped if not c.get("_structural")
+        })
         self._cache_put(app_filter, deduped, new_registry)
         return deduped
 
@@ -1699,6 +2283,41 @@ class MacOSToolkit:
 
         return "\n".join(lines)
 
+    def _set_labels(self, labels: dict[int, tuple[str, str]]) -> None:
+        """Replace the index -> (role, label) map of the last scan, keeping the one before it: an index the agent
+        took from an older list can now name another control (see ``_index_guard``)."""
+        if labels != self._label_registry:
+            self._prev_label_registry = self._label_registry
+            self._chrome_refused = set()
+        self._label_registry = labels
+
+    def _index_guard(self, index: int) -> tuple[str, str]:
+        """``(what the index is now, refusal or "")`` for an action on control ``index``.
+
+        The refusal is for a window's close, minimise, zoom or full-screen button whose index named a different
+        control in the list before the latest one. Indices are renumbered on every read, and a run lost 33 steps
+        after ``click(35)``, meant for a dialog's Close from an older list, minimised the browser instead."""
+        role, label = self._label_registry.get(index, ("", ""))
+        what = f" ({role} '{label[:60]}')" if role or label else ""
+        elem = self._element_registry.get(index)
+        if elem is None:
+            return what, ""
+        subrole = str(_ax_get(elem, "AXSubrole") or "")
+        if subrole not in _WINDOW_CHROME_SUBROLES:
+            return what, ""
+        prev = self._prev_label_registry.get(index)
+        if prev is None or prev == (role, label):
+            return what, ""
+        key = (index, role, label)
+        if key in self._chrome_refused:     # asked again with the same list: the agent means this button
+            return what, ""
+        self._chrome_refused.add(key)
+        return what, (
+            f"Not done: #{index} is now the window's {subrole[2:]}{what}, but in the list before the latest one #{index} "
+            f"was {prev[0]} '{prev[1][:60]}'. Indices change on every read: take the index from the latest list "
+            f"(get_screen_controls or the 'Controls now' list in the last result). If you do mean this window "
+            f"button, make the same call again.")
+
     def _resolve_click_coords(self, index: int) -> tuple[int, int] | str:
         coords = self._coord_registry.get(index)
         if coords is not None:
@@ -1714,50 +2333,40 @@ class MacOSToolkit:
     # Vision OCR fallback (for apps with the Accessibility API switched off)
     # -------------------------------------------------------------------
 
-    def _window_target(
-        self, app_name: str,
-    ) -> tuple[int | None, tuple[int, int, int, int]] | None:
-        """Return ``(window_id, (x, y, w, h))`` for an app's largest window.
-
-        Coordinates are logical points (top-left origin). ``window_id`` is None
-        for the whole-screen case (empty *app_name*). Uses CoreGraphics' window
-        list (NOT Accessibility), so it works even for apps that switch AX off
-        (Slack) and for windows that aren't frontmost. Returns None if the app
-        isn't running or has no visible normal window.
-        """
-        if not app_name:
-            sw, sh = _logical_screen_size()
-            return (None, (0, 0, sw, sh))
-        if not _VISION_AVAILABLE:
-            return None
-
+    def _app_windows(self, app_name: str) -> list[tuple[int, tuple[int, int, int, int], str]]:
+        """The app's on-screen normal windows, front to back, as ``(window_id, (x, y, w, h), title)``."""
+        if not app_name or not _VISION_AVAILABLE:
+            return []
         pid = self._resolve_pid(app_name)
         if not pid:
-            return None
-
+            return []
         info = CGWindowListCopyWindowInfo(
             kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
             kCGNullWindowID,
         )
-        best: tuple[int, tuple[int, int, int, int]] | None = None
-        best_area = 0
-        for win in info or []:
-            if int(win.get("kCGWindowOwnerPID", -1)) != pid:
-                continue
-            if int(win.get("kCGWindowLayer", 0)) != 0:  # 0 == normal window
-                continue
-            bounds = win.get("kCGWindowBounds")
-            if not bounds:
-                continue
-            x = int(bounds.get("X", 0))
-            y = int(bounds.get("Y", 0))
-            w = int(bounds.get("Width", 0))
-            h = int(bounds.get("Height", 0))
-            area = w * h
-            if w > 0 and h > 0 and area > best_area:
-                best = (int(win.get("kCGWindowNumber")), (x, y, w, h))
-                best_area = area
-        return best
+        return pick_app_windows(info or [], pid)
+
+    def _window_target(
+        self, app_name: str,
+    ) -> tuple[int | None, tuple[int, int, int, int]] | None:
+        """Return ``(window_id, (x, y, w, h))`` for an app's FRONT window.
+
+        Coordinates are logical points (top-left origin). ``window_id`` is None
+        for the whole-screen case (empty *app_name*). Uses CoreGraphics' window
+        list (NOT Accessibility), so it works even for apps that switch AX off
+        (Slack) and for windows that aren't frontmost. The front window is the
+        one an open dialog or settings window is in (the largest window was
+        chosen before, which hid every dialog of apps like GIMP). Returns None
+        if the app isn't running or has no visible normal window.
+        """
+        if not app_name:
+            sw, sh = _logical_screen_size()
+            return (None, (0, 0, sw, sh))
+        wins = self._app_windows(app_name)
+        if not wins:
+            return None
+        wid, rect, _title = wins[0]
+        return wid, rect
 
     @staticmethod
     def _cgimage_to_png_bytes(cg_image) -> bytes:
@@ -1853,6 +2462,8 @@ class MacOSToolkit:
                 "conf": float(cands[0].confidence()),
                 "x": int(ox + cx_frac * w),
                 "y": int(oy + cy_frac * h),
+                "left": ox + box.origin.x * w,
+                "width": box.size.width * w,
             })
         return out
 
@@ -1904,8 +2515,9 @@ class MacOSToolkit:
         # ── Observation ───────────────────────────────────────────────────
 
         @tool("list_apps", args_schema=_ListAppsInput)
-        async def list_apps(query: str) -> str:
+        async def list_apps(query: str = "") -> str:
             """Find running apps whose name contains the search query (case-insensitive).
+            With no query, list every running app and mark the frontmost one.
 
             Always call this before launch_app / activate_app / get_screen_controls
             to get the exact localised app name.
@@ -1914,6 +2526,7 @@ class MacOSToolkit:
             message if nothing matches.
 
             Examples:
+              list_apps()          → every running app, frontmost marked
               list_apps('slack')   → 'Slack'
               list_apps('chrome')  → 'Google Chrome'
             """
@@ -1928,7 +2541,23 @@ class MacOSToolkit:
                 return sorted(ws_names | fg_names)
 
             all_names = await asyncio.to_thread(_running_app_names)
-            q = query.strip().lower()
+            q = (query or "").strip().lower()
+            if not q:
+                # Regular apps only (Dock icons): the foreground-app cache also holds agents and shells.
+                def _regular() -> list[str]:
+                    return sorted({
+                        str(a.localizedName() or "")
+                        for a in NSWorkspace.sharedWorkspace().runningApplications()
+                        if a.activationPolicy() == 0 and (a.localizedName() or "")
+                    })
+                regular = await asyncio.to_thread(_regular)
+                front = await asyncio.to_thread(tk._frontmost_app_name)
+                lines = ["<running>"]
+                for name in regular:
+                    mark = " frontmost='true'" if name == front else ""
+                    lines.append(f"  <app{mark}>{name}</app>")
+                lines.append("</running>")
+                return "\n".join(lines)
             matches = [n for n in all_names if q in n.lower()]
             if not matches:
                 return (
@@ -2038,8 +2667,8 @@ class MacOSToolkit:
                             f"button/label/placeholder, then click_at(x, y) on it.\n"
                             f"  4. To type: find the field's placeholder/label, click_at it "
                             f"to focus, then type_text('...').\n"
-                            f"  5. If this app has an AppleScript dictionary, the "
-                            f"macos-applescript route is an alternative.\n"
+                            f"  5. If this app has an AppleScript dictionary and you have "
+                            f"run_osascript, scripting it is an alternative.\n"
                             f"Do NOT report window titles or screen history as message "
                             f"content. Report ONLY what read_app_dom/read_screen returns; "
                             f"if you cannot read it, say so explicitly."
@@ -2205,8 +2834,9 @@ class MacOSToolkit:
                 cmd = ["open", app_name]
                 delay = 0.5
             elif app_name.startswith("/") and app_name.endswith(".app"):
-                bundle_name = Path(app_name).stem
-                cmd = ["open", "-a", bundle_name]
+                # An existing bundle is opened by its path, so a bundle whose file name differs from its
+                # display name (Anaconda-Navigator.app) still opens. A missing path keeps the old name lookup.
+                cmd = ["open", "-a", app_name if Path(app_name).exists() else Path(app_name).stem]
                 delay = tk.launch_delay
             else:
                 cmd = ["open", "-a", app_name]
@@ -2215,11 +2845,9 @@ class MacOSToolkit:
             target = app_name.lower().removesuffix(".app").split("/")[-1]
 
             def _find_app(fresh: bool = False) -> str | None:
-                for n in tk._get_foreground_apps(max_age=0 if fresh else 2.0):
-                    if n.lower() == target or n.lower().startswith(target):
-                        return n
-                return None
+                return _pick_running_app(target, tk._get_foreground_apps(max_age=0 if fresh else 2.0))
 
+            apps_before = set(await asyncio.to_thread(tk._get_foreground_apps, 0))
             already = await asyncio.to_thread(_find_app, False)
             if already:
                 return (
@@ -2231,7 +2859,15 @@ class MacOSToolkit:
                 subprocess.run, cmd, capture_output=True, text=True
             )
             if proc.returncode != 0 and proc.stderr:
-                return f"open failed: {proc.stderr.strip()}"
+                msg = f"open failed: {proc.stderr.strip()}"
+                if not is_url:
+                    similar = await asyncio.to_thread(_similar_installed_apps, app_name)
+                    if similar:
+                        msg += ("\nInstalled apps with a similar name: " + ", ".join(similar)
+                                + ". Retry with the exact name.")
+                    else:
+                        msg += "\nNo installed app has a similar name; it may not be installed on this computer."
+                return msg
 
             deadline = time.monotonic() + delay + 5.0
             found_name: str | None = None
@@ -2247,6 +2883,15 @@ class MacOSToolkit:
                     f"then wait_for_controls('{found_name}')"
                 )
             running_apps = await asyncio.to_thread(tk._get_foreground_apps, 0)
+            appeared = _new_regular_apps(apps_before, running_apps)
+            if appeared:
+                # The open worked, but the app lists under another name (a launcher script's interpreter, say).
+                names = ", ".join(f"'{n}'" for n in appeared)
+                return (
+                    f"Launched '{app_name}' but it appears as {names}: a new app that was not running before. "
+                    f"Use activate_app('{appeared[0]}') then wait_for_controls('{appeared[0]}'). "
+                    f"It may still be starting; if it has no window yet, wait and read the controls again."
+                )
             return (
                 f"open command succeeded for '{app_name}' but app did not appear within "
                 f"{delay + 5:.0f} s. The app may have crashed or require permissions.\n"
@@ -2274,7 +2919,23 @@ class MacOSToolkit:
                 sw, sh = _logical_screen_size()
                 return wy < 0 or wy > sh or wx < -sw or wx > sw * 2
 
+            def _restore_minimized(pid: int, display_name: str) -> str | None:
+                """Un-minimise a window when the app has none on screen. Returns the restored window's title
+                ("" when untitled), or None when nothing was restored."""
+                if _VISION_AVAILABLE and tk._app_windows(display_name):
+                    return None
+                root = AXUIElementCreateApplication(pid)
+                wins = _ax_get(root, kAXWindowsAttribute) or []
+                mins = [w for w in wins if _ax_get(w, kAXMinimizedAttribute) is True]
+                if not mins or (not _VISION_AVAILABLE and len(mins) < len(wins)):
+                    return None
+                if AXUIElementSetAttributeValue(mins[0], kAXMinimizedAttribute, False) != 0:
+                    return None
+                time.sleep(0.4)
+                return str(_ax_get(mins[0], kAXTitleAttribute) or "")
+
             async def _reposition_and_return(pid: int, display_name: str) -> str:
+                restored = await asyncio.to_thread(_restore_minimized, pid, display_name)
                 if await asyncio.to_thread(_window_offscreen, pid):
                     await asyncio.to_thread(
                         subprocess.run,
@@ -2283,6 +2944,13 @@ class MacOSToolkit:
                         capture_output=True,
                     )
                     await asyncio.sleep(0.3)
+                if restored is not None:
+                    name = f" '{restored}'" if restored else ""
+                    return f"Activated: {display_name} (frontmost confirmed; restored its minimised window{name})."
+                if _VISION_AVAILABLE and not await asyncio.to_thread(tk._app_windows, display_name):
+                    return (f"Activated: {display_name} is frontmost, but it has no window on screen (closed, "
+                            f"minimised or hidden). Open one from its Window or File menu (or ⌘N) before reading "
+                            f"or clicking.")
                 return f"Activated: {display_name} (frontmost confirmed)."
 
             ws = NSWorkspace.sharedWorkspace()
@@ -2378,6 +3046,9 @@ class MacOSToolkit:
                     f"Control #{index} not in registry. "
                     "Call get_screen_controls() or wait_for_controls() first."
                 )
+            what, refused = await asyncio.to_thread(tk._index_guard, index)
+            if refused:
+                return refused
             before = await asyncio.to_thread(_press_state_token, elem)
             err = await asyncio.to_thread(AXUIElementPerformAction, elem, kAXPressAction)
             await asyncio.sleep(tk.action_delay)
@@ -2386,9 +3057,18 @@ class MacOSToolkit:
                 if isinstance(coords, str):
                     return f"AXPress failed for #{index} (err={err}) and click fallback failed: {coords}"
                 x, y = coords
+                pid = await asyncio.to_thread(_ax_pid, elem)
+                rects = await asyncio.to_thread(_app_window_rects, pid) if pid else []
+                if rects and not point_in_rects(x, y, rects):
+                    return (f"Not pressed: AXPress failed for #{index}{what} (err={err}), and its centre ({x}, {y}) "
+                            "is outside the app's windows, so a click there would land in another app. Read the "
+                            "controls again (the control may have moved or closed), or use click_text / menus.")
+                before_app = await asyncio.to_thread(tk._frontmost_app_name)
                 await asyncio.to_thread(pyautogui.click, x, y)
                 await asyncio.sleep(tk.action_delay)
-                return f"Pressed control #{index} (AXPress err={err}; clicked at ({x}, {y}) instead)"
+                moved = front_change_note(before_app, await asyncio.to_thread(tk._frontmost_app_name))
+                return (f"Pressed control #{index}{what} (AXPress err={err}; clicked at ({x}, {y}) instead)"
+                        + (f"\n{moved}" if moved else ""))
             # AXPress reported success, but Chromium/Electron controls accept the
             # action and silently ignore it. Compare a cheap state token before
             # and after: if nothing changed AND the owning app is Electron (has a
@@ -2412,15 +3092,19 @@ class MacOSToolkit:
                         f"app is NOT frontmost. (click({index}) also works but needs the "
                         f"app focused/visible.)"
                     )
-            return f"Pressed control #{index}"
+            return f"Pressed control #{index}{what}"
 
         @tool("type_into_control", args_schema=_TypeIntoControlInput)
-        async def type_into_control(index: int, text: str, submit: bool = False) -> str:
+        async def type_into_control(index: int, text: str, submit: bool = False, append: bool = False) -> str:
             """Focus a text field by index then type into it.
 
             Focuses via AXUIElementSetAttributeValue(kAXFocusedAttribute, True) then
             types using the keyboard — no click needed.
             Works for: TextField, TextArea, ComboBox.
+
+            A single-line field is cleared first, so the text replaces what was there
+            (append=True adds to the end instead); the result says what the field reads
+            after typing. Multi-line text areas insert at the cursor.
 
             Set submit=True to press Return after typing — do this for search boxes and
             single-line fields that submit on Enter. Leave submit=False for multi-line
@@ -2435,26 +3119,87 @@ class MacOSToolkit:
                     f"Control #{index} not in registry. "
                     "Call get_screen_controls() first."
                 )
+            # A group listed under a field's name (Calc's G 'Name Box') is not the field: type into the field in it.
+            redirected = ""
+            target = field_group_redirect(index, tk._label_registry)
+            if target is None and tk._label_registry.get(index, ("", ""))[0] == "Group":
+                inner = await asyncio.to_thread(_text_field_in, elem)
+                if inner is not None:
+                    elem, redirected = inner, f" (the text field inside group #{index})"
+            if target is not None and tk._element_registry.get(target) is not None:
+                elem, redirected = tk._element_registry[target], f" (#{target}, the field inside group #{index})"
+                index = target
+            elif not redirected:
+                refused = untypeable_refusal(index, tk._label_registry)
+                if refused:
+                    return refused
+            refused = (name_box_refusal(index, text, tk._label_registry)
+                       or save_name_path_refusal(index, text, tk._label_registry))
+            if refused:
+                return refused
             err = await asyncio.to_thread(
                 AXUIElementSetAttributeValue, elem, kAXFocusedAttribute, True,
             )
             if err != 0:
                 return f"Focus failed for #{index} (err={err})."
             await asyncio.sleep(0.15)
+            role = str(await asyncio.to_thread(_ax_get, elem, kAXRoleAttribute) or "")
+            label = tk._label_registry.get(index, ("", ""))[1]
+            single_line = replaces_contents(role, label)
+            pid = await asyncio.to_thread(_ax_pid, elem)
+            cleared = True
+            before = await asyncio.to_thread(_ax_get, elem, kAXValueAttribute) if single_line else None
+            if single_line and not append:
+                cleared = await asyncio.to_thread(_clear_field, elem, pid)
             # Prefer process-targeted CGEvent typing: it posts keystrokes to the
             # element's own process without touching global focus, so it stays
             # correct even if another agent steals the foreground mid-type. Fall
             # back to pyautogui's global keyboard if the pid is unknown or the
-            # CGEvent APIs are unavailable.
-            pid = await asyncio.to_thread(_ax_pid, elem)
-            typed = await asyncio.to_thread(_type_to_pid, pid, text, submit)
-            if not typed:
+            # CGEvent APIs are unavailable. Return is pressed after the field is
+            # read back, so the note shows what was submitted.
+            via_pid = await asyncio.to_thread(_type_to_pid, pid, text, False)
+            if not via_pid:
                 await asyncio.to_thread(pyautogui.typewrite, text, interval=0.04)
-                if submit:
+            note = ""
+            if single_line:
+                await asyncio.sleep(0.1)
+                value = await asyncio.to_thread(_ax_get, elem, kAXValueAttribute)
+                note = typed_value_note(text, before, value, append=append, cleared=cleared)
+                if not append and note.startswith("Warning") and pid:
+                    # The old text survived the clear: select everything in the field and type again, once.
+                    await asyncio.to_thread(AXUIElementSetAttributeValue, elem, kAXFocusedAttribute, True)
+                    if await asyncio.to_thread(_select_all_pid, pid):
+                        if not await asyncio.to_thread(_type_to_pid, pid, text, False):
+                            await asyncio.to_thread(pyautogui.typewrite, text, interval=0.04)
+                        await asyncio.sleep(0.1)
+                        value = await asyncio.to_thread(_ax_get, elem, kAXValueAttribute)
+                        retry = typed_value_note(text, "", value, append=False, cleared=True)
+                        note = ("Typed again after selecting all, since the old text stayed. " + retry
+                                if not retry.startswith("Warning") else note + " Selecting all and typing again "
+                                "did not fix it.")
+            if submit:
+                if via_pid:
+                    await asyncio.to_thread(_type_to_pid, pid, "", True)
+                else:
                     await asyncio.to_thread(pyautogui.press, "return")
             await asyncio.sleep(tk.action_delay)
-            suffix = " and pressed Return" if submit else ""
-            return f"Typed {text!r} into control #{index}{suffix}"
+            suffix = (" and pressed Return" if submit else "") + redirected
+            if note.startswith("The field now reads") and submit:
+                note = note.replace("The field now reads", "Before Return the field read", 1)
+            if submit and label == "Name Box":
+                # Where did the selection go? The Name Box shows the selected cell or range after Return.
+                await asyncio.sleep(0.15)
+                shown = await asyncio.to_thread(_ax_get, elem, kAXValueAttribute)
+                back = name_box_readback_note(text, shown)
+                if back:
+                    note = "\n".join(x for x in (note, back) if x)
+            hint = cell_ref_hint(index, text, tk._label_registry)
+            if _RANGE_NAME_RE.fullmatch(text.strip()) and label == "Name Box" and not _CELL_REF_RE.fullmatch(
+                    text.strip()):
+                hint = (f"Note: {text.strip()!r} is not a cell reference: the Name Box went to the range of that "
+                        "name, or, if there is none, gave the selected cells that name.")
+            extra = "\n".join(x for x in (note, hint) if x)
+            return f"Typed {text!r} into control #{index}{suffix}" + (f"\n{extra}" if extra else "")
 
         @tool("get_control_value", args_schema=_GetControlValueInput)
         async def get_control_value(index: int) -> str:
@@ -2489,10 +3234,15 @@ class MacOSToolkit:
             result = tk._resolve_click_coords(index)
             if isinstance(result, str):
                 return result
+            what, refused = await asyncio.to_thread(tk._index_guard, index)
+            if refused:
+                return refused
             x, y = result
+            before_app = await asyncio.to_thread(tk._frontmost_app_name)
             await asyncio.to_thread(pyautogui.click, x, y)
             await asyncio.sleep(tk.action_delay)
-            return f"Clicked control #{index} at ({x}, {y})"
+            moved = front_change_note(before_app, await asyncio.to_thread(tk._frontmost_app_name))
+            return f"Clicked control #{index}{what} at ({x}, {y})" + (f"\n{moved}" if moved else "")
 
         @tool("double_click", args_schema=_DoubleClickInput)
         async def double_click(index: int) -> str:
@@ -2503,10 +3253,13 @@ class MacOSToolkit:
             result = tk._resolve_click_coords(index)
             if isinstance(result, str):
                 return result
+            what, refused = await asyncio.to_thread(tk._index_guard, index)
+            if refused:
+                return refused
             x, y = result
             await asyncio.to_thread(pyautogui.doubleClick, x, y)
             await asyncio.sleep(tk.action_delay)
-            return f"Double-clicked control #{index} at ({x}, {y})"
+            return f"Double-clicked control #{index}{what} at ({x}, {y})"
 
         @tool("right_click", args_schema=_RightClickInput)
         async def right_click(index: int) -> str:
@@ -2517,10 +3270,13 @@ class MacOSToolkit:
             result = tk._resolve_click_coords(index)
             if isinstance(result, str):
                 return result
+            what, refused = await asyncio.to_thread(tk._index_guard, index)
+            if refused:
+                return refused
             x, y = result
             await asyncio.to_thread(pyautogui.rightClick, x, y)
             await asyncio.sleep(tk.action_delay)
-            return f"Right-clicked control #{index} at ({x}, {y})"
+            return f"Right-clicked control #{index}{what} at ({x}, {y})"
 
         @tool("scroll", args_schema=_ScrollInput)
         async def scroll(index: int, direction: str, amount: int = 300) -> str:
@@ -2648,6 +3404,18 @@ class MacOSToolkit:
                     "OCR is unavailable on this host "
                     "(pyobjc-framework-Vision is not installed)."
                 )
+            # The app's other windows too (the main window behind a dialog, or the dialog behind a palette): each
+            # is captured on its own, so text in one window never hides another. Results say which window holds
+            # them.
+            wins = await asyncio.to_thread(tk._app_windows, app_name) if app_name else []
+            others = [w for w in wins if w[0] != window_id][:2]
+            if others:
+                front = next((t for wid, _r, t in wins if wid == window_id), "")
+                results = [{**r, "win": f"'{front}' (front)" if front else "front window"} for r in results]
+                for wid, rect, title in others:
+                    more, _ = await asyncio.to_thread(tk._capture_for_read, wid, rect, False)
+                    tag = f"'{title}' (behind the front window)" if title else "a window behind the front one"
+                    results += [{**r, "win": tag} for r in (more or [])]
             return results, b64
 
         async def _ocr(app_name: str) -> list[dict] | str:
@@ -2663,7 +3431,9 @@ class MacOSToolkit:
 
             Use when get_screen_controls reports the app's accessibility interface
             is DISABLED (e.g. Slack) or returns no controls. Captures the app's
-            window (or the full screen when app_name is empty) and returns the
+            front window, so an open dialog is what you read, plus up to two of its
+            windows behind it, each in its own section (or the full screen when
+            app_name is empty), and returns the
             recognised text in roughly top-to-bottom, left-to-right reading order.
 
             Returns actual on-screen text. Report ONLY what appears here — never
@@ -2687,7 +3457,7 @@ class MacOSToolkit:
                     f"lack Screen Recording permission (the capture comes back "
                     f"blank). {_SCREEN_RECORDING_HINT}"
                 )
-            return _format_ocr_lines(results, label)
+            return _format_ocr_windows(results, label)
 
         @tool("read_screen", args_schema=_ReadScreenInput)
         async def read_screen_vision(app_name: str = "") -> list | str:
@@ -2709,7 +3479,7 @@ class MacOSToolkit:
             if isinstance(payload, str):
                 return payload
             results, b64 = payload
-            text = _format_ocr_lines(results, app_name or "full screen")
+            text = _format_ocr_windows(results, app_name or "full screen")
             if b64 is None:
                 return text
             return [
@@ -2736,7 +3506,13 @@ class MacOSToolkit:
             results = await _ocr(app_name)
             if isinstance(results, str):
                 return results
-            matches = _rank_text_matches(results, text)
+            sw, sh = await asyncio.to_thread(_logical_screen_size)
+            matches = []
+            for r in _rank_text_matches(results, text):
+                px, py = substring_point(r, text)
+                if sw and sh and not (0 <= px < sw and 0 <= py < sh):
+                    continue                    # off screen: a window partly outside the display
+                matches.append({**r, "x": px, "y": py})
             if not matches:
                 where = app_name or "full screen"
                 return (
@@ -2745,6 +3521,7 @@ class MacOSToolkit:
                 )
             lines = [
                 f"{r['text']!r} at ({r['x']}, {r['y']}) [conf {r['conf']:.2f}]"
+                + (f" in window {r['win']}" if r.get("win") else "")
                 for r in matches[:5]
             ]
             return (
@@ -2788,11 +3565,14 @@ class MacOSToolkit:
                     f"Call read_screen('{app_name}') to see what is visible."
                 )
             best = matches[0]
-            await asyncio.to_thread(pyautogui.click, best["x"], best["y"])
+            bx, by = substring_point(best, text)
+            front = await asyncio.to_thread(tk._frontmost_app_name)
+            await asyncio.to_thread(pyautogui.click, bx, by)
             await asyncio.sleep(tk.action_delay)
+            moved = front_change_note(front, await asyncio.to_thread(tk._frontmost_app_name))
             return (
                 f"Focused '{app_name}' and clicked {best['text']!r} "
-                f"at ({best['x']}, {best['y']})."
+                f"at ({bx}, {by})." + (f"\n{moved}" if moved else "")
             )
 
         @tool("click_at", args_schema=_ClickAtInput)
@@ -2809,7 +3589,8 @@ class MacOSToolkit:
             await asyncio.to_thread(pyautogui.click, x, y)
             await asyncio.sleep(tk.action_delay)
             focus = f" (frontmost app: '{front}')" if front else ""
-            return f"Clicked at ({x}, {y}){focus}."
+            moved = front_change_note(front, await asyncio.to_thread(tk._frontmost_app_name))
+            return f"Clicked at ({x}, {y}){focus}." + (f"\n{moved}" if moved else "")
 
         @tool("double_click_at", args_schema=_ClickAtInput)
         async def double_click_at(x: int, y: int) -> str:
@@ -2851,10 +3632,77 @@ class MacOSToolkit:
             await asyncio.sleep(tk.action_delay)
             return f"Scrolled {direction} {amount}px at ({x}, {y})."
 
+        @tool("drag", args_schema=_DragInput)
+        async def drag(from_index: int = -1, to_index: int = -1, from_x: int = -1, from_y: int = -1,
+                       to_x: int = -1, to_y: int = -1) -> str:
+            """Drag with the mouse: press at one point, move in small steps, release at another. For things that
+            only move by dragging: a field into a box of LibreOffice's Pivot Table Layout dialog, a layer on a
+            GIMP canvas, a file onto a window. Give each end as a control index or as screen x/y.
+
+            Example: drag(from_index=12, to_index=20)
+            Example: drag(from_x=480, from_y=620, to_x=700, to_y=300)
+            """
+            ends = []
+            for idx, x, y, name in ((from_index, from_x, from_y, "start"), (to_index, to_x, to_y, "end")):
+                if idx >= 0:
+                    xy = tk._resolve_click_coords(idx)
+                    if isinstance(xy, str):
+                        return f"Not dragged: the {name} {xy}"
+                    ends.append(xy)
+                elif x >= 0 and y >= 0:
+                    ends.append((x, y))
+                else:
+                    return f"Not dragged: give the {name} as a control index or as x and y."
+            (fx, fy), (tx, ty) = ends
+            front = await asyncio.to_thread(tk._frontmost_app_name)
+
+            def _do() -> None:
+                pyautogui.moveTo(fx, fy)
+                pyautogui.mouseDown()
+                time.sleep(0.3)                     # apps start a drag only after the button is held a moment
+                steps = 12
+                for k in range(1, steps + 1):
+                    pyautogui.moveTo(fx + (tx - fx) * k / steps, fy + (ty - fy) * k / steps)
+                    time.sleep(0.04)
+                time.sleep(0.2)
+                pyautogui.mouseUp()
+            await asyncio.to_thread(_do)
+            await asyncio.sleep(tk.action_delay)
+            tk._invalidate_scan_cache()
+            moved = front_change_note(front, await asyncio.to_thread(tk._frontmost_app_name))
+            return (f"Dragged from ({fx}, {fy}) to ({tx}, {ty})" + (f" (frontmost app: '{front}')" if front else "")
+                    + ". Read the screen to check it moved." + (f"\n{moved}" if moved else ""))
+
+        @tool("set_text_at", args_schema=_SetTextAtInput)
+        async def set_text_at(x: int, y: int, text: str, submit: bool = True) -> str:
+            """Set a field that is not in the controls list to a value in one call: click it at (x, y), select all
+            (⌘A), type the text, and press Return. For number fields with sliders (GIMP, LibreOffice), a file name
+            in an Export dialog, or any field found with find_text_on_screen.
+
+            Example: set_text_at(640, 410, '40')
+            """
+            front = await asyncio.to_thread(tk._frontmost_app_name)
+            await asyncio.to_thread(pyautogui.click, x, y)
+            await asyncio.sleep(0.2)
+            await asyncio.to_thread(pyautogui.hotkey, "command", "a")
+            await asyncio.sleep(0.05)
+            now = await asyncio.to_thread(tk._frontmost_app_name)
+            pid = await asyncio.to_thread(tk._resolve_pid, now) if now else 0
+            if not await asyncio.to_thread(_type_to_pid, pid, text, False):
+                await asyncio.to_thread(pyautogui.typewrite, text, interval=0.03)
+            if submit:
+                await asyncio.sleep(0.05)
+                await asyncio.to_thread(pyautogui.press, "return")
+            await asyncio.sleep(tk.action_delay)
+            moved = front_change_note(front, now)
+            return (f"Clicked ({x}, {y}), selected all and typed {text!r}" + (" and pressed Return" if submit else "")
+                    + (f" (frontmost app: '{now}')" if now else "") + ". Read the field to check it took the value."
+                    + (f"\n{moved}" if moved else ""))
+
         # ── Keyboard ──────────────────────────────────────────────────────
 
         @tool("type_text", args_schema=_TypeTextInput)
-        async def type_text(text: str, submit: bool = False, app_name: str = "") -> str:
+        async def type_text(text: str, submit: bool = False, app_name: str = "", replace: bool = False) -> str:
             """Type text into the currently focused field.
 
             Prefer type_into_control(index, text) to target a specific field.
@@ -2866,7 +3714,14 @@ class MacOSToolkit:
             Set submit=True to press Return after typing — do this for search boxes and
             single-line fields that submit on Enter. Leave submit=False for multi-line
             text areas or forms with a separate submit button.
+
+            Set replace=True to select all (⌘A) in the focused field first, so the text
+            replaces what the field holds (a file name in an Export dialog) instead of
+            going in at the cursor.
             """
+            if replace:
+                await asyncio.to_thread(pyautogui.hotkey, "command", "a")
+                await asyncio.sleep(0.05)
             if app_name:
                 ok, front = await asyncio.to_thread(tk._activate_and_verify, app_name)
                 if not ok:
@@ -2915,16 +3770,34 @@ class MacOSToolkit:
               hotkey('command+w')        — close window
               hotkey('command+q')        — quit app
             """
-            parts = [k.strip().lower() for k in keys.replace("+", " ").split()]
+            parts, why = parse_hotkey(keys)
+            if why:
+                return f"Not pressed: {why}. Nothing was sent."
             front = await asyncio.to_thread(tk._frontmost_app_name)
+            save = parts in _SAVE_KEYS
+            pid = await asyncio.to_thread(tk._resolve_pid, front) if save and front else 0
+            doc = await asyncio.to_thread(_front_document, pid) if pid else None
             await asyncio.to_thread(pyautogui.hotkey, *parts)
             await asyncio.sleep(tk.action_delay)
             focus = f" (frontmost app: '{front}')" if front else ""
-            return (
+            out = (
                 f"Hotkey: {keys}{focus}. "
                 f"Shortcuts go to the frontmost app — if that is not your target, "
                 f"call activate_app() and retry."
             )
+            if doc is not None:
+                # A save is easy to believe and easy to lose (a keep-format question, a Save As sheet): say what
+                # happened to the file on disk.
+                path, before, _win = doc
+                after, dialog = before, ""
+                for _ in range(10):
+                    dialog = await asyncio.to_thread(_open_dialog_title, pid)
+                    after = await asyncio.to_thread(_mtime, path)
+                    if dialog or (after is not None and (before is None or after > before)):
+                        break
+                    await asyncio.sleep(0.3)
+                out += "\n" + save_result_note(path, before, after, dialog)
+            return out
 
         @tool("spotlight_search", args_schema=_SpotlightSearchInput)
         async def spotlight_search(query: str) -> str:
@@ -2941,7 +3814,12 @@ class MacOSToolkit:
 
         # ── Batch actions ─────────────────────────────────────────────────
 
+        # Structured tools (observe, menus, dialogs, tables): macos_structured_tools.
+        from .macos_structured_tools import build_structured_tools
+        structured = build_structured_tools(tk)
+
         batch_dispatch: dict[str, object] = {
+            "menu_select": structured["menu_select"],
             "press_control": press_control,
             "type_into_control": type_into_control,
             "get_control_value": get_control_value,
@@ -2951,6 +3829,14 @@ class MacOSToolkit:
             "scroll": scroll,
             "type_text": type_text,
             "hotkey": hotkey,
+            "click_at": click_at,
+            "double_click_at": double_click_at,
+            "right_click_at": right_click_at,
+            "scroll_at": scroll_at,
+            "click_text": click_text,
+            "drag": drag,
+            "set_text_at": set_text_at,
+            "select_text": structured["select_text"],
         }
 
         @tool("batch_actions", args_schema=_BatchActionsInput)
@@ -2961,8 +3847,10 @@ class MacOSToolkit:
             call with keyword arguments, using the same syntax as individual calls.
 
             Allowed tools:
-              press_control, type_into_control, get_control_value,
-              click, double_click, right_click, scroll, type_text, hotkey
+              press_control, type_into_control, get_control_value, menu_select,
+              click, double_click, right_click, scroll, type_text, hotkey,
+              click_at, double_click_at, right_click_at, scroll_at, click_text,
+              drag, set_text_at, select_text
 
             Examples:
               batch_actions(steps="press_control(index=7)\\npress_control(index=3)")
@@ -2996,7 +3884,7 @@ class MacOSToolkit:
                     )
                     continue
                 try:
-                    result = await tool_fn.ainvoke(args)
+                    result = await tool_fn.ainvoke(coerce_args(getattr(tool_fn, "args_schema", None), args))
                     results.append(f"[{i + 1}] {tool_name}: {result}")
                 except Exception as exc:
                     results.append(f"[{i + 1}] {tool_name}: ERROR — {exc}")
@@ -3069,6 +3957,9 @@ class MacOSToolkit:
             type_text,
             hotkey,
             spotlight_search,
+            drag,
+            set_text_at,
+            *structured.values(),
         ]
 
         vision_tools = [

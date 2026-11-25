@@ -332,6 +332,19 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
         # Niche; the benchmark profile and the user turn it on.
         enabled=False,
     ),
+    BuiltinMCP(
+        id="macarena-vm",
+        name="MacArena VM",
+        description=(
+            "Mouse and keyboard tools for a remote macOS VM, for the MacArena benchmark "
+            "(scripts/macarena). Sends actions to the benchmark bridge, which runs them in a "
+            "UTM VM; does nothing on this Mac. Reads the bridge address and token from "
+            "~/.macarena-bridge.json (see its server.py)."
+        ),
+        source_dir_name="macarena_vm",
+        # Benchmark-only; the benchmark profile turns it on.
+        enabled=False,
+    ),
 )
 
 

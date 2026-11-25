@@ -64,6 +64,12 @@ OBSERVATION_TOOLS: frozenset[str] = frozenset({
     "read_app_dom",
     "read_screen",
     "find_text_on_screen",
+    "observe",
+    "read_dialog",
+    "read_table",
+    "get_control_values",
+    "wait_until",
+    "app_guide",
     # filesystem / generic read tools
     "read_file",
     "ls",

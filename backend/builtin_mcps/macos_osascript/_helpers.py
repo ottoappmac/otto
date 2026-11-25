@@ -113,7 +113,8 @@ def classify_dictionary(
 def resolve_app_path(app_name: str) -> Optional[str]:
     """Find the ``.app`` bundle for ``app_name`` across the conventional
     install locations: ``/Applications``, ``/System/Applications``,
-    ``/System/Applications/Utilities``, and ``~/Applications``.
+    ``/System/Applications/Utilities``, ``/System/Library/CoreServices``
+    (Finder, System Events), and ``~/Applications``.
 
     Returns the absolute path string when one of the candidates exists,
     or ``None`` when the app isn't installed in any of the standard
@@ -124,6 +125,7 @@ def resolve_app_path(app_name: str) -> Optional[str]:
         Path("/Applications") / f"{app_name}.app",
         Path("/System/Applications") / f"{app_name}.app",
         Path("/System/Applications/Utilities") / f"{app_name}.app",
+        Path("/System/Library/CoreServices") / f"{app_name}.app",
         Path.home() / "Applications" / f"{app_name}.app",
     ]
     for c in candidates:
@@ -141,6 +143,28 @@ def escape_applescript_string(value: str) -> str:
     script body without code-injection from the agent's ``app_name``.
     """
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def shell_command_script(command: str) -> str:
+    """An AppleScript that runs ``command`` with ``do shell script``, quoted here so the caller never has to
+    escape shell or Python code inside an AppleScript string. Agents that nested quotes by hand failed a third of
+    their scripts on syntax alone ("A number can't go after this \"")."""
+    return f'do shell script "{escape_applescript_string(command)}"'
+
+
+# Scripts that are refused before they run, with the reason and what to do instead.
+_CHROME_BOOKMARK_RE = re.compile(r"\bmake\s+new\s+bookmark\s+(?:folder|item)\b", re.I)
+_CHROMIUM_APP_RE = re.compile(r'application\s+(?:id\s+)?"(?:Google Chrome|Chromium|com\.google\.Chrome)', re.I)
+
+
+def refused_script_reason(script: str) -> str:
+    """Why ``script`` is not run, or "". Chrome's AppleScript bookmark commands make Chrome quit (seen twice in
+    one benchmark run, losing the profile the task was judged on)."""
+    if _CHROME_BOOKMARK_RE.search(script) and _CHROMIUM_APP_RE.search(script):
+        return ("Not run: Chrome's AppleScript bookmark commands (make new bookmark folder / item) make Chrome "
+                "quit. Use the Bookmark Manager instead: ⌥⌘B (chrome://bookmarks), its ⋮ menu has Add new folder "
+                "and Add new bookmark; ⌘D bookmarks the open page.")
+    return ""
 
 
 # Verbs that take over the single foreground GUI session: they either

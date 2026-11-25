@@ -36,7 +36,7 @@ MAX_KEPT_IMAGES = 6
 """Most recent tool-result images kept in the replayed history."""
 
 # Agents that look at many images and are known to need this. Others keep the default behaviour.
-AGENTS = frozenset({"benchcad-agent"})
+AGENTS = frozenset({"benchcad-agent", "macos-desktop-agent", "macarena-desktop-agent"})
 
 
 def maybe_for_agent(agent_name: str | None, max_images: int | None = None) -> "OldImagePruningMiddleware | None":

@@ -1,0 +1,309 @@
+<title>macOS Agent Rebuild Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: one reading column. Answers first, then evidence, architecture, workstreams, roadmap, risks. */
+:root {
+  --bg: #f5f6f8; --surface: #ffffff; --sunk: #eceef2; --fg: #1a1e26; --muted: #5a6271; --line: #d9dde5;
+  --accent: #2b57c9; --yes: #2e7d4f; --no: #b3461f; --part: #a07812;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11141a; --surface: #191d25; --sunk: #222731; --fg: #e5e8ee; --muted: #9aa1af; --line: #2c323d;
+  --accent: #86a2f2; --yes: #63c08a; --no: #ee8a62; --part: #d8b452; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #11141a; --surface: #191d25; --sunk: #222731; --fg: #e5e8ee; --muted: #9aa1af; --line: #2c323d;
+  --accent: #86a2f2; --yes: #63c08a; --no: #ee8a62; --part: #d8b452; color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.62 var(--body); }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 44px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: 2rem; } h2 { font-size: 1.4rem; } h3 { font-size: 1.02rem; }
+p { margin: 0; max-width: 70ch; }
+section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.eyebrow { font: 500 0.75rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.meta { font: 0.85rem var(--mono); color: var(--muted); }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--sunk); border-radius: 4px; padding: 0 4px; }
+.id { font-family: var(--mono); font-size: 0.82em; color: var(--muted); }
+ul, ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; max-width: 74ch; }
+header { display: flex; flex-direction: column; gap: 12px; }
+
+.answers { display: flex; flex-direction: column; gap: 10px; }
+.ans { display: grid; grid-template-columns: 88px 1fr; gap: 14px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; align-items: start; }
+.ans > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.verdict { font: 600 0.78rem var(--mono); text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 0; color: var(--v); }
+.ans strong { font-family: var(--display); font-weight: 600; }
+
+.callout { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--no); border-radius: 8px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 8px; }
+.callout.info { border-left-color: var(--accent); }
+
+.tablewrap { overflow-x: auto; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font: 500 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); background: var(--sunk); }
+td code { white-space: nowrap; }
+
+.stack { display: flex; flex-direction: column; gap: 6px; }
+.layer { display: grid; grid-template-columns: 170px 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 14px; align-items: baseline; }
+.layer b { font-family: var(--display); font-size: 0.95rem; }
+.layer span { font-size: 0.88rem; color: var(--muted); }
+.layer.new { border-color: var(--accent); }
+.layer.new b::after { content: " new"; font: 500 0.66rem var(--mono); color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.split .layer { grid-template-columns: 1fr; gap: 2px; }
+
+.phase { display: grid; grid-template-columns: 64px 1fr; gap: 14px; }
+.phase .n { font: 700 1.5rem/1 var(--display); color: var(--accent); padding-top: 2px; }
+.phase > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.exit { font-size: 0.88rem; color: var(--muted); }
+.exit b { color: var(--fg); font-weight: 500; }
+footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+@media (max-width: 600px) {
+  .ans, .layer, .phase { grid-template-columns: 1fr; gap: 6px; }
+  .split { grid-template-columns: 1fr; }
+}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Otto · macOS desktop agent · plan</div>
+  <h1>macOS agent rebuild plan</h1>
+  <p class="meta">Based on: final-osworld (18/107), the calc-v19 smoke run after the prompt fix, the code in macos_tools.py, the macos-osascript server, agent_library.py and scripts/macarena</p>
+  <p>This plan answers the five questions you asked, using the failures as evidence. The short version: keep the architecture and rebuild the layer the model talks to. Today the model has to write exact AppleScript paths and click one control at a time. It should instead get observation tools that return a whole screen, table or dialog in one call, and app adapters that act on the live document. It also matters what we can't conclude yet: the run used a small local model with thinking turned off, so part of the gap may be the model rather than the harness.</p>
+</header>
+
+<section>
+  <h2>Answers</h2>
+  <div class="answers">
+    <div class="ans" style="--v:var(--part)"><div class="verdict">Partly</div><div>
+      <strong>Refactor the harness and skills?</strong>
+      <p>Yes for the layer the model sees, no for the plumbing. One toolkit run in the VM through the bridge, and one prompt built from shared sections, is the right design; keep it. Change four things. The harness, not the prompt, should give the agent its starting state. App knowledge should load on demand as skills, for both agents (the benchmark agent currently loads none). Rules about budget, retries and finishing should be enforced by middleware, not written as prose. And the 3,200-line toolkit file should be split into modules.</p>
+    </div></div>
+    <div class="ans" style="--v:var(--part)"><div class="verdict">Not as-is</div><div>
+      <strong>A Playwright tool for browsers?</strong>
+      <p>We need what Playwright offers (a page snapshot with references, then fill, select and wait), but not the Playwright MCP the app already has. That MCP launches its own Chromium, while the checkers, and the user's logins, live in the Chrome that's already open. So build a set of <code>browser_*</code> tools in the macOS toolkit that attach to that Chrome. They'd use the DevTools protocol (CDP) in the benchmark, and an extension or Apple Events bridge for the user's own Chrome in the app.</p>
+    </div></div>
+    <div class="ans" style="--v:var(--yes)"><div class="verdict">Yes</div><div>
+      <strong>More custom tools, at both levels?</strong>
+      <p>Yes. The small tools are general: choose a menu item by its path, search menus, read a dialog, fill a dialog, read a table, and one "what's on screen" call. The large tools are per-app adapters that act on the live document: LibreOffice through its UNO scripting interface, GIMP through its Script-Fu server, System Settings through pane links and <code>defaults</code>. Don't build per-task tools.</p>
+    </div></div>
+    <div class="ans" style="--v:var(--yes)"><div class="verdict">Yes</div><div>
+      <strong>Fewer turns, e.g. a table or cell reader?</strong>
+      <p>Yes, and this is cheap. One task spent 93 of its 100 tool calls reading cells one at a time. Add a range reader, batched value reads, reads of whole dialogs, and results that report only what changed instead of an 8,000-character dump of every control. Most of the turn savings come from the menu and dialog tools, not just the table reader.</p>
+    </div></div>
+    <div class="ans" style="--v:var(--no)"><div class="verdict">Caveat</div><div>
+      <strong>Reviewed against the failures?</strong>
+      <p>Each workstream below names the failed tasks it targets. The caveat is attribution. The model was Qwen3.6-35B-A3B in 8-bit with thinking turned off. Until the same harness has been run with a frontier model, we can't say which failures the tools would fix and which the model would. That run is step 0.</p>
+    </div></div>
+  </div>
+</section>
+
+<section>
+  <h2>What the evidence says, and what it doesn't</h2>
+  <div class="callout">
+    <strong>The prompt fix already happened, and it wasn't enough.</strong>
+    <p>After the run, "Look first: take one full-screen read before choosing an app" was added to the benchmark prompt. In the calc-v19 smoke run, every trajectory started with <code>read_screen</code> and worked in LibreOffice, so the app-choice problem went away. The score was still <b>1 of 6</b>. The agents then ran out of turns on the next problem: "LibreOffice's menu bar not being accessible through the available tools", a chart wizard it couldn't drive, a Tips "Allow" dialog, and the info banner. Fixing app choice exposes the interaction layer as the next limit.</p>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Finding</th><th>Evidence</th><th>What it means</th></tr></thead>
+    <tbody>
+      <tr><td>The obvious "what's open?" call fails</td><td><code>list_apps(query="")</code> is rejected by its schema (min length 1). The agent then guessed <code>numbers</code>, <code>excel</code>, <code>sheets</code>… <span class="id">1334ca3e</span></td><td>A bug, not a model problem. Easy fix.</td></tr>
+      <tr><td>The model can't write System Events menu scripts</td><td>8 scripts in a row with the wrong form (<code>menu item "View" of menu bar 1</code>) and the wrong process name (<code>LibreOffice</code> vs <code>soffice</code>). <span class="id">1334ca3e 12382c62 21df9241 6e99a1ad 045bf3ff</span></td><td>Don't ask a small model to write exact element paths. Give it <code>menu_select(app, path)</code>.</td></tr>
+      <tr><td>"Script first" is the wrong default for these apps</td><td>LibreOffice, GIMP and Chrome have no useful AppleScript dictionary, so "script first" sends the agent into UI scripting, which keeps failing</td><td>Pick the route from the app's capability card, not from one rule for every app.</td></tr>
+      <tr><td>Reads cost turns</td><td>Budget counted in turns. 93 <code>get_control_value</code> calls in <span class="id">535364ea</span>; 17 <code>list_apps</code> calls in <span class="id">b148e375</span></td><td>Bulk reads are worth a lot.</td></tr>
+      <tr><td>Editing the file on disk loses to the open document</td><td>openpyxl edits were overwritten when the checker pressed ⌘S <span class="id">01b269ae 7a4e4bc8</span></td><td>Act on the live document (UNO), not the file.</td></tr>
+      <tr><td>Infeasible tasks are judged badly</td><td>11 of 14 failed; stand-ins like potrace, Pillow and <code>sips</code></td><td>Partly the model. Needs a feasibility check enforced by the harness and app capability facts.</td></tr>
+      <tr><td>Tool-call format slips</td><td>A raw <code>&lt;tool_call&gt;&lt;function=…&gt;</code> written as text, then <code>vm_done</code> <span class="id">5ca86c6f</span>; an answer with no tool call at all <span class="id">58d3eeeb</span></td><td>A local-model problem. The harness should catch malformed calls and ask again.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout info">
+    <strong>Product and benchmark are different goals.</strong>
+    <p>Some fixes only matter for the benchmark: the UTM reset crash, the <code>pkill chrome</code> and GIMP config-flush checker problems, and the 30-turn budget. Fix those in <code>scripts/macarena</code> and nowhere else. Everything in the workstreams below is chosen because it also helps a real user's Mac. If a change only raises the score, it doesn't go into the toolkit.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Target architecture</h2>
+  <p>The same layers run in the app and in the benchmark. Only the outer frame differs: the benchmark adds a budget, <code>vm_done</code>/<code>vm_fail</code>, no user, and the guard. Everything in the toolkit keeps reaching the VM through the existing remote path (<code>backend/macarena_native.py</code>), so any new dependency must run inside the guest bundle.</p>
+  <div class="stack">
+    <div class="split">
+      <div class="layer"><b>App frame</b><span>User in the loop, permissions, action policy</span></div>
+      <div class="layer"><b>Benchmark frame</b><span>Budget, vm_done / vm_fail, guard, no user</span></div>
+    </div>
+    <div class="layer new"><b>Run policy middleware</b><span>Starting-state injection, budget warnings, same-goal retry counter, feasibility checkpoint, finish gate, recovery from malformed tool calls</span></div>
+    <div class="layer"><b>Core prompt</b><span>Short and app-agnostic: how to look, act, check and finish</span></div>
+    <div class="layer new"><b>App cards (skills)</b><span>Loaded by <code>app_guide(app)</code> for the frontmost app: process name, best route, menu map, shortcuts, save rules, features it lacks</span></div>
+    <div class="layer new"><b>Observation tools</b><span><code>observe</code>, <code>read_table</code>, <code>read_dialog</code>, <code>menu_search</code>, <code>get_control_values</code>; results report what changed</span></div>
+    <div class="layer"><b>Action tools</b><span>Existing indexed clicks and typing, <code>batch_actions</code>, plus <code>menu_select</code> and <code>fill_dialog</code></span></div>
+    <div class="layer new"><b>App adapters</b><span><code>browser_*</code> (CDP / extension), <code>calc_* / writer_*</code> (UNO), <code>gimp_*</code> (Script-Fu), <code>settings_*</code> (pane links, defaults)</span></div>
+    <div class="layer"><b>AX / CDP / AppleScript primitives</b><span>Today's macos_tools.py internals and the osascript server, split into modules</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>1. Harness and skills</h2>
+  <h3>Starting state comes from the harness, not the prompt</h3>
+  <p>Before the model's first turn, middleware calls <code>observe()</code> and adds it to the task message. It lists the frontmost app and its real process name, window titles, the open document's path, the focused element, any open sheet or dialog, and running regular apps. In the app, the same block describes what the user is looking at. This makes "look first" a fact the agent starts with instead of an instruction it may ignore. It targets the 30 wrong-app failures.</p>
+  <h3>App cards are skills, available to both agents</h3>
+  <p>The app agent loads the <code>macos-desktop</code> and <code>macos-applescript</code> skills; the benchmark agent loads none, because skills arrive as files and it has no file tools. Add an <code>app_guide(app)</code> tool that returns the card's text. Middleware loads the frontmost app's card automatically. A card holds facts about the app, not task answers:</p>
+  <ul>
+    <li><b>Identity:</b> bundle ID, process name (<code>soffice</code> for LibreOffice), how to tell its windows apart.</li>
+    <li><b>Route:</b> its scripting interface (UNO, Script-Fu, Chrome's AppleScript dictionary, or none), and when to use the UI instead.</li>
+    <li><b>Menu map and shortcuts</b> for common operations (Insert ▸ Chart…, Format ▸ Cells…, View ▸ Zoom), and how to jump to a cell (the Name Box).</li>
+    <li><b>Save rules:</b> LibreOffice's "Keep current format" dialog for .xlsx, GIMP's difference between Export and Save, and that the source file must never be overwritten.</li>
+    <li><b>Features it lacks:</b> GIMP 3.2 has no CMYK mode, no video editing, no SVG export. Write these from documentation, not from the OSWorld list of infeasible tasks, and test them on tasks they weren't written from (see section 6).</li>
+  </ul>
+  <h3>Rules move from prose into middleware</h3>
+  <ul>
+    <li><b>Same-goal retry counter:</b> two failures of one approach on one goal, then the next result tells the agent to switch approach and names the alternatives from the app card. This extends the existing failure notice.</li>
+    <li><b>Budget warning:</b> when 3 turns are left, the result says so and tells the agent to call <code>vm_fail</code> now if the task is infeasible. A late <code>vm_fail</code> is currently rejected, and that cost 0d8b7de3.</li>
+    <li><b>Feasibility checkpoint:</b> the first <code>write_todos</code> must contain a feasibility verdict with the feature it depends on. If the agent's chosen approach doesn't use the app the task names (Pillow instead of GIMP), the next result asks it to re-check feasibility.</li>
+    <li><b>Finish gate:</b> <code>vm_done</code>, or ending a turn in the app, requires that the most recent observation was taken after the last action that changed state.</li>
+    <li><b>Malformed-call recovery:</b> if a reply contains <code>&lt;tool_call&gt;</code> or <code>&lt;function=</code> as text, or the agent finishes on its first turn with no tool call, ask it to answer again with a real tool call. This is cheap and affects every local-model run.</li>
+    <li><b>Interrupt handling:</b> every observation names any blocking dialog or banner (Tips "Allow", LibreOffice's info banner, "Keep current format") and the button to dismiss it.</li>
+  </ul>
+  <h3>Split the code</h3>
+  <p>Split <code>src/tools/navigation/computer/macos_tools.py</code> (3,197 lines) into modules: <code>ax/</code> (primitives and walking), <code>observe/</code>, <code>act/</code>, <code>browser/</code> and <code>apps/{libreoffice,gimp,chrome,settings}</code>. Each tool declares its action-policy category and step cost where it's defined, so <code>scripts/macarena/native_tools.py</code> no longer keeps its own copies of those sets. Also fix the defects found here: <code>list_apps()</code> with no query lists running apps; process name aliasing; <code>click_text</code> reaching the menu bar.</p>
+</section>
+
+<section>
+  <h2>2. Browser</h2>
+  <p><b>Why not add the existing Playwright MCP to the desktop agent?</b> <code>_build_playwright_command</code> starts its own bundled Chromium with its own profile. The OSWorld checkers read the active tab of the Chrome that setup started with <code>--remote-debugging-port=1337</code>, and a user's logins and open tabs are in their own Chrome. Neither would be in the Playwright browser. The MCP also needs Node, which the guest bundle doesn't have. Keep <code>browser-agent</code> for research and scraping, where a clean browser is fine.</p>
+  <p><b>What to build:</b> a set of <code>browser_*</code> tools in the toolkit with Playwright MCP's interface, run against the browser that's already open. Some of this already exists: <code>read_app_dom</code> and <code>click_app_dom</code> talk CDP over aiohttp, and they ran in the benchmark (<span class="id">2ae9ba84 44ee5668</span>).</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Tool</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td><code>browser_tabs</code></td><td>Lists tabs with title and URL, and switches the active tab (the checkers read the active tab)</td></tr>
+      <tr><td><code>browser_navigate</code></td><td>Opens a URL, including <code>chrome://settings/…</code> deep links, and waits for the page to load</td></tr>
+      <tr><td><code>browser_snapshot</code></td><td>Returns the page's accessibility tree, interactive elements and text, each with a stable ref; filterable and paginated</td></tr>
+      <tr><td><code>browser_click / fill / select / press</code></td><td>Act by ref. Fill sets the value and fires the input events that date pickers and filters on single-page sites rely on</td></tr>
+      <tr><td><code>browser_wait_for</code></td><td>Waits for text, a URL pattern or an element to appear, instead of polling with screenshots</td></tr>
+      <tr><td><code>browser_eval</code></td><td>Runs JS on the page. Gated by the action policy and off by default in the app</td></tr>
+    </tbody>
+  </table></div>
+  <p><b>Backends:</b></p>
+  <ul>
+    <li><b>CDP</b>, when Chrome has a debugging port. This is always true in the benchmark, and true in the app when Otto started Chrome with a separate profile. It runs in the guest over aiohttp, so no Node is needed.</li>
+    <li><b>The user's everyday Chrome.</b> My understanding is that recent Chrome versions ignore <code>--remote-debugging-port</code> on the default profile; this needs checking. If so, there are two options: a small Otto extension that relays CDP commands (Playwright MCP's extension mode works this way), or Chrome's AppleScript <code>execute javascript</code>, which needs the user to turn on "Allow JavaScript from Apple Events". If neither is available, fall back to today's accessibility path.</li>
+    <li><b>Safari, later:</b> AppleScript <code>do JavaScript</code> with the same opt-in setting.</li>
+  </ul>
+  <p><b>Expected effect:</b> the 5 hard web flows (<span class="id">44ee5668 47543840 82279c77 7f52cab9 f0b971a1</span>) and the Chrome settings tasks. The 10 Chrome wrong-app failures are fixed by the starting-state work, not by this. This is the third-largest lever, not the first.</p>
+</section>
+
+<section>
+  <h2>3. Tools</h2>
+  <h3>Small tools: general, every app</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Tool</th><th>Replaces</th><th>Targets</th></tr></thead>
+    <tbody>
+      <tr><td><code>observe()</code></td><td>Guessing with <code>list_apps</code>, a full <code>get_screen_controls</code> dump, separate OCR</td><td>Wrong-app failures; returned after every action instead of today's 8,000-character list of controls</td></tr>
+      <tr><td><code>menu_select(app, ["Insert","Chart…"])</code></td><td>Hand-written System Events paths</td><td><span class="id">1334ca3e 12382c62 21df9241 6e99a1ad 30e3e107 42e0a640 045bf3ff 06ca5602</span></td></tr>
+      <tr><td><code>menu_search(app, "zoom")</code></td><td>Knowing which menu an item is under</td><td>The same set; matches "…" and "...", ignores case, returns full paths and shortcuts</td></tr>
+      <tr><td><code>read_dialog()</code> / <code>fill_dialog({label: value}, press="OK")</code></td><td>Finding each field by index, one click at a time</td><td>Format Cells, Chart wizard, Indexed Color, Save As (<span class="id">06ca5602 4172ea6e</span>)</td></tr>
+      <tr><td><code>read_table(app, range="A1:G12")</code></td><td><code>get_control_value</code> once per cell</td><td><span class="id">535364ea 1e8df695 12382c62</span>; also works on AXTable, AXOutline and grids in Apple apps</td></tr>
+      <tr><td><code>get_control_values([i…])</code></td><td>Repeated single reads</td><td>Any form</td></tr>
+      <tr><td><code>wait_until(condition)</code></td><td>Calling read again and again</td><td>Dialogs that open slowly, page loads</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Large tools: app adapters</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Adapter</th><th>How it works</th><th>Covers</th></tr></thead>
+    <tbody>
+      <tr><td><b>LibreOffice</b> <code>calc_* writer_* uno_exec</code></td><td>Python-UNO, using LibreOffice's bundled Python, connected to the running instance through an <code>--accept</code> socket (Otto starts LibreOffice with it; check whether a running instance can start accepting). Helpers: read/write a range, formulas, sheets, number formats, merge, sort, a chart from a range, pivot tables, save in the original format. <code>uno_exec</code> handles anything else.</td><td>Most operations in the 45 calc and 23 writer tasks. Because it edits the live document, the checker's ⌘S saves the edits, which fixes the openpyxl overwrite.</td></tr>
+      <tr><td><b>GIMP</b> <code>gimp_eval gimp_info gimp_export</code></td><td>Script-Fu server inside the running GIMP, or a Python-Fu plug-in that relays commands; check this works in 3.2. Helpers: image and layers info, a filter by name, export without overwriting the source.</td><td>The 7 GIMP stalls, plus 72f83cdc and 77b8ab4d (export a copy; leave the source alone)</td></tr>
+      <tr><td><b>System Settings</b> <code>settings_open settings_read/write</code></td><td><code>x-apple.systempreferences:</code> pane links, and <code>defaults</code> for keys the app card lists</td><td>25 macOSWorld sys_and_interface tasks and the OSWorld os group. Many of these checkers read <code>defaults</code> directly.</td></tr>
+      <tr><td><b>Chrome</b></td><td>The <code>browser_*</code> tools plus Chrome settings deep links on its app card</td><td>Chrome settings and web tasks</td></tr>
+    </tbody>
+  </table></div>
+  <p><b>Is the UNO adapter fair in the benchmark?</b> The native track already allows AppleScript, which is how the agent scripts Numbers. UNO is LibreOffice's equivalent scripting interface, and using it fits Otto's "script when the app supports it" approach. Report it openly as part of the native track's tool set. Don't present those scores as GUI-only results.</p>
+  <p><b>Don't build:</b> per-task tools ("insert growth chart"), tools that click at pixel positions, or tools that edit a document's file on disk while the app has it open.</p>
+</section>
+
+<section>
+  <h2>4. Fewer turns</h2>
+  <ul>
+    <li><b>Bulk reads:</b> <code>read_table</code>, <code>get_control_values</code> and <code>read_dialog</code>. One call per screen of data.</li>
+    <li><b>Report what changed:</b> after an action, return what changed (a new dialog, a value that changed, a new window), with the full controls list only when asked. Today's 8,000-character dump after every action fills a small model's context and buries the signal.</li>
+    <li><b>Accept intent:</b> <code>menu_select</code>, <code>fill_dialog</code> and the adapter helpers do in one call what takes 5–10 today.</li>
+    <li><b>Batch more:</b> let <code>batch_actions</code> mix adapter calls with UI actions, and stop at the first step whose check fails.</li>
+    <li><b>Fix the cheap waste:</b> <code>list_apps()</code> with no query (one call instead of 5–17), no calls after the run is over (47 were rejected), and the starting state (saves 2–6 opening turns per task).</li>
+    <li><b>Measure it:</b> add median turns per solved task and the share of turns spent on reads to <code>report.py</code>, so turn savings show up separately from score changes.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>5. The model question</h2>
+  <p>The benchmark ran <code>mlx-community/Qwen3.6-35B-A3B-8bit</code> through oMLX with thinking turned off. That model has about 3B active parameters. Several failures look like what a small model does: AppleScript syntax errors, tool calls written as text, poor feasibility judgments, and repeating calls that already failed. The plan is built so a small model can succeed: the tools take intent, return compact results, and leave little exact syntax to write. But the rebuild shouldn't be planned before we know where the limit is.</p>
+  <ul>
+    <li><b>Baseline:</b> run the same harness, with no tool changes, on a fixed 40-task slice using a frontier model (Claude Opus 5.5 or Sonnet 5.5), and again with Qwen with thinking on. If the frontier model reaches about 60% on unchanged tools, the work goes to model-side support. If it also stalls on LibreOffice menus, the tools are the limit, which is what I expect.</li>
+    <li><b>App only:</b> consider a split where a stronger model plans and a local model executes the tool calls. Decide once the baseline shows where the turns go wrong.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>6. Measurement rules</h2>
+  <ul>
+    <li><b>Dev and held-out sets:</b> tune on OSWorld chrome, calc and gimp. Hold out OSWorld writer, os, vs_code and thunderbird, all of macOSWorld, and MacArena's own tasks. Report both. A card or tool that helps the dev set but not the held-out set is overfitted.</li>
+    <li><b>No task answers in cards:</b> before merging, check that no card or prompt mentions a task's specific file, value or URL. Write the lists of missing features from the app's documentation.</li>
+    <li><b>Regression set:</b> the failed task IDs in this plan become a fixed regression suite, with each failure's main cause attached.</li>
+    <li><b>Fix the benchmark first:</b> fix the reset health check, confirm the 3 suspected checker bugs, and rerun the 16 infra tasks before comparing anything.</li>
+    <li><b>Fixed protocol:</b> keep one budget (30 turns) and one tool-call cap for comparisons. Report 60-turn results separately. More turns hide inefficiency rather than fix it.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Roadmap</h2>
+  <div class="phase"><div class="n">0</div><div>
+    <h3>Measure (2–3 days)</h3>
+    <p>Fix the UTM reset health check, rerun the infra tasks, confirm the checker bugs, run the frontier-model and thinking-on baselines on the 40-task slice, and add turn metrics to <code>report.py</code>.</p>
+    <p class="exit"><b>Done when:</b> we know the frontier score on unchanged tools, and which failures it shares.</p>
+  </div></div>
+  <div class="phase"><div class="n">1</div><div>
+    <h3>Harness basics (1 week)</h3>
+    <p><code>observe()</code> and starting-state injection, <code>list_apps()</code> with no query, interrupt detection, malformed-call recovery, budget warning, same-goal retry counter, results that report what changed, and <code>app_guide</code> for both agents.</p>
+    <p class="exit"><b>Done when:</b> the wrong-app failures are gone on the regression set, and opening turns per task are ≤ 2.</p>
+  </div></div>
+  <div class="phase"><div class="n">2</div><div>
+    <h3>Small tools (1 week)</h3>
+    <p><code>menu_select</code>, <code>menu_search</code>, <code>read_dialog</code>, <code>fill_dialog</code>, <code>read_table</code>, <code>get_control_values</code>, <code>wait_until</code>, and the toolkit split into modules.</p>
+    <p class="exit"><b>Done when:</b> no regression-set run has more than 2 failed menu scripts, and no run reads more than 10 single values.</p>
+  </div></div>
+  <div class="phase"><div class="n">3</div><div>
+    <h3>App adapters (2 weeks)</h3>
+    <p>The LibreOffice UNO adapter first (it covers the most tasks), then GIMP Script-Fu, then System Settings, plus app cards for each.</p>
+    <p class="exit"><b>Done when:</b> calc on the dev set goes from 3/35 to ≥ 15/35, and writer (held out) improves without being tuned on.</p>
+  </div></div>
+  <div class="phase"><div class="n">4</div><div>
+    <h3>Browser (1–2 weeks)</h3>
+    <p><code>browser_*</code> over CDP in the guest, then the app backend for the user's own Chrome (extension or Apple Events), once it's confirmed which one Chrome allows.</p>
+    <p class="exit"><b>Done when:</b> chrome goes from 12/32 to ≥ 20/32, and the tools work against a real user's logged-in Chrome in the app.</p>
+  </div></div>
+  <div class="phase"><div class="n">5</div><div>
+    <h3>Feasibility and finishing (ongoing)</h3>
+    <p>Feasibility checkpoint and finish gate, with lists of missing features checked against the held-out infeasible tasks.</p>
+    <p class="exit"><b>Done when:</b> infeasible tasks pass at ≥ 60% (3/14 now), feasible tasks are wrongly failed in ≤ 5% of cases, and the same holds on held-out tasks.</p>
+  </div></div>
+</section>
+
+<section>
+  <h2>Risks and things I'm not sure of</h2>
+  <ul>
+    <li><b>Starting UNO on a running instance:</b> I haven't confirmed that a running LibreOffice starts accepting connections when sent <code>--accept</code>. If it doesn't, Otto must start LibreOffice with it. In the benchmark, that means relaunching before the agent starts, which changes the task's starting state.</li>
+    <li><b>GIMP 3.2:</b> I haven't confirmed the Script-Fu server and its procedure names in 3.2. If live scripting isn't available, GIMP stays UI-bound and its gains come only from <code>menu_select</code> and <code>fill_dialog</code>.</li>
+    <li><b>Chrome debugging limits</b> on the default profile need checking against the Chrome version users run. The extension route adds an install step and a review surface.</li>
+    <li><b>The targets are estimates.</b> They come from failure counts that overlap, not from measurements. Phase 0 can change the order of the work.</li>
+    <li><b>Context size:</b> app cards and starting-state blocks add tokens. With a 128K window and thinking on, measure that the prompt stays under about 15K tokens.</li>
+    <li><b>Safety in the app:</b> <code>uno_exec</code>, <code>gimp_eval</code> and <code>browser_eval</code> are code execution. They go through the action policy with their own categories and are off by default for agents built by users.</li>
+  </ul>
+</section>
+
+<footer>Sources: otto-macarena-runs/out/final-osworld and calc-v19; backend/agent_library.py (macOS prompt sections and benchmark section); src/tools/navigation/computer/macos_tools.py; backend/mcp_manager.py (_build_playwright_command); backend/macarena_native.py; scripts/macarena/native_tools.py and README. Task IDs are the first 8 characters of each OSWorld UUID.</footer>
+</div>

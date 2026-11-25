@@ -4,9 +4,11 @@
 
 A macOS AI agent desktop app. FastAPI backend, Tauri + React frontend, LangGraph orchestration. Runs entirely on your machine — no cloud relay, no telemetry.
 
-Supports cloud LLMs (Anthropic, OpenAI, Gemini) and fully local inference via MLX on [Apple Silicon](https://mlx-framework.org/#features), [oMLX](https://github.com/jundot/omlx), or an [exo](https://github.com/exo-explore/exo) cluster of Apple Silicon nodes. The agent can browse the web, watch video, automate your Mac desktop, drive a live Blender session, read documents, query SEC filings and Atlassian (Jira and Confluence), and build new MCP-backed tools for itself at runtime. On Apple Silicon it can also distill those runs into a LoRA so a smaller local model keeps the teacher's tool-use habits.
+Supports cloud LLMs (Anthropic, OpenAI, Gemini) and fully local inference via MLX on [Apple Silicon](https://mlx-framework.org/#features), [oMLX](https://github.com/jundot/omlx), or an [exo](https://github.com/exo-explore/exo) cluster of Apple Silicon nodes. The agent can browse the web, watch video, automate your Mac desktop (and learn the steps that worked), build 3D CAD parts, read documents, query SEC filings and Atlassian (Jira and Confluence), and build new MCP-backed tools for itself at runtime. On Apple Silicon it can also distill those runs into a LoRA so a smaller local model keeps the teacher's tool-use habits.
 
 OTTO is self-managing: through conversation alone it creates and maintains its own **Agents**, **Skills**, **Tools**, **Schedules**, **Triggers**, and **Settings** — no config files or UI required.
+
+**Benchmarks**, all run fully on-device with one local model (Qwen3.6-35B-A3B, 8-bit): **65.4%** on SWE-bench Verified (327 / 500) and **66.7%** on macOS desktop tasks from macOSWorld and MacArena (132 / 198). What they measure, how they were run, per-category results and caveats are in [Benchmarks](#benchmarks).
 
 ## Quickstart
 
@@ -72,7 +74,7 @@ The `DeepAgent` (`src/deep_agent/`) is a LangGraph ReAct graph that wires up a c
 | Tool | Description |
 |------|-------------|
 | `wikipedia` | Wikipedia summary lookup |
-| `duckduckgo` | DuckDuckGo web search — no API key needed |
+| `duckduckgo` | Web search through [ddgs](https://github.com/deedy5/duckduckgo_search), no API key needed. It queries several search engines at once, so one engine blocking the request does not leave the agent without results |
 | `web_researcher` | Search + full-page extraction, returns structured markdown |
 | `doc_researcher` | BM25 keyword ranking over uploaded documents — no embeddings |
 | `doc_reader` | LLM-based document summarisation and Q&A |
@@ -89,7 +91,7 @@ The `DeepAgent` (`src/deep_agent/`) is a LangGraph ReAct graph that wires up a c
 | Subagent | Description |
 |----------|-------------|
 | `web-voyager` | Autonomous web navigation agent — plans, navigates, extracts |
-| `computer-voyager` | macOS desktop computer-use agent via the Accessibility API |
+| `computer-voyager` | macOS desktop computer-use agent via the Accessibility API (notebooks; the app uses `macos-desktop-agent`, below) |
 
 Subagent tool calls and results stream back to the WebSocket in real time so you see progress, not a spinner.
 
@@ -198,7 +200,42 @@ Any MCP server — stdio or SSE — can be added through the Settings UI or REST
 
 ### Agent & Skill library
 
-Reusable agent and skill definitions are stored as JSON under app-data. The library ships built-in definitions (including `macos-desktop-agent` and `macos-applescript-agent` on macOS) and lets you create, edit, and delete your own. Agents reference a skill, an LLM provider, and a tool/subagent selection — switching between them in the UI rebuilds the graph for the next session.
+Reusable agent and skill definitions are stored as JSON under app-data. The library ships built-in definitions (including `macos-desktop-agent` and `cad-agent`) and lets you create, edit, and delete your own. Benchmark agents (`swebench-coding-agent`, `benchcad-agent`, `macarena-agent`, `macarena-desktop-agent`) and internal subagents are installed for their scripts but hidden from the Agents page and the chat's `/` menu. Agents reference a skill, an LLM provider, and a tool/subagent selection — switching between them in the UI rebuilds the graph for the next session.
+
+### macOS desktop agent
+
+`macos-desktop-agent` controls Mac apps on your behalf. It is one agent with two kinds of tools and picks the route itself: AppleScript / JXA (`macos-osascript`) when the app exposes the action, and the Accessibility tree, mouse and keyboard (`macos-native`) when it doesn't. It replaces the separate `macos-applescript-agent`, so the orchestrator only describes the goal.
+
+| Tool | What it does in one call |
+|---|---|
+| `observe` | Which app, window, file and dialog are in front; read automatically at the start of each request |
+| `menu_select` / `menu_search` | Choose a menu item by its path (`'File > Export…'`), or find one by a word |
+| `read_dialog` / `fill_dialog` | Read every field of an open dialog or sheet, or set several at once |
+| `read_table` / `get_control_values` | The cells on screen as a grid; several controls' values |
+| `type_into_control`, `set_text_at`, `drag` | Type into a field by index (with a read-back check), type at a point, drag between controls |
+| `wait_until` | Wait for a window, dialog or piece of text instead of sleeping |
+| `app_guide` | A short card on how to work a given app: process name, scripting support, where common menu commands live, how it saves |
+
+Long runs stay within a local model's memory: older screen listings and images in the conversation are shortened before each model call (the saved transcript is unchanged). A tool call that a local model writes as plain text is recovered as a real call, a reply that only repeats itself is retried once instead of ending the run, and a tool that fails twice in a row gets a note naming what usually works instead. Scripts that steal focus or send input take the same desktop lock as the mouse and keyboard tools, so two agents never fight over the screen.
+
+### Procedural memory
+
+When it is on, `macos-desktop-agent` learns how it did tasks and reuses the steps. Each finished run is saved, and after the reply the chat asks **Did the macOS desktop agent get this right?** **Worked** turns the run into short recipes (the tool calls that did the job, with values replaced by placeholders), app facts and lessons. **Didn't work** keeps the run on record but out of memory. Before a multi-step part of a later task, the agent calls `recall_procedure` and gets back the closest saved recipe, which it checks against the screen rather than copying.
+
+Settings → **Agent Memory → Procedures**:
+
+| Control | What it does |
+|---|---|
+| Procedural memory | On / off. Off: nothing is saved and the agent has no `recall_procedure` tool |
+| Similarity threshold | How close a saved recipe must be before it is offered (0.20 to 0.90, default 0.45). App facts and lessons use 85% of it |
+| Saved runs limit | Most runs kept (default 500, 0 = no limit). Over it, excluded runs go first, then runs awaiting review, and runs in use last |
+| Saved runs | Every run with its status (needs review, in use, excluded), what was learned from it, and Worked / Didn't work / Delete |
+
+Everything stays in `<app-data>/procedures.db`, embedded on-device with MiniLM. Off by default.
+
+### CAD agent
+
+`cad-agent` builds 3D parts from a description, a drawing, a photo or a STEP file. It writes a [CadQuery](https://cadquery.readthedocs.io/) program, runs it in a Seatbelt sandbox, renders it, compares the render with any reference picture, and exports STEP, STL, OBJ or a Blender `.blend`. It can look up reference photos of a standard part with `image_search`, and it uses two subagents: `drawing-reader` for dense drawing sheets and `cad-critic` for a second opinion on a render. The `cad-tools` MCP ships disabled; connect it on the Agents page, Tools tab. It replaces the old live-Blender integration. See [`docs/cad_agent.md`](./docs/cad_agent.md).
 
 ### Memory
 
@@ -267,14 +304,6 @@ The Triggers page also hosts two session watchers that are not cron or filesyste
 
 **exo cluster** — pool multiple Apple Silicon machines into a single inference cluster. The backend can provision remote nodes over SSH, start and stop the local exo process, and score the model catalog against the live cluster topology. Configure the cluster from the Exo tab in the UI.
 
-### Benchmark: SWE-bench Verified
-
-[SWE-bench](https://www.swebench.com/) measures whether an AI agent can fix real software bugs. Each task is a GitHub issue from a popular open-source Python project (Django, SymPy, scikit-learn, Sphinx, and others) together with the repository at the commit it was filed against. The agent has to write a patch; the benchmark then applies it and runs the project's own hidden tests. A task counts as **resolved** only if the tests that reproduce the bug now pass and the tests that passed before still do. **SWE-bench Verified** is the 500-task subset whose issues and tests were checked by human reviewers, and it is the version most often quoted.
-
-**Result: 327 of 500 tasks resolved (65.4%)**, running OTTO's `swebench-coding-agent` fully on-device with `Qwen3.6-35B-A3B-8bit` on Apple Silicon through oMLX. That includes one task whose tests timed out and three where the agent produced no patch, all counted as unresolved. Best repos were scikit-learn (88%), xarray (73%) and Django (70%); the weakest were pylint (20%) and requests (13%).
-
-Read the number with care: it was scored on LogicStar's prebuilt images rather than the official SWE-bench ones, and the instances that first returned an empty patch were re-run once (the single-attempt figure is 63.8%). It is not a leaderboard submission. Per-repo results, settings and caveats are in [`scripts/swebench/README.md`](./scripts/swebench/README.md), which also explains how to run the benchmark yourself, and the predictions, scores and full trajectories are in [ottoappmac/otto-swebench-runs](https://github.com/ottoappmac/otto-swebench-runs).
-
 ### Safety
 
 Multiple runtime guards run on every agent turn, independent of the prompt. They are layered so each catches what the others miss:
@@ -294,6 +323,95 @@ Multiple runtime guards run on every agent turn, independent of the prompt. They
 - **Tool-call budget** — per-run ceiling on the total number of tool calls since the last user message: at the **soft budget** (default 80) the model receives a one-shot nudge to converge; at the **hard budget** (default 150) the run ends gracefully with whatever the agent has gathered, rather than burning the full recursion budget on non-identical churn (configurable via `TOOL_CALL_SOFT_BUDGET` / `TOOL_CALL_HARD_BUDGET`)
 
 ---
+
+## Benchmarks
+
+**Why:** to check, on public tasks with their own graders, how well OTTO's agents do real work when everything runs on one Mac: no cloud model, no hosted sandbox.
+
+**How:** each benchmark has a harness under [`scripts/`](./scripts) that starts an isolated OTTO backend (its own home folder, chat-memory consolidation and title generation off, only the tools the benchmark allows), sends each task to an OTTO agent over the normal session API, and scores the result with the benchmark's own grader, unchanged. Every run used `mlx-community/Qwen3.6-35B-A3B-8bit` served locally through oMLX.
+
+| Benchmark | What it tests | OTTO agent | Result | Runs and data |
+|---|---|---|---|---|
+| SWE-bench Verified | Fix real GitHub issues in Python projects | `swebench-coding-agent` | **327 / 500 = 65.4%** | [ottoappmac/otto-swebench-runs](https://github.com/ottoappmac/otto-swebench-runs) |
+| macOSWorld | Everyday tasks in macOS apps | `macos-desktop-agent` (native track) | **105 / 150 = 70.0%** | [ottoappmac/otto-macarena-runs](https://github.com/ottoappmac/otto-macarena-runs) |
+| MacArena (its own 49 tasks) | MacArena's own macOS app tasks | `macos-desktop-agent` (native track) | **27 / 48 = 56.2%** | [ottoappmac/otto-macarena-runs](https://github.com/ottoappmac/otto-macarena-runs) |
+| macOSWorld + MacArena | | | **132 / 198 = 66.7%** | |
+
+None of these is a leaderboard submission, and the macOS numbers are not comparable with the published agents (see below).
+
+### SWE-bench Verified
+
+**What:** each task is a GitHub issue from a popular open-source Python project (Django, SymPy, scikit-learn, Sphinx and others) with the repository at the commit it was filed against. The agent writes a patch; the benchmark applies it and runs the project's own hidden tests. A task is **resolved** only if the tests that reproduce the bug now pass and the tests that passed before still do. **Verified** is the 500-task subset whose issues and tests were checked by human reviewers.
+
+**How it was run:** `swebench-coding-agent` (no subagents, no memory, a narrow toolbox) in Docker with no network, 5400 s and 200 tool calls per task, 4 tasks at a time, Oct 27 to Nov 8 2026 on a MacBook Pro. Harness and instructions: [`scripts/swebench/README.md`](./scripts/swebench/README.md).
+
+**Result: 327 of 500 resolved (65.4%).** 169 patches applied but failed the hidden tests, 3 tasks got no patch, and 1 task's tests timed out; all count as unresolved.
+
+| Repo | Resolved | | Repo | Resolved |
+|---|---|---|---|---|
+| scikit-learn | 28 / 32 (88%) | | astropy | 12 / 22 (55%) |
+| xarray | 16 / 22 (73%) | | matplotlib | 18 / 34 (53%) |
+| Django | 161 / 231 (70%) | | Sphinx | 23 / 44 (52%) |
+| pytest | 13 / 19 (68%) | | pylint | 2 / 10 (20%) |
+| SymPy | 51 / 75 (68%) | | requests | 1 / 8 (13%) |
+| seaborn, Flask | 2 / 3 | | | |
+
+Read it with care: it was scored on [LogicStar's prebuilt images](https://github.com/logic-star-ai/swe-bench-compressed), not the official SWE-bench ones, and the 19 tasks that first returned an empty patch were run once more (the single-attempt figure is 319 / 500 = 63.8%). Predictions, scores and every trajectory: [ottoappmac/otto-swebench-runs](https://github.com/ottoappmac/otto-swebench-runs).
+
+### macOS desktop: macOSWorld and MacArena
+
+**What:** tasks in real macOS apps (Finder, System Settings, Notes, Contacts, Obsidian and others), each in a fresh macOS 15 virtual machine. A grader script inspects the machine's final state, so only what the agent actually changed counts, not what it says it did.
+
+**How it was run:** OTTO's own `macos-desktop-agent`, with the same prompt and tools as the app, on the MacArena harness's "native" track: [`scripts/macarena/`](./scripts/macarena/README.md). The tools run inside the VM; the model runs on the host. One run per task, up to 100 turns and 600 s each, a fresh copy of MacPaw's public VM image for every task, and live [procedural memory](#procedural-memory) (each task could recall earlier tasks of the same run, never its own).
+
+**Result: 132 of 198 valid runs passed (66.7%)**; 2 runs hit infrastructure errors and are left out (counting them as failures gives 132 / 200 = 66.0%).
+
+| Task set | OTTO | 95% interval | Best published agent (OpenAI CUA) |
+|---|---|---|---|
+| macOSWorld (151 tasks) | **105 / 150 = 70.0%** | 62–77% | 79 / 151 = 52.3% |
+| MacArena's own tasks (49) | **27 / 48 = 56.2%** | 42–69% | 18 / 49 = 36.7% |
+| Both | **132 / 198 = 66.7%** | 60–73% | 97 / 200 = 48.5% |
+
+| macOSWorld domain | OTTO | OpenAI CUA | | MacArena domain | OTTO | OpenAI CUA |
+|---|---|---|---|---|---|---|
+| sys_apps (32) | 84% | 72% | | advanced_apps (9) | 78% | 56% |
+| file_management (27) | 78% | 41% | | system_apps (12) | 64% | 50% |
+| media (10) | 70% | 30% | | productivity (14) | 50% | 29% |
+| productivity (30) | 67% | 70% | | system_and_interface (8) | 50% | 38% |
+| sys_and_interface (25) | 60% | 60% | | file_management (6) | 33% | 0% |
+| multi_apps (19) | 58% | 15% | | | | |
+| advanced (7) | 57% | 43% | | | | |
+
+The OpenAI CUA figures are from the MacArena paper's Table 3, the only published set of results; its headline (31.8%) is over all 421 tasks, including 221 OSWorld tasks OTTO has not run yet. Domains have 6 to 32 tasks, so one task moves a domain's rate by 3 to 17 points.
+
+**Why it can't be compared with the published agents:**
+
+| | Published agents | OTTO here |
+|---|---|---|
+| What the agent sees | A screenshot every step | The Accessibility tree and on-screen text; screenshots in 6 of 198 runs |
+| What it can do | Mouse and keyboard | Also AppleScript, shell, and pressing controls by name |
+| Budget | 15 steps, 2 runs per task | 100 turns, 1 run per task |
+| Memory | None | Live procedural memory of earlier tasks in the run |
+| Tuned on these tasks | No | Yes: OTTO's prompts and harness were changed after reading failures on these tasks, so neither set is held out |
+| Model | Hosted frontier models and small open models | One local 35B mixture-of-experts model |
+
+So the numbers answer "what does OTTO get, as built, with its own tools", not "how does its model rank as a screenshot-and-click agent". Memory showed no clear effect in these runs (no learning curve between the first and second half; a memory-off run on the same code has not been done yet). One run per task, so run-to-run variation is unmeasured. Results, per-task data, trajectories, failure analysis and caveats: [ottoappmac/otto-macarena-runs](https://github.com/ottoappmac/otto-macarena-runs).
+
+### BenchCAD
+
+[`scripts/benchcad/`](./scripts/benchcad/README.md) runs `benchcad-agent` on [BenchCAD](https://benchcad.com/setup.html) cases ([BenchCAD-org/benchcad-2-main](https://github.com/BenchCAD-org/benchcad-2-main)) with BenchCAD's own scorer. It is a development harness only: BenchCAD does not accept runs from it, and there is **no reportable OTTO score**.
+
+### Attribution
+
+| Benchmark | Paper | Code and data |
+|---|---|---|
+| SWE-bench | Jimenez, Yang, Wettig, Yao, Pei, Press, Narasimhan. *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* ICLR 2024. [arXiv 2310.06770](https://arxiv.org/abs/2310.06770) | [github.com/SWE-bench/SWE-bench](https://github.com/SWE-bench/SWE-bench), [swebench.com](https://www.swebench.com/) |
+| SWE-bench Verified | OpenAI, [Introducing SWE-bench Verified](https://openai.com/index/introducing-swe-bench-verified/) (2024) | Same repository |
+| MacArena | MacPaw Research. *MacArena: Benchmarking Computer Use Agents on an Online macOS Environment.* ICML 2026 workshop. [arXiv 2606.06560](https://arxiv.org/abs/2606.06560) | [github.com/MacPaw/MacArena](https://github.com/MacPaw/MacArena), [VM images](https://huggingface.co/buckets/macpaw-research/MacArena) |
+| macOSWorld | Yang, Ci, Shou (NUS Show Lab). *macOSWorld: A Multilingual Interactive Benchmark for GUI Agents.* NeurIPS 2025. [arXiv 2506.04135](https://arxiv.org/abs/2506.04135) | [macos-world.github.io](https://macos-world.github.io) |
+| BenchCAD | | [benchcad.com](https://benchcad.com/setup.html), [github.com/BenchCAD-org/benchcad-2-main](https://github.com/BenchCAD-org/benchcad-2-main) |
+
+macOSWorld's tasks are licensed CC BY-NC 4.0 (non-commercial use); the run repositories quote them under that licence with attribution.
 
 ## Getting started
 
@@ -622,7 +740,11 @@ agents/
 │   ├── build_mac.sh           # macOS build helper
 │   ├── sign_and_notarize.sh   # Apple code-signing + notarisation
 │   ├── exo_cli.py             # Manage local exo cluster (stdlib-only)
-│   └── bench_*.py             # Performance benchmarks
+│   ├── bench_*.py             # Performance benchmarks
+│   ├── swebench/              # SWE-bench Verified harness
+│   ├── macarena/              # macOSWorld / MacArena harness (UTM VMs)
+│   ├── benchcad/              # BenchCAD dev harness
+│   └── cadeval/               # general CAD eval set
 ├── src/
 │   ├── agents/                # web_voyager, computer_voyager subagents
 │   ├── deep_agent/            # DeepAgent graph, options, tool/subagent factories
@@ -676,6 +798,8 @@ Full copyright notices and license texts are in [`THIRD_PARTY_NOTICES`](./THIRD_
 | Library | Description | License |
 |---------|-------------|---------|
 | [DeepEval](https://github.com/confident-ai/deepeval) | LLM evaluation framework used for agent benchmarking | Apache-2.0 |
+| [SWE-bench](https://github.com/SWE-bench/SWE-bench) | Coding benchmark and evaluation harness (see [Benchmarks](#benchmarks)) | MIT |
+| [MacArena](https://github.com/MacPaw/MacArena) | macOS VM benchmark environment and graders, including macOSWorld's tasks | MIT (code and own tasks); macOSWorld tasks CC BY-NC 4.0 |
 
 ### Local Inference (Apple Silicon)
 

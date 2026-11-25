@@ -9,6 +9,7 @@ import { MessageBubble } from "../components/chat/MessageBubble";
 import { MessageList } from "../components/chat/MessageList";
 import { ArtifactPanel, artifactTypeFromPath } from "../components/chat/ArtifactPanel";
 import { ThinkingIndicator } from "../components/chat/ThinkingIndicator";
+import { ProcedureFeedbackCard } from "../components/chat/ProcedureFeedbackCard";
 import type { Artifact, ArtifactType } from "../components/chat/ArtifactPanel";
 import { ModelPicker } from "../components/chat/ModelPicker";
 import { DepthPicker, type RunDepth } from "../components/chat/DepthPicker";
@@ -21,6 +22,7 @@ import InlineUrlInput, { type InlineUrlInputHandle } from "../components/chat/In
 import { formatFileSize } from "../utils/formatFileSize";
 import { mergeToolMessages, preserveHitlResolved, appendMissingInterrupts, pendingInterrupts, hasUnmatchedApprovalTool, computeThoughtFlags } from "../utils/mergeToolMessages";
 import { familyChipClasses } from "../utils/subagentModelChip";
+import { isPickableAgent } from "../utils/hiddenAgents";
 import { screenHighRiskCommand } from "../utils/highRiskCommands";
 import { useNotification } from "../context/NotificationContext";
 import { useConnection } from "../context/ConnectionContext";
@@ -1697,8 +1699,10 @@ export default function ChatPage() {
   // subagent) is the default already — users get there by simply not
   // picking, by pressing Escape, or by clicking X on the chip — so an
   // explicit "General Purpose" entry just adds a misleading row.
+  // Benchmark agents and internal subagents are left out (utils/hiddenAgents).
   const slashItems = agents.filter((a) =>
-    !slashFilter || a.name.toLowerCase().includes(slashFilter.toLowerCase()),
+    isPickableAgent(a.name)
+    && (!slashFilter || a.name.toLowerCase().includes(slashFilter.toLowerCase())),
   );
   const clampedIndex = Math.max(0, Math.min(slashIndex, slashItems.length - 1));
 
@@ -2243,6 +2247,7 @@ export default function ChatPage() {
             withAvatar
           />
         )}
+        <ProcedureFeedbackCard sessionId={currentSessionId} isStreaming={isStreaming} />
         {!isStreaming && changedFiles.length > 0 && currentSessionId && (
           <ChangedFilesStrip
             files={changedFiles}

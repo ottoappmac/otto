@@ -42,10 +42,12 @@ def _mcp_tool_names(path: Path) -> set[str]:
 
 
 def _macos_native_names() -> set[str]:
-    path = ROOT / "src/tools/navigation/computer/macos_tools.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
-    for node in ast.walk(tree):
+    nodes = []
+    for rel in ("macos_tools.py", "macos_structured_tools.py"):
+        path = ROOT / "src/tools/navigation/computer" / rel
+        nodes += list(ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
+    for node in nodes:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for deco in node.decorator_list:

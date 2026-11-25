@@ -1,0 +1,214 @@
+<title>final-osworld Failure Analysis</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: single reading column, summary first (score + cause bar), then one section per cause, then actions. */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #1b1f27; --muted: #5d6573; --line: #dde1e8;
+  --accent: #2f5bd3; --pass: #2e8b57; --infra: #8a8f99; --agent: #c4572b; --checker: #b08a1a;
+  --c1: #c4572b; --c2: #d98a3a; --c3: #7b4fc9; --c4: #2f5bd3; --c5: #2e8ba3; --c6: #b08a1a; --c7: #6b7a3a;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12151b; --surface: #1a1e26; --fg: #e6e9ef; --muted: #9aa2b1; --line: #2c323d;
+  --accent: #7f9cf0; --pass: #5cc08a; --infra: #7c828d; --agent: #ec8358; --checker: #d9b44a;
+  --c1: #ec8358; --c2: #e6a75e; --c3: #a888ea; --c4: #7f9cf0; --c5: #5bbcd3; --c6: #d9b44a; --c7: #a3b46a;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12151b; --surface: #1a1e26; --fg: #e6e9ef; --muted: #9aa2b1; --line: #2c323d;
+  --accent: #7f9cf0; --pass: #5cc08a; --infra: #7c828d; --agent: #ec8358; --checker: #d9b44a;
+  --c1: #ec8358; --c2: #e6a75e; --c3: #a888ea; --c4: #7f9cf0; --c5: #5bbcd3; --c6: #d9b44a; --c7: #a3b46a;
+  color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body); }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.2; }
+h1 { font-size: 2rem; }
+h2 { font-size: 1.35rem; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+h3 { font-size: 1rem; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 500 0.75rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+header { display: flex; flex-direction: column; gap: 12px; }
+.meta { font: 0.85rem var(--mono); color: var(--muted); }
+code, .id { font-family: var(--mono); font-size: 0.85em; }
+.id { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.ids { display: flex; flex-wrap: wrap; gap: 6px; }
+section { display: flex; flex-direction: column; gap: 14px; }
+
+.score { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: center; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+.big { font: 700 3rem/1 var(--display); font-variant-numeric: tabular-nums; }
+.big small { font-size: 1.1rem; color: var(--muted); font-weight: 500; }
+.tablewrap { overflow-x: auto; min-width: 0; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+th { font: 500 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+td.n { text-align: right; }
+.bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; min-width: 80px; }
+.bar i { display: block; height: 100%; background: var(--pass); }
+
+.stack { display: flex; height: 30px; border-radius: 6px; overflow: hidden; }
+.stack span { display: block; height: 100%; }
+.legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px 18px; font-size: 0.88rem; }
+.legend div { display: flex; gap: 8px; align-items: center; }
+.sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.legend b { font-variant-numeric: tabular-nums; margin-left: auto; }
+
+.cause { border-left: 4px solid var(--c); padding-left: 16px; }
+.count { font: 500 0.8rem var(--mono); color: var(--c); border: 1px solid var(--c); border-radius: 999px; padding: 1px 9px; }
+.tag { font: 500 0.7rem var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; max-width: 72ch; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.fix strong { font-family: var(--display); }
+ol.actions { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; max-width: 72ch; }
+footer { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+@media (max-width: 520px) { .score { grid-template-columns: 1fr; } .big { font-size: 2.4rem; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">MacArena · OSWorld on macOS · native track</div>
+  <h1>final-osworld failure analysis</h1>
+  <p class="meta">out/final-osworld · 107 tasks · 1 run each · fresh VM per task · 30-turn budget, 100 tool-call cap</p>
+  <p>The run scored 18 of 107. Sixteen tasks never started because the VM reset crashed. The other 73 failures come mostly from the agent itself. The largest group is the agent opening a different Mac app instead of the one setup had already opened with the task file.</p>
+</header>
+
+<section>
+  <div class="score">
+    <div class="big">18<small> / 107</small></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Domain</th><th class="n">Pass</th><th class="n">Tasks</th><th class="n">Infra</th><th>Rate</th></tr></thead>
+        <tbody>
+          <tr><td>chrome</td><td class="n">12</td><td class="n">32</td><td class="n">0</td><td><div class="bar"><i style="width:37.5%"></i></div></td></tr>
+          <tr><td>gimp</td><td class="n">3</td><td class="n">24</td><td class="n">0</td><td><div class="bar"><i style="width:12.5%"></i></div></td></tr>
+          <tr><td>libreoffice_calc</td><td class="n">3</td><td class="n">45</td><td class="n">10</td><td><div class="bar"><i style="width:6.7%"></i></div></td></tr>
+          <tr><td>libreoffice_writer</td><td class="n">0</td><td class="n">6</td><td class="n">6</td><td><div class="bar"><i style="width:0%"></i></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="meta">All 3 GIMP passes were infeasible tasks the agent correctly called with <code>vm_fail</code>. Not counting infra, the score is 18 / 91.</p>
+</section>
+
+<section>
+  <h2>Where the 89 failures went</h2>
+  <p>Each failure is counted once, under its main cause.</p>
+  <div class="stack" role="img" aria-label="Failure causes: wrong app 30, UI automation stalls 17, infra 16, infeasible handling 12, web flows 5, script edits 4, suspected checker 3, tool-call waste 2">
+    <span style="flex:30;background:var(--c1)"></span>
+    <span style="flex:17;background:var(--c2)"></span>
+    <span style="flex:16;background:var(--infra)"></span>
+    <span style="flex:12;background:var(--c3)"></span>
+    <span style="flex:5;background:var(--c4)"></span>
+    <span style="flex:4;background:var(--c5)"></span>
+    <span style="flex:3;background:var(--c6)"></span>
+    <span style="flex:2;background:var(--c7)"></span>
+  </div>
+  <div class="legend">
+    <div><span class="sw" style="background:var(--c1)"></span>Wrong app used<b>30</b></div>
+    <div><span class="sw" style="background:var(--c2)"></span>UI automation stalls<b>17</b></div>
+    <div><span class="sw" style="background:var(--infra)"></span>Infra: VM reset crash<b>16</b></div>
+    <div><span class="sw" style="background:var(--c3)"></span>Infeasible handling<b>12</b></div>
+    <div><span class="sw" style="background:var(--c4)"></span>Hard web flows<b>5</b></div>
+    <div><span class="sw" style="background:var(--c5)"></span>Script edits overwritten<b>4</b></div>
+    <div><span class="sw" style="background:var(--c6)"></span>Suspected checker bug<b>3</b></div>
+    <div><span class="sw" style="background:var(--c7)"></span>Tool-call waste<b>2</b></div>
+  </div>
+</section>
+
+<section class="cause" style="--c:var(--c1)">
+  <h2>1. The agent ignores the app that is already open <span class="count">30</span></h2>
+  <p>Setup opens the right app before the agent starts: Chrome on the right site, or LibreOffice / GIMP with the task file loaded (<code>bridge.py</code> maps <code>soffice</code> and <code>gimp</code> to <code>open -a</code>). The agent's first message has no screen state, so it guesses an app from the task wording, with calls like <code>list_apps("numbers")</code> or <code>list_apps("Safari")</code>. Nothing matches, so it launches a stock Mac app.</p>
+  <h3>Calc tasks done in Numbers · 17</h3>
+  <p>The agent often creates a blank Numbers document and types the data in again. In 347ef137 it asked the user for data that was already in the open file.</p>
+  <div class="ids"><span class="id">035f41ba</span><span class="id">04d9aeaf</span><span class="id">0cecd4f3</span><span class="id">1273e544</span><span class="id">1954cced</span><span class="id">1d17d234</span><span class="id">26a8440e</span><span class="id">347ef137</span><span class="id">357ef137</span><span class="id">3a7c8185</span><span class="id">4172ea6e</span><span class="id">4de54231</span><span class="id">4e6fcf72</span><span class="id">4f07fbe9</span><span class="id">51719eea</span><span class="id">51b11269</span><span class="id">6054afcb</span></div>
+  <h3>Chrome tasks done elsewhere · 10</h3>
+  <p>Safari runs into a Google CAPTCHA. The checkers read Chrome's active tab, so a correct answer in Safari still scores 0. In 0d8b7de3 the agent searched the disk with <code>mdfind</code> while drugs.com was open in Chrome. In 35253b65 it built a <code>.webloc</code> from a guessed URL that was missing <code>www.</code>.</p>
+  <div class="ids"><span class="id">1704f00f</span><span class="id">82bc8d6a</span><span class="id">9f3f70fc</span><span class="id">b070486d</span><span class="id">f5d96daf</span><span class="id">f79439ad</span><span class="id">59155008 Dictionary</span><span class="id">368d9ba4 Weather</span><span class="id">0d8b7de3 filesystem</span><span class="id">35253b65</span></div>
+  <h3>GIMP tasks done elsewhere · 3</h3>
+  <div class="ids"><span class="id">7a4deb26 Preview</span><span class="id">7b7617bd TextEdit</span><span class="id">554785e9 Pillow, new filename</span></div>
+  <div class="fix"><strong>Fix:</strong> give the agent the start state in its first observation: the frontmost app, its window title and the open document. Also make <code>list_apps()</code> with no query list the running apps. This one change applies to about a third of all failures.</div>
+</section>
+
+<section class="cause" style="--c:var(--c2)">
+  <h2>2. LibreOffice and GIMP UI automation stalls <span class="count">17</span></h2>
+  <p>The agent was in the right app but couldn't drive it. Menus didn't open through the accessibility interface, dialogs such as Format Cells, Chart and Indexed Color never showed up in the tree, and submenu clicks did nothing. The agent spent turns retrying menu paths until the budget ran out. Multi-part calc tasks often stopped halfway, for example with the Total row done but no chart.</p>
+  <h3>LibreOffice · 10</h3>
+  <div class="ids"><span class="id">0326d92d</span><span class="id">0a2e43bf</span><span class="id">12382c62</span><span class="id">1334ca3e</span><span class="id">21df9241</span><span class="id">30e3e107</span><span class="id">37608790</span><span class="id">42e0a640</span><span class="id">6e99a1ad</span><span class="id">7e429b8d</span></div>
+  <h3>GIMP 3.2 · 7</h3>
+  <p>In 06ca5602 the agent couldn't press OK in the conversion dialog. f723c744 ran into GIMP 3.2's non-destructive Colors workflow.</p>
+  <div class="ids"><span class="id">06ca5602</span><span class="id">2a729ded</span><span class="id">734d6579</span><span class="id">7767eef2</span><span class="id">e2dd0213</span><span class="id">f4aec372</span><span class="id">f723c744</span></div>
+  <div class="fix"><strong>Fix:</strong> add app-specific shortcuts to the prompt or tools: LibreOffice's Name Box and Navigator, keyboard shortcuts for dialogs, and in GIMP the command search (<code>/</code>) instead of clicking through menus. Also report when a dialog is open but missing from the accessibility tree, so the agent stops retrying the same click.</div>
+</section>
+
+<section class="cause" style="--c:var(--infra)">
+  <h2>3. Infra: the VM reset crashed <span class="count">16</span></h2>
+  <p>From 03:45 to the end of the run, every <code>/ctl/reset</code> returned HTTP 500 because <code>utmctl</code> crashed with an uncaught <code>NSInvalidArgumentException</code> (<code>-[SBApplication set…]</code>) and the warning "UTM.app may not be scriptable". None of these tasks started. That covers all of writer and the last 10 calc tasks, so writer has no real result.</p>
+  <div class="ids"><span class="id">7efeb4b1</span><span class="id">8b1ce5f2</span><span class="id">a01fbce3</span><span class="id">a9f325aa</span><span class="id">aa3a8974</span><span class="id">abed40dc</span><span class="id">d681960f</span><span class="id">eb03d19a</span><span class="id">ecb0df7a</span><span class="id">f9584479</span><span class="id">0810415c</span><span class="id">0a0faba3</span><span class="id">0b17a146</span><span class="id">0e47de2a</span><span class="id">0e763496</span><span class="id">3ef2b351</span></div>
+  <div class="fix"><strong>Fix:</strong> rerun these 16 tasks. Make the bench stop, or restart UTM, after two failed resets in a row, and record skipped tasks as infra errors so they aren't counted as zeros.</div>
+</section>
+
+<section class="cause" style="--c:var(--c3)">
+  <h2>4. Infeasible tasks handled wrong <span class="count">12</span></h2>
+  <p>11 of the 14 infeasible tasks failed. After the budget runs out, <code>vm_fail</code> and <code>vm_done</code> are rejected ("no turns left (30)"), so a late <code>vm_fail</code> doesn't count.</p>
+  <ul>
+    <li><strong>Did a workaround instead of calling <code>vm_fail</code>:</strong> 62f7fd55 (potrace to SVG), dbbf4b99 (<code>sips</code> on the raw file), 8ea73f6f (fake upscale), 93eabf48 (dark mode), 2bd59342 (sparklines in Numbers).</li>
+    <li><strong>Kept trying until the budget ran out:</strong> 3720f614 (Korean UI), ae78f875 (50 results per page), fbb548ca (Blue theme), 045bf3ff (CMYK).</li>
+    <li><strong>Model protocol failures:</strong> 58d3eeeb answered with no tool calls ("I don't see any image"). 5ca86c6f emitted a raw <code>&lt;tool_call&gt;</code> as text, then called <code>vm_done</code>.</li>
+    <li><strong>Called a feasible task infeasible:</strong> 99146c54. Chrome still has a delete-on-close setting for site data.</li>
+  </ul>
+  <div class="fix"><strong>Fix:</strong> in the prompt, list the usual signs that a task is infeasible: the app lacks the feature, the request is a different tool's job, or the requested format can't be produced. Tell the agent to call <code>vm_fail</code> as soon as it confirms one. Don't count a stand-in result as done. Warn the agent when about 3 turns are left so a pending <code>vm_fail</code> still gets in.</div>
+</section>
+
+<section class="cause" style="--c:var(--c4)">
+  <h2>5. Hard web flows in the right browser <span class="count">5</span></h2>
+  <p>The agent was in Chrome but couldn't finish: date pickers, filters on single-page sites, and answers given in chat when the checker reads the URL or filter state of the active tab.</p>
+  <div class="ids"><span class="id">44ee5668 YouTube history</span><span class="id">47543840 Budget dates</span><span class="id">82279c77 cars.com filters</span><span class="id">7f52cab9 answered in chat</span><span class="id">f0b971a1 NFL via curl</span></div>
+</section>
+
+<section class="cause" style="--c:var(--c5)">
+  <h2>6. Script edits overwritten or checked against the wrong file <span class="count">4</span></h2>
+  <ul>
+    <li><span class="id">01b269ae</span> <span class="id">7a4e4bc8</span> The agent edited the <code>.xlsx</code> with openpyxl while LibreOffice still had it open. The evaluator's postconfig then focuses LibreOffice and presses ⌘S, which saves the old in-memory copy over the edit.</li>
+    <li><span class="id">72f83cdc</span> The agent overwrote <code>berry.png</code>, which the checker uses as its reference for the mirrored export.</li>
+    <li><span class="id">77b8ab4d</span> The agent renamed the source photo instead of exporting a copy, so the reference file was gone.</li>
+  </ul>
+  <div class="fix"><strong>Fix:</strong> tell the agent to make its changes in the open app and save there, and never to overwrite or rename the source file.</div>
+</section>
+
+<section class="cause" style="--c:var(--c6)">
+  <h2>7. Suspected checker or port bugs <span class="count">3</span></h2>
+  <p>In these the agent appears to have done the task. Check them before trusting the GIMP and Chrome-settings scores.</p>
+  <ul>
+    <li><span class="id">2ae9ba84</span> The postconfig runs <code>pkill chrome</code>. On macOS this is case-sensitive and likely misses "Google Chrome", so the new profile name may never be written to disk.</li>
+    <li><span class="id">a746add2</span> <span class="id">b148e375</span> The checker reads GIMP's <code>action-history</code> or <code>gimprc</code>, which are only written on a clean ⌘Q. In GIMP 3.2, ⌘Q with an unsaved image brings up a dialog, and the keys may differ from GIMP 2.10.</li>
+  </ul>
+</section>
+
+<section class="cause" style="--c:var(--c7)">
+  <h2>8. Tool-call waste <span class="count">2</span></h2>
+  <p>Two failures are mainly this. The same habits also cost turns in many of the tasks above.</p>
+  <ul>
+    <li><strong>Reading cells one at a time</strong> with <code>get_control_value</code>: 93 calls in 535364ea, which hit the 100-call cap; 46 in 1e8df695 (which also wrote <code>=B-C</code>); 37 in 12382c62.</li>
+    <li><strong>Repeated <code>list_apps</code> calls:</strong> 17 in b148e375, 15 in e2dd0213, 12 in 7b7617bd.</li>
+    <li><strong>Calls after the budget ran out:</strong> 47 rejected <code>vm_done</code>/<code>vm_fail</code> calls, and the agent kept talking after the run ended.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>What to do next</h2>
+  <ol class="actions">
+    <li><strong>Show the start state.</strong> Put the frontmost app, window and document in the first observation, and make <code>list_apps()</code> list running apps. This targets about 30 failures.</li>
+    <li><strong>Rerun the 16 infra tasks</strong> and add a reset health check, so writer gets a real result.</li>
+    <li><strong>Improve infeasible-task handling:</strong> call <code>vm_fail</code> early, accept no stand-in results, and warn when the budget is nearly used up.</li>
+    <li><strong>Check the three suspected checker bugs</strong> before comparing GIMP and Chrome-settings scores with other runs.</li>
+    <li><strong>Add app-specific shortcuts</strong> for LibreOffice and GIMP 3.2, and a tool that reads a whole cell range in one call.</li>
+  </ol>
+</section>
+
+<footer>Source: <code>otto-macarena-runs/out/final-osworld</code> (results.jsonl, trajectories/*.messages.json) and the MacArena OSWorld task configs. Task IDs are the first 8 characters of the OSWorld UUID. Counts per cause assign each failure to its main cause; some tasks show several problems.</footer>
+</div>
