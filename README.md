@@ -397,6 +397,30 @@ The OpenAI CUA figures are from the MacArena paper's Table 3, the only published
 
 So the numbers answer "what does OTTO get, as built, with its own tools", not "how does its model rank as a screenshot-and-click agent". Memory showed no clear effect in these runs (no learning curve between the first and second half; a memory-off run on the same code has not been done yet). One run per task, so run-to-run variation is unmeasured. Results, per-task data, trajectories, failure analysis and caveats: [ottoappmac/otto-macarena-runs](https://github.com/ottoappmac/otto-macarena-runs).
 
+**Reproduce.** Needs an Apple Silicon Mac, about 70 GB free per VM image (`MacArena.utm` 67 GB for MacArena's tasks, `osworld.utm` 54 GB for macOSWorld) plus a few GB for MacArena's Python env, and a model server (the runs above used oMLX). Full instructions: [`scripts/macarena/README.md`](./scripts/macarena/README.md).
+
+1. **Install UTM, MacArena and the VM image.** `setup` installs UTM (`brew install --cask utm`), clones MacArena at a pinned commit, builds its Python env, downloads the image from [MacPaw's Hugging Face bucket](https://huggingface.co/buckets/macpaw-research/MacArena) (resumable) and imports it into UTM. It asks before each download; `--dry-run` shows the steps without changing anything, and `check` lists what is still missing.
+
+   ```bash
+   scripts/macarena/bench.sh setup --dry-run
+   scripts/macarena/bench.sh setup                  # the macarena VM
+   scripts/macarena/bench.sh setup --vm osworld     # the macOSWorld / OSWorld VM
+   ```
+
+2. **Grant the base image its permissions, once per image.** macOS only grants these on a person's click: screen permissions (`bench.sh grant-perms`), Full Disk Access for the grader's Python, and Automation for the scripted apps (`bench.sh grant-apps`). Then `bench.sh verify-image --vm <name>` checks each one in a throwaway copy. The checklist is in the harness README under *Base image prerequisites*.
+
+3. **Run.** `up` boots the bridge and an isolated OTTO backend; every task gets a fresh copy of the VM.
+
+   ```bash
+   scripts/macarena/bench.sh up --vm macarena --native --memory live
+   scripts/macarena/bench.sh run --sources macarena --ids <id>     # one task first
+   scripts/macarena/bench.sh run --sources macarena                # all 49
+   scripts/macarena/bench.sh report ../otto-macarena-runs/out/<run>
+   scripts/macarena/bench.sh stop
+   ```
+
+   For macOSWorld, use `--vm osworld` on `up` and `--sources macosworld` on `run`. Choose the model with `MACARENA_PROVIDER` / `MACARENA_MODEL`.
+
 ### BenchCAD
 
 [`scripts/benchcad/`](./scripts/benchcad/README.md) runs `benchcad-agent` on [BenchCAD](https://benchcad.com/setup.html) cases ([BenchCAD-org/benchcad-2-main](https://github.com/BenchCAD-org/benchcad-2-main)) with BenchCAD's own scorer. It is a development harness only: BenchCAD does not accept runs from it, and there is **no reportable OTTO score**.
