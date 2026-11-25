@@ -271,14 +271,14 @@ def _mlx_args() -> list[str]:
     - ``sentencepiece`` / ``google.protobuf`` — mlx_lm hard deps used
       by various model architectures' tokenizers.
 
-    mlx_vlm additionally requires ``cv2`` (opencv-python), ``datasets``,
-    and ``miniaudio`` for its full feature surface — those are NOT
-    bundled here because they add another ~300 MB and the only call
-    site (``chat_models.mlx.chat_vlm.MLXVLChatModel``) imports them
-    lazily inside methods.  If a user actually runs the MLX VLM path,
-    they will see a clear ``ModuleNotFoundError`` at first inference
-    pointing at the missing dep, rather than paying the bundle cost
-    up-front for everyone.
+    mlx_vlm (0.8.x) additionally declares ``cv2`` (opencv-python),
+    ``datasets``, ``miniaudio``, ``mlx_audio`` and ``llguidance`` for its
+    full feature surface (audio models, constrained decoding, its own
+    server).  Those are NOT bundled here because they add several hundred
+    MB.  mlx_vlm imports them lazily, and ``load`` + ``stream_generate``
+    for image and text-only chat run without them (checked against
+    0.8.1 with every ``_exclude_args`` module and those five absent).
+    Its image processors no longer need torch/torchvision.
 
     ``mlx_whisper`` powers on-device speech-to-text
     (``backend.voice.stt`` → system-audio + mic transcription).  Its

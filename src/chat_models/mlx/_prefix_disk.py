@@ -5,7 +5,7 @@ so after every backend restart each agent paid a full cold prefill of its
 tool block and system turn again (~130 s each for OTTO's ~35k tokens on
 Qwen3.8-9B).  Static snapshots that can be hit again are therefore also
 written here with ``mlx_lm``'s ``save_prompt_cache`` — which serialises any
-cache class through ``.state`` / ``.meta_state`` — and a RAM-store miss loads
+cache class through ``.state`` — and a RAM-store miss loads
 the exact-length snapshot back with ``load_prompt_cache``.
 
 Not every static snapshot can: OTTO's system turn names the session's files
@@ -39,7 +39,6 @@ environment variable moves it, and an empty value turns the tier off.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import threading
@@ -53,7 +52,7 @@ logger = logging.getLogger(__name__)
 CACHE_DIR_ENV = "OTTO_MLX_PREFIX_CACHE_DIR"
 DEFAULT_DIR = Path.home() / "Library" / "Caches" / "otto" / "prefix"
 MAX_BYTES = 4 * 1024**3
-_FORMAT = "otto-prefix-1"
+_FORMAT = "otto-prefix-2"  # 2: mlx_lm 0.32 cache state (None slots stored natively)
 _WEIGHT_SUFFIXES = (".safetensors", ".npz")
 _STALE_TMP_SECONDS = 3600
 
@@ -203,10 +202,6 @@ class DiskPrefixStore:
             offset = getattr(layer, "offset", None)
             if isinstance(offset, int) and offset != n_tokens:
                 raise ValueError(f"a layer holds {offset} tokens")
-        # Put back the empty slots save() had to drop (see _carrier).
-        for i, (size, holes) in json.loads(meta.get("otto_holes", "{}")).items():
-            filled = iter(layers[int(i)].state)
-            layers[int(i)].state = [None if j in holes else next(filled) for j in range(size)]
         return layers
 
     def save(self, key: str, layers: List[Any], n_tokens: int) -> bool:
@@ -216,8 +211,8 @@ class DiskPrefixStore:
         from mlx_lm.models.cache import save_prompt_cache
 
         try:
-            holes: dict = {}
-            carriers = [self._carrier(i, layer, holes) for i, layer in enumerate(layers)]
+            for i, layer in enumerate(layers):
+                self._check_storable(i, layer)
         except ValueError as exc:
             logger.debug("KV prefix cache: snapshot not saved to SSD (%s)", exc)
             return False
@@ -225,11 +220,10 @@ class DiskPrefixStore:
         tmp = self.directory / "tmp" / f"{key}.{os.getpid()}.{threading.get_ident()}.safetensors"
         try:
             tmp.parent.mkdir(parents=True, exist_ok=True)
-            save_prompt_cache(str(tmp), carriers, {
+            save_prompt_cache(str(tmp), layers, {
                 "otto_format": _FORMAT,
                 "otto_key": key,
                 "otto_tokens": str(n_tokens),
-                "otto_holes": json.dumps(holes),
             })
             os.replace(tmp, path)
         except Exception as exc:  # noqa: BLE001 — disk full, permissions, ...
@@ -240,14 +234,15 @@ class DiskPrefixStore:
         return path.exists()
 
     @staticmethod
-    def _carrier(i: int, layer: Any, holes: dict) -> Any:
-        """*layer* in a form ``save_prompt_cache`` / ``load_prompt_cache`` round-trip.
+    def _check_storable(i: int, layer: Any) -> None:
+        """Raise ``ValueError`` unless *layer* round-trips through ``save_prompt_cache``.
 
-        safetensors can't store ``None``: an ``ArraysCache`` slot that is
-        still empty is dropped here and recorded in *holes*.  A layer class
-        ``load_prompt_cache`` can't find, or a layer with no arrays at all
-        (it would shift every later layer on load), can't be stored.
+        Since mlx_lm 0.32 ``save_prompt_cache`` stores ``None`` entries (an
+        ``ArraysCache`` slot still empty) and scalars itself, so layers are
+        written as they are.  A layer class ``load_prompt_cache`` can't find,
+        or a layer holding no arrays at all, isn't stored.
         """
+        import mlx.core as mx
         from mlx.utils import tree_flatten
         from mlx_lm.models import cache as cache_module
 
@@ -255,14 +250,10 @@ class DiskPrefixStore:
             raise ValueError(f"{type(layer).__name__} isn't an mlx_lm cache class")
         try:
             state = layer.state
-        except Exception as exc:  # noqa: BLE001 — e.g. an empty KVCache
+        except Exception as exc:  # noqa: BLE001
             raise ValueError(f"layer {i} has no state") from exc
-        if isinstance(state, list) and any(x is None for x in state):
-            holes[str(i)] = [len(state), [j for j, x in enumerate(state) if x is None]]
-            layer = type(layer).from_state([x for x in state if x is not None], layer.meta_state)
-        if not tree_flatten(layer.state):
+        if not any(isinstance(x, mx.array) for _, x in tree_flatten(state)):
             raise ValueError(f"layer {i} is empty")
-        return layer
 
     def _evict(self, keep: Path) -> None:
         """Delete least recently used snapshots until the directory fits ``max_bytes``."""

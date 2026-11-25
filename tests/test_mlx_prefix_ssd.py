@@ -105,7 +105,7 @@ def _next_logits(cache):
     features = []
     for layer in cache:
         if isinstance(layer, ArraysCache):
-            features += [mx.sum(a.astype(mx.float32)) for a in layer.state if a is not None]
+            features += [mx.sum(a.astype(mx.float32)) for a in layer.cache if a is not None]
             continue
         keys, values = layer.update_and_fetch(x, x)
         if isinstance(layer, QuantizedKVCache):
@@ -121,13 +121,15 @@ def _assert_bit_exact(a_layers, b_layers):
     assert len(a_layers) == len(b_layers)
     for a, b in zip(a_layers, b_layers):
         assert type(a) is type(b)
-        assert tuple(a.meta_state) == tuple(b.meta_state)
         a_flat = tree_flatten(a.state, is_leaf=lambda x: x is None)
         b_flat = tree_flatten(b.state, is_leaf=lambda x: x is None)
         assert [k for k, _ in a_flat] == [k for k, _ in b_flat]
         for (_, x), (_, y) in zip(a_flat, b_flat):
             if x is None or y is None:
                 assert x is None and y is None
+                continue
+            if not isinstance(x, mx.array):  # scalars: offset, keep, max_size, ...
+                assert x == y
                 continue
             assert x.dtype == y.dtype and x.shape == y.shape
             assert mx.array_equal(x, y).item()
