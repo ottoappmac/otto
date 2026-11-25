@@ -292,175 +292,135 @@ def test_environment_helpers_resolve_modes(monkeypatch):
     assert Environment.get_local_prompt_mode() == "auto"
 
 
-# ── AppleScript-first preference -------------------------------------------
+# ── One macOS agent: scripts + UI ------------------------------------------
 #
-# These tests lock in the contract that, when both
-# ``macos-applescript-agent`` and ``macos-desktop-agent`` are registered as
-# subagents, the orchestrator prompt prefers AppleScript and uses UI
-# automation only as a fallback.  AppleScript is deterministic and
-# idempotent whenever the target app exposes the verb; UI automation is
-# non-deterministic and token-expensive, so the ladder must reflect that
-# ordering — both in the long capability_ladder block (full mode) and in
-# the slim guidance bullets (lite mode).
+# ``macos-desktop-agent`` carries both the AppleScript / JXA tools and the
+# UI-automation tools and picks the route itself.  These tests lock in that
+# the orchestrator prompt routes every local-app task to that one agent, in
+# both the long capability_ladder block (full mode) and the slim guidance
+# bullets (lite mode), and never asks the orchestrator to choose the route
+# or to wait for a FALLBACK hand-off.
 
 
-def test_full_ladder_orders_applescript_before_desktop(meta_tool):
-    p = build_orchestrator_prompt(
-        [meta_tool],
-        subagents=[
-            {"name": "macos-applescript-agent"},
-            {"name": "macos-desktop-agent"},
-        ],
-        lite=False,
-    )
-    apple_idx = p.find("macos-applescript-agent")
-    desktop_idx = p.find("macos-desktop-agent")
-    assert apple_idx != -1 and desktop_idx != -1
-    assert apple_idx < desktop_idx, (
-        "AppleScript rung must come before the UI-automation rung in the "
-        "capability ladder — UI is the fallback when AppleScript can't "
-        "reach the verb."
-    )
-    # The fallback marker should be present so the orchestrator knows
-    # what error pattern to look for when handing off.
-    assert "FALLBACK:" in p or "fallback" in p.lower()
-
-
-def test_full_ladder_keeps_only_applescript_when_desktop_absent(meta_tool):
-    p = build_orchestrator_prompt(
-        [meta_tool],
-        subagents=[{"name": "macos-applescript-agent"}],
-        lite=False,
-    )
-    assert "macos-applescript-agent" in p
-    # The desktop-agent delegation hint only emits when the desktop
-    # agent is registered; its absence is the reliable signal that the
-    # ladder rung was dropped (the AppleScript-preference rule body
-    # still references the desktop agent as a fallback target).
-    assert "For macos-desktop-agent:" not in p
-
-
-def test_full_ladder_handles_desktop_only(meta_tool):
-    """Linux / Windows hosts won't seed the AppleScript agent — desktop
-    rung must still render correctly in that scenario."""
+def test_full_ladder_has_one_macos_rung(meta_tool):
     p = build_orchestrator_prompt(
         [meta_tool],
         subagents=[{"name": "macos-desktop-agent"}],
         lite=False,
     )
+    assert "**macOS apps**" in p
+    assert 'task(subagent_type="macos-desktop-agent"' in p
     assert "For macos-desktop-agent:" in p
-    # AppleScript hints / preference rule are gated on the AppleScript
-    # agent being registered.
-    assert "For macos-applescript-agent:" not in p
+    # No second agent and no hand-off contract.
+    assert "macos-applescript-agent" not in p
+    assert "FALLBACK" not in p
+    assert "**macOS UI automation**" not in p
+
+
+def test_full_ladder_ui_only_agent_when_macos_agent_absent(meta_tool):
+    """Notebook environments register a UI-only agent; it gets the UI rung."""
+    p = build_orchestrator_prompt(
+        [meta_tool],
+        subagents=[{"name": "computer-voyager"}],
+        lite=False,
+    )
+    assert "**macOS UI automation**" in p
+    assert 'task(subagent_type="computer-voyager"' in p
+    assert "**macOS apps**" not in p
+    # The dedicated-tool preference rule targets macos-desktop-agent only.
     assert "DEDICATED built-in tool" not in p
 
 
-def test_full_rules_inject_applescript_preference_when_present(meta_tool):
+def test_full_ladder_prefers_macos_agent_over_ui_only(meta_tool):
     p = build_orchestrator_prompt(
         [meta_tool],
-        subagents=[
-            {"name": "macos-applescript-agent"},
-            {"name": "macos-desktop-agent"},
-        ],
+        subagents=[{"name": "macos-desktop-agent"}, {"name": "computer-voyager"}],
         lite=False,
     )
-    # The generalised rule tells the model to prefer a DEDICATED built-in
-    # tool for the app when one exists, then fall back to
-    # macos-applescript-agent, and lists illustrative apps so 4B-class
-    # models can pattern-match on lexical surface instead of classifying
-    # intent.
+    assert "**macOS apps**" in p
+    assert "**macOS UI automation**" not in p
+
+
+def test_full_rules_inject_dedicated_tool_preference_when_present(meta_tool):
+    p = build_orchestrator_prompt(
+        [meta_tool],
+        subagents=[{"name": "macos-desktop-agent"}],
+        lite=False,
+    )
+    # Prefer a DEDICATED built-in tool for the app when one exists, then
+    # macos-desktop-agent; illustrative apps so 4B-class models can
+    # pattern-match on lexical surface instead of classifying intent.
     assert "DEDICATED built-in tool" in p
-    # Standard-tool apps (Mail/Notes) and applescript-agent fallback apps
-    # (Slack, Cursor) must both appear so the model can place any app on
-    # the right side of the rule.
     for app in ("Slack", "Cursor", "Mail", "Notes"):
         assert app in p, f"rule should list {app} as illustrative"
-    # The dedicated typed tools are named so the model calls them directly.
     for tool in ("macos-mail", "macos-reminders", "macos-messages"):
         assert tool in p, f"rule should name the {tool} standard tool"
-    # The rule explicitly mentions TCC as the one case where you do NOT
-    # fall back.
+    # TCC is surfaced to the user, not retried through the UI.
     assert "-1743" in p
+    assert "dispatch macos-desktop-agent" in p
 
 
-def test_full_rules_skip_applescript_preference_when_absent(meta_tool):
-    """No AppleScript agent → no AppleScript-preference rule (the rule
-    has no actionable fallback in that environment)."""
+def test_full_rules_skip_macos_rules_when_absent(meta_tool):
     p = build_orchestrator_prompt(
         [meta_tool],
-        subagents=[{"name": "macos-desktop-agent"}],
+        subagents=[{"name": "browser-agent"}],
         lite=False,
     )
     assert "DEDICATED built-in tool" not in p
+    assert "For macos-desktop-agent:" not in p
+    assert "**macOS apps**" not in p
 
 
-def test_lite_guidance_orders_applescript_before_desktop(gp_tool):
+def test_lite_guidance_names_one_macos_agent(gp_tool):
     p = build_orchestrator_prompt(
         [gp_tool],
-        subagents=[
-            {"name": "macos-applescript-agent"},
-            {"name": "macos-desktop-agent"},
-        ],
+        subagents=[{"name": "macos-desktop-agent"}, {"name": "browser-agent"}],
         lite=True,
     )
-    # Both must be referenced in the fallback chain.  Use the
-    # AppleScript-tagged occurrence as the anchor (the literal
-    # "macos-applescript-agent (AppleScript)" appears in the lite
-    # guidance fallback chain) so the assertion is robust to other
-    # places the agent name shows up.
-    apple_chain_idx = p.find("macos-applescript-agent (AppleScript)")
-    desktop_chain_idx = p.find("macos-desktop-agent (macOS UI)")
-    assert apple_chain_idx != -1 and desktop_chain_idx != -1
-    assert apple_chain_idx < desktop_chain_idx
+    macos_idx = p.find("macos-desktop-agent (macOS apps: AppleScript + UI)")
+    browser_idx = p.find("browser-agent (web UI)")
+    assert macos_idx != -1 and browser_idx != -1
+    assert macos_idx < browser_idx
+    assert "FALLBACK" not in p
 
 
-def test_lite_rules_inject_applescript_preference_when_present(gp_tool):
+def test_lite_rules_inject_dedicated_tool_preference_when_present(gp_tool):
     p = build_orchestrator_prompt(
         [gp_tool],
-        subagents=[
-            {"name": "macos-applescript-agent"},
-            {"name": "macos-desktop-agent"},
-        ],
+        subagents=[{"name": "macos-desktop-agent"}],
         lite=True,
     )
     assert "DEDICATED built-in tool" in p
-    assert "macos-desktop-agent" in p
-    # Illustrative app list must travel in lite mode too — that's the
-    # whole point of the generalisation for small models.
+    assert "dispatch macos-desktop-agent" in p
     for app in ("Slack", "Cursor"):
         assert app in p, f"lite rule should list {app}"
-    # Standard tools must be named in lite mode too so the model calls
-    # them directly instead of routing through the agent.
     assert "macos-mail" in p
 
 
-def test_lite_rules_skip_applescript_preference_when_absent(gp_tool):
+def test_lite_rules_skip_dedicated_tool_preference_when_absent(gp_tool):
     p = build_orchestrator_prompt(
         [gp_tool],
-        subagents=[{"name": "macos-desktop-agent"}],
+        subagents=[{"name": "computer-voyager"}],
         lite=True,
     )
-    # The rule body only emits when the AppleScript agent is registered;
-    # the <subagents> block's macos-desktop-agent entry references
-    # macos-applescript-agent as the primary, so check the rule body
-    # specifically rather than the substring globally.
     assert "DEDICATED built-in tool" not in p
 
 
-def test_full_info_section_threads_applescript(meta_tool):
+def test_full_info_section_threads_macos_agent(meta_tool):
     """For information queries about native macOS app state (frontmost
     app, current track, …), the ``To get information`` clause should
-    name the AppleScript agent before the browser fallback."""
+    name the macOS agent before the browser fallback."""
     p = build_orchestrator_prompt(
         [meta_tool],
         subagents=[
-            {"name": "macos-applescript-agent"},
+            {"name": "macos-desktop-agent"},
             {"name": "browser-agent"},
         ],
         lite=False,
     )
-    apple_idx = p.find("macos-applescript-agent")
-    browser_idx = p.find("browser-agent")
+    assert "`macos-desktop-agent` for native macOS app state" in p
+    apple_idx = p.find("`macos-desktop-agent` for native macOS app state")
+    browser_idx = p.find("`browser-agent` for JS / login pages")
     assert apple_idx != -1 and browser_idx != -1
     assert apple_idx < browser_idx
 
@@ -479,7 +439,7 @@ def test_lite_emits_subagents_block_when_subagents_registered(gp_tool):
     p = build_orchestrator_prompt(
         [gp_tool],
         subagents=[
-            {"name": "macos-applescript-agent"},
+            {"name": "macos-desktop-agent"},
             {"name": "browser-agent"},
         ],
         lite=True,
@@ -495,20 +455,20 @@ def test_lite_omits_subagents_block_when_no_subagents(gp_tool):
 
 
 def test_lite_subagents_block_includes_apps_in_macos_trigger(gp_tool):
-    """The macos-applescript-agent ``use when`` trigger MUST list
+    """The macos-desktop-agent ``use when`` trigger MUST list
     illustrative apps (Slack, Messages, Mail, …) so a 4B-class model
     pattern-matches on the user's literal app name instead of having to
     derive 'Slack is a macOS app'."""
     p = build_orchestrator_prompt(
         [gp_tool],
-        subagents=[{"name": "macos-applescript-agent"}],
+        subagents=[{"name": "macos-desktop-agent"}],
         lite=True,
     )
-    # Find the line for macos-applescript-agent inside <subagents>.
+    # Find the line for macos-desktop-agent inside <subagents>.
     block_start = p.index("<subagents>")
     block_end = p.index("</subagents>")
     block = p[block_start:block_end]
-    assert "macos-applescript-agent" in block
+    assert "macos-desktop-agent" in block
     # At least these representative apps must appear in the trigger.
     for app in ("Slack", "Messages", "Mail", "Notes"):
         assert app in block, f"trigger should mention {app}"
@@ -536,7 +496,6 @@ def test_lite_subagents_enumerates_all_registered(gp_tool):
     p = build_orchestrator_prompt(
         [gp_tool],
         subagents=[
-            {"name": "macos-applescript-agent"},
             {"name": "macos-desktop-agent"},
             {"name": "browser-agent"},
             {"name": "trigger-builder-agent"},
@@ -547,7 +506,6 @@ def test_lite_subagents_enumerates_all_registered(gp_tool):
     block_end = p.index("</subagents>")
     block = p[block_start:block_end]
     for name in (
-        "macos-applescript-agent",
         "macos-desktop-agent",
         "browser-agent",
         "trigger-builder-agent",
@@ -555,13 +513,13 @@ def test_lite_subagents_enumerates_all_registered(gp_tool):
         assert name in block, f"{name} missing from <subagents>"
 
 
-# ── Activity-vs-AppleScript temporal split ---------------------------------
+# ── Activity-vs-live-app temporal split ---------------------------------
 
 
-def test_lite_guidance_distinguishes_activity_past_from_applescript_now(gp_tool):
-    """When activity tools AND macos-applescript-agent are both active,
+def test_lite_guidance_distinguishes_activity_past_from_live_app_now(gp_tool):
+    """When activity tools AND macos-desktop-agent are both active,
     the lite guidance must explicitly split temporal scope: PAST →
-    activity, RIGHT NOW → applescript.  Without this, the orchestrator
+    activity, RIGHT NOW → the macOS agent.  Without this, the orchestrator
     in the Slack trace picked search_screen_history for a
     'what's the latest message NOW' query."""
 
@@ -572,11 +530,11 @@ def test_lite_guidance_distinguishes_activity_past_from_applescript_now(gp_tool)
 
     p = build_orchestrator_prompt(
         [gp_tool, _ActivityTool("search_screen_history")],
-        subagents=[{"name": "macos-applescript-agent"}],
+        subagents=[{"name": "macos-desktop-agent"}],
         lite=True,
     )
     assert "PAST" in p
     assert "RIGHT NOW" in p
     # Both surfaces named in the same paragraph.
     assert "activity tools" in p
-    assert "macos-applescript-agent" in p
+    assert "RIGHT NOW (current message, current track, frontmost window) →\n    macos-desktop-agent" in p

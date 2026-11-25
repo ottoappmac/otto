@@ -38,7 +38,6 @@ const RISK_BADGES: Record<string, string> = {
   "microsoft-teams": "Can send messages",
   atlassian: "Writes to Jira and Confluence",
   "microsoft-onedrive": "Writes to OneDrive",
-  blender: "Runs Blender code",
   "playwright-mcp": "Drives the browser",
 };
 

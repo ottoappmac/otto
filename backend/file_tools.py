@@ -139,6 +139,95 @@ def _save_desc_cache(files_dir: Path, cache: dict[str, str]) -> None:
         logger.debug("Could not persist image-description cache: %s", exc)
 
 
+def _fetch_image_bytes(url: str) -> tuple[bytes, str] | str:
+    """Fetch a public image. Returns ``(bytes, mime)`` or an ``"Error: ..."`` string.
+
+    Shared by ``load_image_from_url`` and ``image_search``: scheme guard, SSRF
+    guard, content-type and size checks, then a decode check.
+    """
+    import httpx
+    from PIL import Image
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return "Error: only http and https URLs are supported."
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return "Error: URL has no hostname."
+
+    try:
+        ip = ipaddress.ip_address(socket.gethostbyname(hostname))
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            return "Error: requests to private or internal addresses are not allowed."
+    except OSError:
+        return f"Error: could not resolve host: {hostname}"
+
+    limit_msg = f"Error: image exceeds the {_MAX_IMAGE_SIZE // (1024 * 1024)} MB size limit."
+    try:
+        with httpx.Client(follow_redirects=True, timeout=_FETCH_TIMEOUT) as client:
+            with client.stream("GET", url, headers={"User-Agent": "Otto/1.0"}) as resp:
+                resp.raise_for_status()
+                content_type = resp.headers.get("content-type", "").split(";")[0].strip()
+                if content_type not in _IMAGE_MIMES:
+                    return (
+                        f"Error: URL does not point to a supported image type "
+                        f"({content_type or 'unknown'}). Supported types: PNG, JPEG, GIF, WebP."
+                    )
+                if int(resp.headers.get("content-length", 0)) > _MAX_IMAGE_SIZE:
+                    return limit_msg
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in resp.iter_bytes(chunk_size=64 * 1024):
+                    total += len(chunk)
+                    if total > _MAX_IMAGE_SIZE:
+                        return limit_msg
+                    chunks.append(chunk)
+    except httpx.HTTPStatusError as exc:
+        return f"Error: HTTP {exc.response.status_code} fetching URL."
+    except httpx.RequestError as exc:
+        return f"Error: network error fetching URL: {exc}"
+
+    raw = b"".join(chunks)
+    # Guards against HTML/error pages served with an image Content-Type.
+    try:
+        Image.open(io.BytesIO(raw)).verify()
+    except Exception:
+        return "Error: downloaded content is not a valid image."
+    return raw, content_type
+
+
+def _search_and_save_images(query: str, dest: Path, max_results: int) -> str:
+    """Search the web for images and save the first few that download cleanly."""
+    from tools.research._loaders import _get_ddgs
+
+    try:
+        hits = list(_get_ddgs().images(query, region="wt-wt", safesearch="moderate",
+                                       max_results=max_results * 4))
+    except Exception as exc:
+        return f"Error: image search failed: {exc}"
+    if not hits:
+        return f"No images found for {query!r}. Try different words."
+
+    dest.mkdir(parents=True, exist_ok=True)
+    stamp = hashlib.sha1(query.encode()).hexdigest()[:8]
+    ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+    saved: list[str] = []
+    for hit in hits:
+        if len(saved) >= max_results:
+            break
+        url = hit.get("image") or ""
+        fetched = _fetch_image_bytes(url) if url else "Error: no url"
+        if isinstance(fetched, str):
+            continue
+        raw, mime = fetched
+        path = dest / f"{stamp}_{len(saved) + 1}{ext[mime]}"
+        path.write_bytes(raw)
+        saved.append(f"- {path}  (\"{hit.get('title', '')[:80]}\", from {hit.get('url', url)})")
+    if not saved:
+        return f"Found results for {query!r} but none could be downloaded. Try different words."
+    return "Saved reference images. Open each with view_image:\n" + "\n".join(saved)
+
+
 def build_file_tools(
     files_dir: Path,
     vision_llm: Optional[BaseChatModel] = None,
@@ -267,84 +356,20 @@ def build_file_tools(
         """Fetch an image from a public URL and return it as visual content
         the model can see.
 
-        Use this when the user provides a URL pointing to an image (PNG, JPEG,
-        GIF, or WebP) and you need to inspect its contents.  For images already
-        uploaded to the session, use view_image instead.
+        Use this for any image URL you need to see: one the user gives you, or
+        one you found yourself on a web page or in search results (PNG, JPEG,
+        GIF, or WebP).  To find images for a topic, use image_search.  For
+        images already uploaded to the session, use view_image instead.
 
         Args:
             url: Fully-qualified HTTP or HTTPS URL of the image
                  (e.g. "https://example.com/photo.jpg").
         """
-        import httpx
-        from PIL import Image
-
-        # 1. Scheme guard — only http/https
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return [create_text_block(text="Error: only http and https URLs are supported.")]
-
-        hostname = parsed.hostname or ""
-        if not hostname:
-            return [create_text_block(text="Error: URL has no hostname.")]
-
-        # 2. SSRF guard — block private/loopback/link-local addresses
-        try:
-            ip = ipaddress.ip_address(socket.gethostbyname(hostname))
-            if ip.is_private or ip.is_loopback or ip.is_link_local:
-                return [create_text_block(
-                    text="Error: requests to private or internal addresses are not allowed."
-                )]
-        except OSError:
-            return [create_text_block(text=f"Error: could not resolve host: {hostname}")]
-
-        # 3. Streaming fetch — check Content-Type and size before reading body
-        try:
-            with httpx.Client(follow_redirects=True, timeout=_FETCH_TIMEOUT) as client:
-                with client.stream("GET", url, headers={"User-Agent": "Otto/1.0"}) as resp:
-                    resp.raise_for_status()
-
-                    content_type = resp.headers.get("content-type", "").split(";")[0].strip()
-                    if content_type not in _IMAGE_MIMES:
-                        return [create_text_block(
-                            text=f"Error: URL does not point to a supported image type "
-                                 f"({content_type or 'unknown'}). "
-                                 "Supported types: PNG, JPEG, GIF, WebP."
-                        )]
-
-                    declared = int(resp.headers.get("content-length", 0))
-                    if declared > _MAX_IMAGE_SIZE:
-                        return [create_text_block(
-                            text=f"Error: image exceeds the "
-                                 f"{_MAX_IMAGE_SIZE // (1024 * 1024)} MB size limit."
-                        )]
-
-                    chunks: list[bytes] = []
-                    total = 0
-                    for chunk in resp.iter_bytes(chunk_size=64 * 1024):
-                        total += len(chunk)
-                        if total > _MAX_IMAGE_SIZE:
-                            return [create_text_block(
-                                text=f"Error: image exceeds the "
-                                     f"{_MAX_IMAGE_SIZE // (1024 * 1024)} MB size limit."
-                            )]
-                        chunks.append(chunk)
-
-        except httpx.HTTPStatusError as exc:
-            return [create_text_block(text=f"Error: HTTP {exc.response.status_code} fetching URL.")]
-        except httpx.RequestError as exc:
-            return [create_text_block(text=f"Error: network error fetching URL: {exc}")]
-
-        raw = b"".join(chunks)
-
-        # 4. Verify bytes are actually a valid image (guards against HTML/error pages
-        #    served with an image Content-Type)
-        try:
-            img = Image.open(io.BytesIO(raw))
-            img.verify()
-        except Exception:
-            return [create_text_block(
-                text="Error: downloaded content is not a valid image."
-            )]
+        fetched = _fetch_image_bytes(url)
+        if isinstance(fetched, str):
+            return [create_text_block(text=fetched)]
+        raw, content_type = fetched
+        total = len(raw)
 
         logger.debug("load_image_from_url: fetched %s (%s, %d KB)", url, content_type, total // 1024)
 
@@ -361,6 +386,24 @@ def build_file_tools(
             ),
             create_image_block(base64=data, mime_type=content_type),
         ]
+
+    @tool
+    def image_search(query: str, max_results: int = 4) -> str:
+        """Search the web for images of something and save them to the session.
+
+        Use this to get a visual reference when the task depends on what a
+        real-world thing looks like and the user attached no image: designing
+        or modelling an object (a chess knight, a pipe fitting, a bracket
+        style), matching a product, or checking proportions and features.
+        Search with a concrete phrase, e.g. "chess knight piece side view".
+        The result lists saved file paths; open them with view_image.
+
+        Args:
+            query: What to find pictures of.
+            max_results: How many images to save (1-6, default 4).
+        """
+        n = max(1, min(int(max_results), 6))
+        return _search_and_save_images(query, files_dir / "reference_images", n)
 
     @tool
     def request_folder_access(path: str, reason: str = "") -> str:
@@ -396,4 +439,4 @@ def build_file_tools(
             "Do not claim it is allowed yet."
         )
 
-    return [view_image, load_image_from_url, request_folder_access]
+    return [view_image, load_image_from_url, image_search, request_folder_access]

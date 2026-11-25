@@ -16,7 +16,7 @@ The **Agents** page (`/agents`) manages the agents, skills, and tools available 
 
 ## Agents tab
 
-Custom agents are listed first; built-in agents appear below a **Managed** divider. Each agent card shows its name, description, **Task model** (the model used when it runs as a delegated subagent — `inherit`, `frontier`, `mlx`, `exo`/cluster, or a custom id), and chips for its MCP **tools** (grey) and **skills** (green).
+Custom agents are listed first; built-in agents appear below a **Managed** divider. Each agent card shows its name, description, **Task model** (the model used when it runs as a delegated subagent — `inherit`, `frontier`, `mlx`, `exo`/cluster, or a custom id), and chips for its MCP **tools** (grey) and **skills** (green). Benchmark agents and subagents that other agents call by name (`benchcad-agent`, `swebench-coding-agent`, `cad-critic`, `drawing-reader`) are installed but not listed.
 
 | Card action | Description |
 | --- | --- |

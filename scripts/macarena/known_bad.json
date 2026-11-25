@@ -1,0 +1,29 @@
+{
+ "_about": "Tasks whose grader cannot credit the task as written. report.py gives the score with and without the 'confirmed' ones; 'suspected' ones are only listed, never excluded, until someone checks them in the VM and moves them to confirmed with the evidence. Add a task only with evidence, and keep removing it in mind: an entry makes the adjusted score higher.",
+ "tasks": {
+  "77be0051-e4d5-139b-04d4-a760344aa282": {
+   "status": "confirmed",
+   "source": "macosworld",
+   "reason": "The instruction asks for a Quick Action named \"Hello\" (~/Library/Services/Hello.workflow); the grader runs automator on ~/Library/Services/Untitled.workflow.",
+   "evidence": "evaluator command in the task file; checked 2026-11-24"
+  },
+  "8887a199-469d-c544-09d4-bb32d5b285b4": {
+   "status": "suspected",
+   "source": "macosworld",
+   "reason": "The grader greps the dialog's AXChildren for one exact string (Sure before Of Course, then 'static text 2'). In two runs the agent showed the requested dialog from Script Editor and scored 0; Otto's tools listed the buttons the other way round.",
+   "evidence": "not checked in the VM: read the AXChildren while the dialog is open before confirming"
+  },
+  "5649b5ef-5592-4c35-bed0-631809292b61": {
+   "status": "confirmed",
+   "source": "macarena",
+   "reason": "The checker tests ~/Documents/ResearchVault/obsidian-excalidraw-plugin; a real install through Obsidian lands in ~/Documents/ResearchVault/.obsidian/plugins/obsidian-excalidraw-plugin.",
+   "evidence": "confirmed on a VM, 2026-11-17 (scripts/macarena/README.md)"
+  },
+  "d2b53cf2-aa18-44aa-a8d5-84194a7791d0": {
+   "status": "suspected",
+   "source": "macarena",
+   "reason": "The instruction says Desktop but the checker reads ~/Documents.",
+   "evidence": "read from the task file only (scripts/macarena/README.md); not checked on a VM"
+  }
+ }
+}

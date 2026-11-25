@@ -1242,6 +1242,60 @@ export interface MemoryConfig {
   embedding?: EmbeddingConfig;
 }
 
+/** Procedural memory (backend ``ProceduralMemoryConfig``): learn from finished macOS desktop agent runs. */
+export interface ProceduralMemoryConfig {
+  enabled: boolean;
+  serve: boolean;
+  similarity_floor: number;
+  max_tokens: number;
+  judge_success_trusted: boolean;
+  judge_failure_trusted: boolean;
+  segments_from_failed_runs: boolean;
+  enrich_with_llm: boolean;
+  /** Most runs kept in the app's store; 0 = no limit. */
+  max_saved_runs: number;
+}
+
+export type ProcedureEpisodeStatus = "pending" | "admitted" | "retired" | "excluded";
+
+/** One saved agent run (``episodes`` row, without its raw trace). */
+export interface ProcedureEpisode {
+  id: string;
+  session_id: string;
+  subagent_tag: string;
+  agent: string;
+  family: string;
+  track: string;
+  task_id: string | null;
+  task_text: string;
+  intent: string;
+  apps: string[];
+  status: ProcedureEpisodeStatus;
+  label: string;
+  label_source: string | null;
+  confidence: number | null;
+  self_report: string | null;
+  model: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** A piece learned from a run: a recipe (tool-call steps), a fact about an app, or a lesson. */
+export interface ProcedureItem {
+  id: string;
+  kind: "recipe" | "fact" | "lesson" | string;
+  intent: string;
+  body: Record<string, unknown>;
+  label_source: string | null;
+  from_outcome: string | null;
+}
+
+export interface ProcedureEpisodeDetail {
+  episode: ProcedureEpisode & { data?: Record<string, unknown> };
+  labels: { source: string; value: string; confidence: number | null; note: string | null; at: number }[];
+  items: ProcedureItem[];
+}
+
 export interface MemoryTopic {
   filename: string;
   name: string;
@@ -2004,6 +2058,7 @@ export interface ActionPolicySettings {
 }
 
 export interface AppSettings {
+  procedural_memory?: ProceduralMemoryConfig;
   llm: LLMConfig;
   orchestrator: OrchestratorConfig;
   mcp_servers: MCPServerConfig[];

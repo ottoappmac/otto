@@ -325,6 +325,12 @@ def _embedding_args() -> list[str]:
     return [
         "--collect-all", "sqlite_vec",
         "--collect-all", "sentence_transformers",
+        # The bundle has no torch, so embeddings run through ONNX Runtime
+        # (``backend.embedding_index._OnnxSentenceModel``); tokenizers and
+        # huggingface_hub come from ``_mlx_args``.
+        "--collect-all", "onnxruntime",
+        "--hidden-import", "backend.procedural_memory",
+        "--hidden-import", "backend.routes.procedures",
         "--hidden-import", "tools.research.semantic_search",
         "--hidden-import", "backend.embedding_index",
         "--hidden-import", "backend.routes.embeddings",
@@ -441,7 +447,9 @@ def _exclude_args() -> list[str]:
         "--exclude-module", "torchaudio",
         "--exclude-module", "accelerate",
         "--exclude-module", "timm",
-        "--exclude-module", "onnxruntime",
+        # ``onnxruntime`` is NOT excluded: it runs the MiniLM embedding model
+        # for semantic and procedural memory (``_embedding_args``), since
+        # torch is left out and sentence-transformers cannot import without it.
         "--exclude-module", "onnx",
         "--exclude-module", "tensorflow",
         "--exclude-module", "jax",

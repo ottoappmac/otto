@@ -94,6 +94,19 @@ active_desktop_owner: contextvars.ContextVar[str | None] = contextvars.ContextVa
 )
 
 
+# Set in the ``macos-osascript`` subprocess's environment when the backend
+# takes the lease for that server's tools itself (``mcp_manager``), with the
+# calling agent's own owner id.  Lease re-entrancy only works within one
+# process, so if the subprocess also locked, an agent that holds the lease for
+# its ``macos-native`` tools would wait on itself.  When set,
+# :func:`desktop_lock` does not lock (the caller already holds the screen).
+HOST_HOLDS_LEASE_ENV = "OTTO_DESKTOP_LEASE_BY_HOST"
+
+
+def host_holds_lease() -> bool:
+    return os.environ.get(HOST_HOLDS_LEASE_ENV, "") == "1"
+
+
 def resolve_owner(fallback: str) -> str:
     """Return the current async context's desktop owner, or *fallback*.
 
@@ -427,7 +440,13 @@ async def desktop_lock(
     it until it goes idle (see module docstring) so a multi-call burst stays
     atomic.  ``owner`` defaults to a stable per-process id, correct for the
     single-session ``macos-osascript`` subprocess.
+
+    A no-op (yields ``0``) when :data:`HOST_HOLDS_LEASE_ENV` is set: the
+    backend already holds the lease for this call under the agent's owner.
     """
+    if host_holds_lease():
+        yield 0
+        return
     o = owner or default_owner()
     waited_ms = await acquire_desktop(o, wait_timeout=wait_timeout)
     try:

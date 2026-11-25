@@ -50,7 +50,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:  # The MacArena VM imports the tool functions directly, without the MCP SDK.
+    FastMCP = None  # type: ignore[assignment,misc]
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("otto.mcp.macos_osascript")
@@ -136,7 +139,22 @@ def _with_path_rewrites(
     return result
 
 
-mcp = FastMCP("macOS osascript")
+class _NoServer:
+    """Stands in for FastMCP where the SDK is absent: ``@mcp.tool()`` leaves the function as it is (FastMCP's
+    decorator returns it unchanged too), so the tools can be called as plain coroutines."""
+
+    def tool(self, *args: Any, **kwargs: Any):
+        return lambda fn: fn
+
+    def run(self) -> None:
+        raise SystemExit("the MCP SDK is not installed; this module can only be imported")
+
+
+mcp = FastMCP("macOS osascript") if FastMCP is not None else _NoServer()
+
+# The tools the MacArena benchmark runs in its VM (scripts/macarena/guest). ``run_osascript_file`` and
+# ``query_outlook_store`` read files on the agent's host, which the VM does not have.
+VM_TOOLS = ("run_osascript", "inspect_app_dictionary", "dump_ax_tree", "query_mail_store")
 
 
 def _truncate(blob: bytes) -> tuple[str, bool]:
@@ -238,9 +256,10 @@ async def _run_osascript_args(args: list[str], timeout: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def run_osascript(
-    script: str,
+    script: str = "",
     language: str = "AppleScript",
     timeout_seconds: int = _DEFAULT_TIMEOUT_SECS,
+    shell_command: str = "",
 ) -> dict[str, Any]:
     """Execute an AppleScript or JXA snippet via ``osascript -e``.
 
@@ -277,6 +296,12 @@ async def run_osascript(
         language: ``"AppleScript"`` (default) or ``"JavaScript"`` (JXA).
                   Case-sensitive; anything else is rejected.
         timeout_seconds: Wall-clock cap.  Capped at 120 s.  Defaults to 30 s.
+        shell_command: A shell command to run instead of ``script`` (leave
+                ``script`` empty).  It is wrapped in ``do shell script`` with
+                the quoting done for you, so pass the command exactly as you
+                would type it in Terminal — quotes, ``$VARS``, pipes, heredocs
+                and multi-line Python included.  Prefer this over writing
+                ``do shell script "..."`` by hand.
 
     Concurrency: scripts that steal focus or synthesize input
     (``activate``, ``keystroke``, ``key code``, ``click``, …) acquire a
@@ -293,16 +318,31 @@ async def run_osascript(
         spent queued for the screen).  If the screen never freed up the
         call returns ``ok=False`` with ``desktop_busy=True``.
     """
+    if isinstance(shell_command, str) and shell_command.strip():
+        if isinstance(script, str) and script.strip():
+            return {
+                "ok": False, "exit_code": -1, "stdout": "",
+                "stderr": "give either script or shell_command, not both",
+                "stdout_truncated": False, "stderr_truncated": False, "timed_out": False, "duration_ms": 0,
+            }
+        script, language = _shell_command_script(shell_command), "AppleScript"
     if not isinstance(script, str) or not script.strip():
         return {
             "ok": False,
             "exit_code": -1,
             "stdout": "",
-            "stderr": "script must be a non-empty string",
+            "stderr": "script (or shell_command) must be a non-empty string",
             "stdout_truncated": False,
             "stderr_truncated": False,
             "timed_out": False,
             "duration_ms": 0,
+        }
+
+    refused = _refused_script_reason(script)
+    if refused:
+        return {
+            "ok": False, "exit_code": -1, "stdout": "", "stderr": refused, "refused": True,
+            "stdout_truncated": False, "stderr_truncated": False, "timed_out": False, "duration_ms": 0,
         }
 
     try:
@@ -523,17 +563,21 @@ try:
     from ._helpers import (  # type: ignore[import-not-found]
         classify_dictionary as _classify_dictionary,
         escape_applescript_string as _escape_applescript_string,
+        refused_script_reason as _refused_script_reason,
         resolve_app_path as _resolve_app_path,
         rewrite_virtual_posix_paths as _rewrite_virtual_posix_paths,
         script_needs_desktop as _script_needs_desktop,
+        shell_command_script as _shell_command_script,
     )
 except ImportError:
     from _helpers import (  # type: ignore[no-redef]
         classify_dictionary as _classify_dictionary,
         escape_applescript_string as _escape_applescript_string,
+        refused_script_reason as _refused_script_reason,
         resolve_app_path as _resolve_app_path,
         rewrite_virtual_posix_paths as _rewrite_virtual_posix_paths,
         script_needs_desktop as _script_needs_desktop,
+        shell_command_script as _shell_command_script,
     )
 
 
@@ -623,7 +667,8 @@ async def inspect_app_dictionary(app_name: str) -> dict[str, Any]:
             "raw_sdef": "",
             "stderr": (
                 f"could not find {app_name}.app under /Applications, "
-                "/System/Applications, or ~/Applications. Pass the exact "
+                "/System/Applications, /System/Library/CoreServices, or "
+                "~/Applications. Pass the exact "
                 "name as it appears in Finder."
             ),
         }
@@ -752,7 +797,11 @@ async def dump_ax_tree(
         f"delay 0.3\n"
         f'tell application "System Events"\n'
         f'    tell process "{safe_name}"\n'
-        f"        return entire contents of window {window_index} as text\n"
+        # No ``as text``: AppleScript cannot coerce a list of UI element
+        # references to text (-1700 on any window with an outline or list,
+        # e.g. Finder). osascript prints the list itself, as the readable
+        # element paths the agent copies into its next script.
+        f"        return entire contents of window {window_index}\n"
         f"    end tell\n"
         f"end tell"
     )

@@ -39,18 +39,44 @@ _dl_lock = threading.Lock()
 def _model_cache_dir(model_name: str) -> Path:
     """Return the huggingface_hub cache directory for a model repo."""
     slug = model_name.replace("/", "--")
-    return Path.home() / ".cache" / "huggingface" / "hub" / f"models--{slug}"
+    try:  # honours HF_HUB_CACHE / HF_HOME, like the downloads themselves
+        from huggingface_hub import constants  # type: ignore[import]
+        root = Path(constants.HF_HUB_CACHE)
+    except Exception:  # noqa: BLE001
+        root = Path.home() / ".cache" / "huggingface" / "hub"
+    return root / f"models--{slug}"
+
+
+# What the embedder reads (backend.embedding_index): configs and tokenizer, the ONNX export (run with onnxruntime,
+# which the packaged app uses because it has no torch), and the safetensors weights only for a model without an
+# ONNX export (sentence-transformers fallback in dev). Not the whole repo: MiniLM's also holds PyTorch, TensorFlow,
+# Rust and OpenVINO copies and eight extra ONNX variants, over 1 GB in all.
+_CONFIG_PATTERNS = ["*.json", "*.txt", "1_Pooling/*", "onnx/model.onnx"]
+_WEIGHT_FALLBACK_PATTERNS = ["*.json", "*.txt", "1_Pooling/*", "model.safetensors"]
+
+
+def _torch_available() -> bool:
+    import importlib.util
+    try:
+        return importlib.util.find_spec("torch") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def _is_model_cached(model_name: str) -> bool:
-    """True when at least one snapshot is present in the HF cache."""
+    """True when a snapshot holds a model this build can run: the ONNX export (always runnable), or, where torch is
+    installed, the safetensors weights."""
     cache_dir = _model_cache_dir(model_name)
     snapshots = cache_dir / "snapshots"
     if not snapshots.exists():
         return False
-    # A complete snapshot has at least one subdirectory with actual model files
+    torch_ok = _torch_available()
     for snap in snapshots.iterdir():
-        if snap.is_dir() and any(snap.iterdir()):
+        if not (snap.is_dir() and (snap / "tokenizer.json").exists()):
+            continue
+        if (snap / "onnx" / "model.onnx").exists():
+            return True
+        if torch_ok and ((snap / "model.safetensors").exists() or (snap / "pytorch_model.bin").exists()):
             return True
     return False
 
@@ -93,7 +119,10 @@ def _run_download(model_name: str) -> None:
         with _dl_lock:
             _dl_state.total_bytes = total
 
-        snapshot_download(model_name)
+        path = Path(snapshot_download(model_name, allow_patterns=_CONFIG_PATTERNS))
+        if not (path / "onnx" / "model.onnx").exists():
+            # No ONNX export: fetch the weights for the sentence-transformers fallback instead.
+            snapshot_download(model_name, allow_patterns=_WEIGHT_FALLBACK_PATTERNS)
 
         with _dl_lock:
             _dl_state.bytes_downloaded = _cache_bytes(model_name)

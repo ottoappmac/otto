@@ -66,6 +66,9 @@ Observation:
 actions (dialogs open, menus expand). Never reuse stale indices.
 - Never guess an app name or control index — read them from tool output.
 - Always call list_apps('<search>') before launch_app() to get the exact app name.
+- observe() says which app, window, file and dialog are in front; app_guide(app) has notes on an app.
+- Menus: menu_select(app, 'Menu > Item') / menu_search(app, 'word'). Dialogs: read_dialog() then \
+fill_dialog(fields={...}, press='OK'). Cells and tables: read_table(app, 'A1:F20').
 
 Tool selection:
 - press_control for B-type roles (B, CB, RB, LN, MI, MB, PB).

@@ -26,18 +26,18 @@ Two assembly modes are supported:
   available in full mode — there's no point telling the model how to
   build new tools when it can't.
 
-The ladder also dynamically substitutes browser-, AppleScript-, and
-desktop-automation subagent names (``browser-agent`` /
-``macos-applescript-agent`` / ``macos-desktop-agent`` in the Tauri app,
-``web-voyager`` / ``computer-voyager`` in notebooks).  A ladder rung is
+The ladder also dynamically substitutes browser- and macOS-automation
+subagent names (``browser-agent`` / ``macos-desktop-agent`` in the Tauri
+app, ``web-voyager`` / ``computer-voyager`` in notebooks).  A ladder rung is
 dropped entirely when no relevant subagent is registered, so the prompt
 never references a non-existent ``subagent_type``.
 
-For macOS local-app read/update tasks, the ladder prefers AppleScript
-(``macos-applescript-agent``) over UI automation (``macos-desktop-agent``)
-because AppleScript is deterministic and idempotent whenever the target
-app exposes the verb.  UI automation is the fallback when the
-AppleScript dictionary doesn't cover the required action.
+For macOS local-app tasks there is one agent, ``macos-desktop-agent``.
+It has both the AppleScript / JXA tools (``macos-osascript``) and the
+Accessibility / mouse / keyboard tools (``macos-native``), and picks the
+route itself: a script when the app exposes the verb (deterministic and
+idempotent), UI automation when it doesn't.  The orchestrator describes the
+goal; it does not choose the route.
 """
 
 from __future__ import annotations
@@ -76,8 +76,8 @@ _IDENTITY = (
     "You are Otto, a macOS-native AI agent for research and automation. "
     "When asked who you are, always identify yourself as Otto. "
     "You run natively on macOS and have direct access to the operating system "
-    "through two built-in agents: macos-applescript-agent (for reading and "
-    "controlling apps via AppleScript) and macos-desktop-agent (for UI automation). "
+    "through the built-in macos-desktop-agent, which controls apps both by "
+    "AppleScript / JXA and by UI automation. "
     "You help users accomplish tasks using a set of powerful tools — "
     "including file system access, code execution, web research, browser automation, "
     "and full macOS desktop control."
@@ -139,25 +139,15 @@ _DELEGATION_HINTS: dict[str, str] = {
         "     (type field A, click field B, type field B, …) into one batch.\n"
         "     State what result to return."
     ),
-    "macos-applescript-agent": (
-        "For macos-applescript-agent: name the target app and the AppleScript\n"
-        "     verb you want (read X / set Y / create Z). State the\n"
-        "     success criterion as a read-back script the agent should run\n"
-        "     after the action. Dispatch this agent for ANY local-app\n"
-        "     scripting — it probes the app's dictionary first and falls\n"
-        "     back to the Accessibility tree for dictionary-empty apps, so\n"
-        "     do NOT pre-judge whether the app has a dictionary and do NOT\n"
-        "     run raw osascript yourself via execute. It will emit\n"
-        "     FALLBACK: macos-desktop-agent if UI automation is truly\n"
-        "     required."
-    ),
     "macos-desktop-agent": (
-        "For macos-desktop-agent: name the app, list each UI action in order\n"
-        "     (open, click, type, verify, close). Group form-fill steps\n"
-        "     (type field A, click field B, type field B, …) into one batch.\n"
-        "     State what result to return.  Use this only after the\n"
-        "     AppleScript path has been ruled out (no dictionary / verb\n"
-        "     missing) — UI automation is the fallback."
+        "For macos-desktop-agent: name the target app, the goal (read X /\n"
+        "     set Y / create Z), and a read-back check that proves it worked.\n"
+        "     Do NOT choose between AppleScript and UI automation for it — it\n"
+        "     probes the app's AppleScript dictionary first and drives the UI\n"
+        "     itself when scripting can't do the job — and do NOT run raw\n"
+        "     osascript yourself via execute. For multi-step UI work, list the\n"
+        "     actions in order (open, click, type, verify, close).\n"
+        "     State what result to return."
     ),
     "web-voyager": (
         "For web-voyager: provide the target URL, what to look for on the page,\n"
@@ -191,11 +181,14 @@ _BROWSER_SUBAGENT_CANDIDATES: tuple[str, ...] = (
     "web-voyager",
     "playwright-browser",
 )
-_APPLESCRIPT_SUBAGENT_CANDIDATES: tuple[str, ...] = (
-    "macos-applescript-agent",
-)
-_DESKTOP_SUBAGENT_CANDIDATES: tuple[str, ...] = (
+# The app's macOS agent: AppleScript / JXA tools AND UI-automation tools in
+# one agent, so the orchestrator never has to pick the route.
+_MACOS_SUBAGENT_CANDIDATES: tuple[str, ...] = (
     "macos-desktop-agent",
+)
+# UI-automation-only agents (notebook environments).  Used only when no
+# combined macOS agent is registered.
+_DESKTOP_SUBAGENT_CANDIDATES: tuple[str, ...] = (
     "computer-voyager",
     "macos-desktop",
 )
@@ -343,49 +336,37 @@ one-sentence summary of what was generated and mention the file path.
 
 def _build_capability_ladder(subagent_names: set[str], *, activity_tools: bool = False) -> str:
     """Build the ``<capability_ladder>`` block, substituting whichever
-    browser / AppleScript / desktop / trigger-builder subagent is actually
-    registered.  Drops a rung entirely when no matching subagent is
-    present.
+    browser / macOS / trigger-builder subagent is actually registered.
+    Drops a rung entirely when no matching subagent is present.
 
-    Local-macOS rungs are ordered ``applescript`` → ``desktop`` because
-    AppleScript is deterministic and idempotent whenever the target app
-    has the verb; UI automation is the fallback.
+    The macOS rung names one agent that scripts the app when it can and
+    drives the UI when it can't; a UI-only agent (notebooks) is used only
+    when that agent is absent.
     """
     browser = _pick_subagent(subagent_names, _BROWSER_SUBAGENT_CANDIDATES)
-    applescript = _pick_subagent(subagent_names, _APPLESCRIPT_SUBAGENT_CANDIDATES)
-    desktop = _pick_subagent(subagent_names, _DESKTOP_SUBAGENT_CANDIDATES)
+    macos = _pick_subagent(subagent_names, _MACOS_SUBAGENT_CANDIDATES)
+    desktop = None if macos else _pick_subagent(subagent_names, _DESKTOP_SUBAGENT_CANDIDATES)
     trigger_builder = _pick_subagent(subagent_names, _TRIGGER_BUILDER_CANDIDATES)
 
     fallback_lines: list[str] = []
-    if applescript:
+    if macos:
         fallback_lines.append(
-            f'5a. **AppleScript (preferred for local macOS read/update)** —\n'
-            f'    `task(subagent_type="{applescript}", description=...)` with\n'
-            "    the app name and the AppleScript verb to invoke.  Use this\n"
-            "    whenever the goal is to READ or UPDATE state in a native\n"
-            "    macOS app or system-level setting AND the app has an\n"
-            "    AppleScript dictionary."
+            f'5a. **macOS apps** — reading or changing state in a native\n'
+            f'    macOS app or system setting:\n'
+            f'    `task(subagent_type="{macos}", description=...)` with the\n'
+            "    app, the goal and a read-back check.  The agent scripts the\n"
+            "    app (AppleScript / JXA) when its dictionary has the verb and\n"
+            "    uses UI automation when it doesn't — do not pick the route\n"
+            "    for it."
         )
-    if desktop:
-        if applescript:
-            fallback_lines.append(
-                f'5b. **macOS UI automation (fallback to AppleScript)** —\n'
-                f'    `task(subagent_type="{desktop}", description=...)` only\n'
-                "    when the AppleScript path is ruled out (no dictionary,\n"
-                "    verb missing, or the agent emitted a `FALLBACK:`\n"
-                "    handoff).  UI automation is non-deterministic and\n"
-                "    token-expensive; do not skip the AppleScript probe.\n"
-                "    Pass the goal as ordered UI verbs (open, click, type,\n"
-                "    verify, close)."
-            )
-        else:
-            fallback_lines.append(
-                f'5a. **macOS UI automation** — native app:\n'
-                f'    `task(subagent_type="{desktop}", description=...)` with\n'
-                "    actions as ordered UI verbs."
-            )
+    elif desktop:
+        fallback_lines.append(
+            f'5a. **macOS UI automation** — native app:\n'
+            f'    `task(subagent_type="{desktop}", description=...)` with\n'
+            "    actions as ordered UI verbs."
+        )
     if browser:
-        rung = "5c" if (applescript and desktop) else ("5b" if (applescript or desktop) else "5a")
+        rung = "5b" if (macos or desktop) else "5a"
         fallback_lines.append(
             f'{rung}. **Browser fallback** — web target with no API path:\n'
             f'    `task(subagent_type="{browser}", description=...)` with the\n'
@@ -403,10 +384,10 @@ def _build_capability_ladder(subagent_names: set[str], *, activity_tools: bool =
     info_browser_clause = (
         f"`{browser}` for JS / login pages → " if browser else ""
     )
-    info_applescript_clause = (
-        f"`{applescript}` for native macOS app state (frontmost app, current "
+    info_macos_clause = (
+        f"`{macos}` for native macOS app state (frontmost app, current "
         f"track, calendar event, frontmost URL, etc.) → "
-        if applescript else ""
+        if macos else ""
     )
     info_activity_clause = (
         "activity tools for questions about what the user did EARLIER "
@@ -482,7 +463,7 @@ def _build_capability_ladder(subagent_names: set[str], *, activity_tools: bool =
         "### To get information\n"
         "\n"
         "`read_file` / `grep` session files → connected MCP → `web_research` /\n"
-        f"`wikipedia_search` / `duckduckgo_search` → {info_applescript_clause}{info_activity_clause}{info_browser_clause}`ask_user`.\n"
+        f"`wikipedia_search` / `duckduckgo_search` → {info_macos_clause}{info_activity_clause}{info_browser_clause}`ask_user`.\n"
         "\n"
         "### Credentials (in order, before asking)\n"
         "\n"
@@ -549,10 +530,10 @@ Match the scope of your actions to what was actually requested.
 </action_safety>"""
 
 
-_MACOS_APPLESCRIPT_PREFERENCE_RULE = (
+_MACOS_APP_PREFERENCE_RULE = (
     "For a task that touches a desktop app on the user's Mac, prefer a\n"
     "   DEDICATED built-in tool when one exists for that app, and only\n"
-    "   dispatch macos-applescript-agent when none does:\n"
+    "   dispatch macos-desktop-agent when none does:\n"
     "   a. STANDARD TOOLS FIRST.  Otto ships typed, first-class tools for\n"
     "      several apps — Apple Mail (`macos-mail`), Reminders\n"
     "      (`macos-reminders`), Calendar (`macos-calendar`), Notes\n"
@@ -560,19 +541,19 @@ _MACOS_APPLESCRIPT_PREFERENCE_RULE = (
     "      targets one of these apps AND its tools are in your tool list,\n"
     "      call those tools directly — they take typed arguments and are\n"
     "      faster and more reliable than hand-authored AppleScript.  Do\n"
-    "      NOT route these through macos-applescript-agent.\n"
-    "   b. macos-applescript-agent OTHERWISE.  For ANY other desktop app\n"
+    "      NOT route these through macos-desktop-agent.\n"
+    "   b. macos-desktop-agent OTHERWISE.  For ANY other desktop app\n"
     "      that has no dedicated tool (Music, Spotify, Safari, Finder,\n"
     "      Slack, Discord, Things, Cursor, VS Code, Linear, Figma, Zoom,\n"
     "      Teams, Obsidian, …) — or when the dedicated tool doesn't cover\n"
-    "      what you need — dispatch macos-applescript-agent.  Includes\n"
+    "      what you need — dispatch macos-desktop-agent.  Includes\n"
     "      reading a message, sending one, listing items, opening a\n"
     "      window, or changing any app state.  Do NOT ask the user\n"
     "      whether you have a tool for it; the answer is yes.\n"
-    "   Fall back to macos-desktop-agent ONLY if macos-applescript-agent\n"
-    "   returns a `FALLBACK:` block.  Do NOT fall back on TCC `-1743`\n"
-    "   errors — those need the user to grant Automation permission and\n"
-    "   UI automation hits the same gate."
+    "   The agent tries AppleScript first and switches to UI automation\n"
+    "   itself; do not re-dispatch it for the UI route.  If it reports a\n"
+    "   TCC `-1743` error, tell the user to grant Automation permission\n"
+    "   — UI automation hits the same gate."
 )
 
 
@@ -580,38 +561,21 @@ def _build_rules_section(subagent_names: set[str]) -> str:
     """Build the ``<rules>`` block, including delegation hints only for active subagents."""
     rules = list(_RULES_BASE)
 
-    # Inject macOS host-machine routing rules only when the relevant agents
-    # are registered.  Without them the rules have no actionable target and
-    # would just confuse the model.
-    macos_agents = {
-        "macos-applescript-agent",
-        "macos-desktop-agent",
-    } & subagent_names
-    if macos_agents:
+    # Inject macOS host-machine routing rules only when the macOS agent is
+    # registered.  Without it the rules have no actionable target and would
+    # just confuse the model.
+    if "macos-desktop-agent" in subagent_names:
         rule_num = len(rules) + 1
-        has_applescript = "macos-applescript-agent" in macos_agents
-        has_desktop = "macos-desktop-agent" in macos_agents
-        if has_applescript and has_desktop:
-            ordering = (
-                "macos-applescript-agent FIRST (AppleScript is deterministic and "
-                "idempotent), falling back to macos-desktop-agent ONLY when "
-                "macos-applescript-agent returns a `FALLBACK:` block"
-            )
-        elif has_applescript:
-            ordering = "macos-applescript-agent (AppleScript)"
-        else:
-            ordering = "macos-desktop-agent (UI automation)"
         rules.append(
             f"{rule_num}. For ANY task that involves the host machine — opening, "
             "reading, writing, controlling, or interacting with any app, file, or "
-            f"OS setting on the user's Mac — use {ordering}. "
-            "These agents have native OS access. Do NOT use generic shell commands "
-            "to interact with GUI apps when these agents are available."
+            "OS setting on the user's Mac — use macos-desktop-agent (AppleScript / "
+            "JXA and UI automation). "
+            "It has native OS access. Do NOT use generic shell commands "
+            "to interact with GUI apps when it is available."
         )
-
-    if "macos-applescript-agent" in subagent_names:
         rule_num = len(rules) + 1
-        rules.append(f"{rule_num}. {_MACOS_APPLESCRIPT_PREFERENCE_RULE}")
+        rules.append(f"{rule_num}. {_MACOS_APP_PREFERENCE_RULE}")
 
     if subagent_names:
         rule_num = len(rules) + 1
@@ -644,7 +608,7 @@ def _build_rules_section(subagent_names: set[str]) -> str:
 
 _LITE_IDENTITY = (
     "You are Otto, a macOS-native AI agent. "
-    "You have direct OS access via macos-applescript-agent and macos-desktop-agent. "
+    "You have direct OS access via macos-desktop-agent (AppleScript and UI automation). "
     "Complete the user's task using ONLY the tools and subagents listed in "
     "this prompt."
 )
@@ -694,47 +658,29 @@ def _build_lite_rules_section(subagent_names: set[str]) -> str:
     """Lite ``<rules>`` block: 4 load-bearing rules + 1-line subagent hints."""
     rules = list(_LITE_RULES_BASE)
 
-    macos_agents = {
-        "macos-applescript-agent",
-        "macos-desktop-agent",
-    } & subagent_names
-    if macos_agents:
+    if "macos-desktop-agent" in subagent_names:
         rule_num = len(rules) + 1
-        has_applescript = "macos-applescript-agent" in macos_agents
-        has_desktop = "macos-desktop-agent" in macos_agents
-        if has_applescript and has_desktop:
-            ordering = (
-                "macos-applescript-agent FIRST, macos-desktop-agent as fallback "
-                "(only when macos-applescript-agent returns a `FALLBACK:` block)"
-            )
-        elif has_applescript:
-            ordering = "macos-applescript-agent"
-        else:
-            ordering = "macos-desktop-agent"
         rules.append(
             f"{rule_num}. For any task on the host machine (apps, OS settings, "
-            f"files outside the session), use {ordering}. "
-            "These agents have native OS access — prefer them over generic shell commands."
+            "files outside the session), use macos-desktop-agent. "
+            "It has native OS access — prefer it over generic shell commands."
         )
-
-    if "macos-applescript-agent" in subagent_names:
         rule_num = len(rules) + 1
         rules.append(
             f"{rule_num}. For a task touching a desktop app on the user's Mac,\n"
             "   use a DEDICATED built-in tool first when one exists; otherwise\n"
-            "   dispatch macos-applescript-agent.\n"
+            "   dispatch macos-desktop-agent.\n"
             "   - Standard tools FIRST: Mail (macos-mail), Reminders\n"
             "     (macos-reminders), Calendar (macos-calendar), Notes\n"
             "     (macos-notes), Messages (macos-messages) — if these tools are\n"
             "     in your tool list, call them directly, do NOT use the agent.\n"
-            "   - macos-applescript-agent otherwise: any other app (Music,\n"
+            "   - macos-desktop-agent otherwise: any other app (Music,\n"
             "     Spotify, Safari, Finder, Slack, Discord, Cursor, Linear,\n"
             "     Figma, Zoom, Obsidian, …), or when a dedicated tool can't do\n"
             "     what's needed. Covers reading/sending a message, listing\n"
             "     items, opening windows, changing app state. Do NOT ask the\n"
-            "     user whether you have a tool for it; the answer is yes. Fall\n"
-            "     back to macos-desktop-agent ONLY if macos-applescript-agent\n"
-            "     returns a `FALLBACK:` block."
+            "     user whether you have a tool for it; the answer is yes. It\n"
+            "     scripts the app first and drives the UI itself when needed."
         )
 
     if subagent_names:
@@ -785,26 +731,22 @@ _LITE_GUIDANCE_STATIC = (
 # One-line "use when" triggers for the lite-mode <subagents> enumeration.
 # Surfaces each subagent's job in lexical terms a small (4B-class) local
 # model can pattern-match without doing intent classification: "Slack
-# message" → reads ``macos-applescript-agent`` directly, no derivation
+# message" → reads ``macos-desktop-agent`` directly, no derivation
 # step required.
 #
 # Names not in this map fall back to the subagent's own description (or
 # the slug if no description is registered).  Add an entry here when a
 # new built-in agent ships.
 _SUBAGENT_USE_WHEN: dict[str, str] = {
-    "macos-applescript-agent": (
+    "macos-desktop-agent": (
         "Desktop apps on the user's Mac that DON'T have a dedicated tool. "
         "Mail, Reminders, Calendar, Notes, and Messages have their own "
         "typed tools (macos-mail/-reminders/-calendar/-notes/-messages) — "
         "use those directly instead. Use this agent for any OTHER app "
         "(Music, Spotify, Safari, Finder, Slack, Discord, Cursor, Linear, "
         "Figma, Zoom, Obsidian, …) — read/send messages, list items, open "
-        "windows, change app state."
-    ),
-    "macos-desktop-agent": (
-        "Fallback for native macOS apps when macos-applescript-agent "
-        "returned a `FALLBACK:` block. UI automation: clicks, types, "
-        "screen reads via Accessibility tree."
+        "windows, change app state. It uses AppleScript when it can and "
+        "UI automation (clicks, typing, screen reads) when it can't."
     ),
     "browser-agent": (
         "Web pages requiring JS, login, or interactive UI. Navigate, "
@@ -815,8 +757,7 @@ _SUBAGENT_USE_WHEN: dict[str, str] = {
         "fill forms, click elements, extract data."
     ),
     "computer-voyager": (
-        "Fallback for native macOS apps when macos-applescript-agent "
-        "returned a `FALLBACK:` block. UI automation."
+        "Native macOS apps via UI automation: clicks, typing, screen reads."
     ),
     "trigger-builder-agent": (
         'Wire up "when X happens, do Y" automation — fires a worker '
@@ -880,19 +821,18 @@ def _build_lite_guidance(
     activity_tools: bool = False,
     decide_tool: bool = False,
 ) -> str:
-    """Lite guidance block.  Substitutes whichever browser /
-    AppleScript / desktop subagent is registered and drops UI fallback
-    bullets entirely if none is available.  AppleScript precedes
-    desktop UI automation in the fallback chain because it's
-    deterministic when the target app exposes the verb."""
+    """Lite guidance block.  Substitutes whichever browser / macOS
+    subagent is registered and drops UI fallback bullets entirely if none
+    is available.  The macOS agent picks AppleScript or UI automation
+    itself; a UI-only agent is used only when it is absent."""
     browser = _pick_subagent(subagent_names, _BROWSER_SUBAGENT_CANDIDATES)
-    applescript = _pick_subagent(subagent_names, _APPLESCRIPT_SUBAGENT_CANDIDATES)
-    desktop = _pick_subagent(subagent_names, _DESKTOP_SUBAGENT_CANDIDATES)
+    macos = _pick_subagent(subagent_names, _MACOS_SUBAGENT_CANDIDATES)
+    desktop = None if macos else _pick_subagent(subagent_names, _DESKTOP_SUBAGENT_CANDIDATES)
 
     fallback_parts: list[str] = []
-    if applescript:
-        fallback_parts.append(f"{applescript} (AppleScript)")
-    if desktop:
+    if macos:
+        fallback_parts.append(f"{macos} (macOS apps: AppleScript + UI)")
+    elif desktop:
         fallback_parts.append(f"{desktop} (macOS UI)")
     if browser:
         fallback_parts.append(f"{browser} (web UI)")
@@ -920,9 +860,9 @@ def _build_lite_guidance(
         "- Time split for desktop-app questions:\n"
         "  • PAST (yesterday, last week, earlier session) → activity tools.\n"
         "  • RIGHT NOW (current message, current track, frontmost window) →\n"
-        "    macos-applescript-agent. Activity tools only see screen-history\n"
+        f"    {macos}. Activity tools only see screen-history\n"
         "    snapshots and can't read live app state.\n"
-        if activity_tools and applescript else
+        if activity_tools and macos else
         "- For questions about past screen history or what the user was working on, "
         "use the available activity tools before asking the user.\n"
         if activity_tools else ""

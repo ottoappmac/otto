@@ -54,6 +54,7 @@ from backend.routes.hooks import router as hooks_router
 from backend.routes.openclaw_hooks import router as openclaw_hooks_router
 from backend.routes.memory import router as memory_router
 from backend.routes.embeddings import router as embeddings_router
+from backend.routes.procedures import router as procedures_router
 from backend.routes.mlx import router as mlx_router
 from backend.routes.exo import router as exo_router
 from backend.routes.node import router as node_router
@@ -773,6 +774,7 @@ app.include_router(hooks_router)
 app.include_router(openclaw_hooks_router)
 app.include_router(memory_router)
 app.include_router(embeddings_router)
+app.include_router(procedures_router)
 app.include_router(mlx_router)
 app.include_router(exo_router)
 app.include_router(omlx_router)

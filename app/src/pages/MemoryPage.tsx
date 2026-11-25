@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   Brain,
   Play,
@@ -26,13 +27,14 @@ import {
   Sparkles,
 } from "lucide-react";
 import { api } from "../hooks/useApi";
+import { ProceduresPanel } from "../components/memory/ProceduresPanel";
 import type { MemoryHitsResponse } from "../hooks/useApi";
 import type { AppSettings, MemoryConfig, MemoryTopic } from "../types";
 
 const AUTO_SAVE_DELAY_MS = 600;
 const STATUS_POLL_MS = 2000;
 
-const MEMORY_SUBTABS = ["Status", "Topics", "Search Index", "Configuration"] as const;
+const MEMORY_SUBTABS = ["Status", "Topics", "Procedures", "Search Index", "Configuration"] as const;
 type MemorySubTab = (typeof MEMORY_SUBTABS)[number];
 
 type RunState = "idle" | "running" | "success" | "error" | "cancelled";
@@ -265,7 +267,12 @@ export function MemoryPanel() {
     if (status.state !== "running") setCancelling(false);
   }, [status.state]);
 
-  const [memSubTab, setMemSubTab] = useState<MemorySubTab>("Status");
+  // ?sub=Procedures (the chat's "View procedures" link) opens that sub-tab.
+  const location = useLocation();
+  const subFromUrl = new URLSearchParams(location.search).get("sub");
+  const [memSubTab, setMemSubTab] = useState<MemorySubTab>(
+    (MEMORY_SUBTABS as readonly string[]).includes(subFromUrl ?? "") ? (subFromUrl as MemorySubTab) : "Status",
+  );
 
   if (!settings) {
     return (
@@ -297,7 +304,16 @@ export function MemoryPanel() {
         ))}
       </div>
 
-      {/* Status row */}
+      {memSubTab === "Procedures" ? (
+        <>
+          {(saveStatus === "saving" || saveStatus === "saved" || saveStatus === "error") && (
+            <p className={`text-2xs ${saveStatus === "saved" ? "text-emerald-500/70" : saveStatus === "error" ? "text-red-500/70" : "text-th-text-muted"}`}>
+              {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Save failed"}
+            </p>
+          )}
+          <ProceduresPanel settings={settings} setSettings={setSettings} />
+        </>
+      ) : (
       <div className="flex items-center gap-2.5">
         <span className={`h-2 w-2 rounded-full ${rcfg.enabled ? "bg-blue-500" : "bg-neutral-400"}`} />
         <span className="text-xs font-medium text-th-text-primary">Memory consolidation</span>
@@ -308,6 +324,7 @@ export function MemoryPanel() {
           </span>
         )}
       </div>
+      )}
 
       {/* ── Status pill ───────────────────────────────────────── */}
       {memSubTab === "Status" && (

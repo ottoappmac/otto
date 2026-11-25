@@ -20,7 +20,7 @@ import time
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from urllib.parse import urlparse
 
 import httpx
@@ -72,6 +72,13 @@ _MACOS_OBSERVATION_TOOLS: frozenset[str] = frozenset({
     "capture_app_screenshot",
     "get_control_value",
     "read_clipboard",
+    # Structured reads (macos_structured_tools).
+    "observe",
+    "read_dialog",
+    "read_table",
+    "get_control_values",
+    "wait_until",
+    "app_guide",
 })
 
 # Read-only browser tools whose repeated identical results are normal (a
@@ -104,7 +111,34 @@ _MACOS_FOCUS_STEALING_TOOLS: frozenset[str] = frozenset({
     "type_text",
     "hotkey",
     "spotlight_search",
+    "menu_select",
+    "menu_search",      # opens the app's menus to read them
+    "fill_dialog",
+    "drag",
+    "set_text_at",
+    "write_cells",
+    "select_text",
 })
+
+_OSASCRIPT_SERVER_ID = "macos-osascript"
+
+
+def _osascript_script_needs_desktop(kwargs: dict[str, Any]) -> bool:
+    from backend.builtin_mcps.macos_osascript._helpers import script_needs_desktop
+    return script_needs_desktop(str(kwargs.get("script") or ""))
+
+
+# macos-osascript tools whose calls take the desktop lease in the backend,
+# with the rule that decides it per call.  Mirrors what the server itself
+# locked before: ``run_osascript`` only for focus-stealing / input scripts,
+# ``dump_ax_tree`` always (it activates the app).  ``run_osascript_file``
+# always: the file lives on the host and is read by the subprocess, and
+# over-serializing is safe where a missed collision is not.
+_OSASCRIPT_LOCK_RULES: dict[str, Callable[[dict[str, Any]], bool]] = {
+    "run_osascript": _osascript_script_needs_desktop,
+    "run_osascript_file": lambda _kwargs: True,
+    "dump_ax_tree": lambda _kwargs: True,
+}
 
 _PLAYWRIGHT_RECOVERY_HINT = (
     "For Playwright browser tools, the `ref` argument MUST be a literal "
@@ -1623,6 +1657,13 @@ class MCPManager:
             env_for_child.update(config.env or {})
             secret_env = _hydrate_secrets(config)
             env_for_child.update(secret_env)
+            if config.id == _OSASCRIPT_SERVER_ID:
+                # The backend takes the desktop lease for this server's tools
+                # (see _load_generic), so the subprocess must not lock too.
+                from backend.builtin_mcps.macos_osascript._desktop_lock import (
+                    HOST_HOLDS_LEASE_ENV,
+                )
+                env_for_child[HOST_HOLDS_LEASE_ENV] = "1"
 
             spawn_command = config.command
             spawn_args = list(config.args or [])
@@ -1696,10 +1737,18 @@ class MCPManager:
                 recovery_hint=_GENERIC_MCP_RECOVERY_HINT,
                 **_loop_recovery_kwargs(),
             )
+        # The osascript server's screen-needing tools take the desktop lease
+        # here, in the backend, under the calling agent's owner id — the same
+        # lease its macos-native tools hold — so an agent with both tool sets
+        # never waits on itself (the subprocess is told not to lock).
+        lease_owner = f"{_OSASCRIPT_SERVER_ID}-{uuid.uuid4().hex[:12]}"
         for t in tools:
             t.handle_tool_error = True
             _strip_none_args(t)
             _strip_null_image_content(t)
+            if config.id == _OSASCRIPT_SERVER_ID and t.name in _OSASCRIPT_LOCK_RULES:
+                # Inside the loop guard (guard wraps last, runs first).
+                _wrap_with_desktop_lock(t, lease_owner, _OSASCRIPT_LOCK_RULES[t.name])
             wrap_with_loop_guard(t, conn._loop_guard)
             # Always wrap generic MCP outputs with the credential
             # redactor — regardless of whether the server is built-in
@@ -1934,8 +1983,17 @@ def _raise_on_pw_error(tool: BaseTool) -> None:
     tool.coroutine = _checked
 
 
-def _wrap_with_desktop_lock(tool: BaseTool, owner: str) -> None:
-    """Hold the host-global *sticky* desktop lease across a macos-native call.
+def _wrap_with_desktop_lock(
+    tool: BaseTool,
+    owner: str,
+    needs_lock: Callable[[dict[str, Any]], bool] | None = None,
+) -> None:
+    """Hold the host-global *sticky* desktop lease across a desktop tool call.
+
+    Used for the in-process ``macos-native`` tools and, with ``needs_lock``,
+    for the ``macos-osascript`` MCP tools (see :data:`_OSASCRIPT_LOCK_RULES`):
+    ``needs_lock(kwargs)`` decides per call whether this call takes the lease,
+    so background scripts stay parallel.
 
     Every desktop tool of one session shares an ``owner`` id, so the agent
     keeps the screen across its whole activate→scan→act burst — including the
@@ -1971,9 +2029,13 @@ def _wrap_with_desktop_lock(tool: BaseTool, owner: str) -> None:
         return
 
     original = tool.coroutine
+    # MCP adapter tools return (content, artifact); a bare string would break them.
+    pair = getattr(tool, "response_format", "content") == "content_and_artifact"
 
     @wraps(original)
     async def _locked(*args: Any, **kwargs: Any) -> Any:
+        if needs_lock is not None and not needs_lock(kwargs):
+            return await original(*args, **kwargs)
         # The connection (and this wrapper) is shared across sessions, so the
         # baked-in ``owner`` is the same for every concurrent desktop agent.
         # Resolve the per-run owner from the contextvar set by the subagent
@@ -1983,7 +2045,8 @@ def _wrap_with_desktop_lock(tool: BaseTool, owner: str) -> None:
         try:
             await acquire_desktop(eff_owner)
         except DesktopBusy as exc:
-            return desktop_busy_message(exc.waited_ms)
+            msg = desktop_busy_message(exc.waited_ms)
+            return (msg, None) if pair else msg
         try:
             return await original(*args, **kwargs)
         finally:

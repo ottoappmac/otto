@@ -355,13 +355,42 @@ async def import_mcp_servers(payload: dict):
     return {"added": added, "skipped": skipped}
 
 
+async def _enable_shipped_disabled_builtin(cfg: AppConfig, srv: MCPServerConfig) -> str | None:
+    """Starting or connecting a built-in that ships disabled (cad-tools, microsoft-onedrive)
+    is the user's opt-in: turn it on, keep it on, and build its venv. Returns an error message
+    when the server must stay disabled (user-added servers, hook servers with a Settings toggle)."""
+    if srv.enabled:
+        return None
+    from backend.mcp_manager import HOOK_DISABLED_LABELS
+    if not srv.builtin or srv.id in HOOK_DISABLED_LABELS:
+        return HOOK_DISABLED_LABELS.get(srv.id, "Server is disabled. Enable it first.")
+    srv.enabled = True
+    await cfg.asave()
+    return None
+
+
+async def _ensure_builtin_venv(srv: MCPServerConfig) -> None:
+    """Backend boot only builds venvs for built-ins that were already enabled, so one switched on
+    afterwards needs it here (a no-op via the requirements hash when it is ready)."""
+    if srv.builtin and srv.transport == "stdio":
+        try:
+            from backend.builtin_mcps import ensure_builtin_mcp_venvs
+            await ensure_builtin_mcp_venvs(only_ids={srv.id})
+        except Exception:
+            logger.exception("Failed to build the venv for %s", srv.id)
+
+
 @router.post("/{server_id}/connect")
 async def connect_mcp_server(server_id: str):
     cfg = await AppConfig.aload()
     srv = next((s for s in cfg.mcp_servers if s.id == server_id), None)
     if not srv:
         return JSONResponse(status_code=404, content={"error": "Server not found"})
+    err = await _enable_shipped_disabled_builtin(cfg, srv)
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
     reset_circuit_breaker(server_id)
+    await _ensure_builtin_venv(srv)
     await mcp_mgr.connect(srv)
     await session_mgr.refresh_tools(await AppConfig.aload())
     return _status_for(srv, os_supported=True)
@@ -392,12 +421,11 @@ async def start_mcp_process(server_id: str):
     srv = next((s for s in cfg.mcp_servers if s.id == server_id), None)
     if not srv:
         return JSONResponse(status_code=404, content={"error": "Server not found"})
-    if not srv.enabled:
-        from backend.mcp_manager import HOOK_DISABLED_LABELS
-        msg = HOOK_DISABLED_LABELS.get(server_id, "Server is disabled. Enable it first.")
-        return JSONResponse(status_code=400, content={"error": msg})
     if srv.requires_os and srv.requires_os != current_os:
         return JSONResponse(status_code=400, content={"error": f"This server requires {srv.requires_os}"})
+    err = await _enable_shipped_disabled_builtin(cfg, srv)
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
 
     is_stdio = srv.transport == "stdio"
 
@@ -431,19 +459,7 @@ async def start_mcp_process(server_id: str):
     try:
         reset_circuit_breaker(server_id)
         if is_stdio:
-            if srv.builtin:
-                # Backend boot only provisions venvs for built-ins that were
-                # already enabled at that point (see server.py:_startup_mcp).
-                # A user flipping a built-in on afterwards, without a
-                # restart, needs its venv built here instead — cheap/no-op
-                # via the requirements-hash check when it's already ready.
-                try:
-                    from backend.builtin_mcps import ensure_builtin_mcp_venvs
-                    await ensure_builtin_mcp_venvs(only_ids={server_id})
-                except Exception:
-                    logger.exception(
-                        "Failed to self-heal venv for %s before start", server_id,
-                    )
+            await _ensure_builtin_venv(srv)
             conn = await mcp_mgr.connect(srv)
         else:
             await mcp_mgr.ensure_process(srv)

@@ -19,6 +19,13 @@ MLX ``_TRUNCATION_RECOVERY_MSG``).  Because the replacement carries no tool
 calls, the ReAct router ends the turn cleanly — the user never sees the blob and
 the model can take a smaller next step on resume.
 
+Before giving up on the turn the guard asks the model again, up to ``retries``
+times, with the recovery note added as a message (on a throwaway copy of the
+request, so nothing extra is persisted). Ending the turn is only safe when
+someone will resume it: an unattended agent (a benchmark run, a scheduled task)
+has nobody to say "go on", and four OSWorld runs died mid-task with 16 to 45
+steps left after one degenerate reply.
+
 We deliberately only act when there are **no tool calls**: a model that emitted
 a usable tool call is making progress, and an oversized tool *argument* is a
 separate concern already handled on the MLX path.
@@ -33,7 +40,7 @@ from collections.abc import Awaitable, Callable
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +50,14 @@ _RECOVERY_MSG = (
     "repeat that text. Take a different, smaller step: re-read the most recent "
     "observation and either act differently or, if you cannot make progress, "
     "summarise what you have so far and finish.]"
+)
+
+# Sent to the model, after a degenerate reply was dropped, when the guard asks it again.
+_RETRY_MSG = (
+    "[system: your last reply was discarded because it repeated the same text "
+    "over and over. Do not repeat it. Re-read the most recent tool result and "
+    "take one small, concrete next step: call a tool, or give a short final "
+    "answer if the work is done.]"
 )
 
 # Segments shorter than this (after normalisation) are ignored so trivial
@@ -113,6 +128,7 @@ class RepetitionGuardMiddleware(AgentMiddleware):
         min_repeats: int | None = None,
         dominant_ratio: float | None = None,
         distinct_max: float | None = None,
+        retries: int | None = None,
     ) -> None:
         # Defaults are intentionally conservative; explicit values are mainly
         # for tests.  Kept as plain attributes (no Environment dependency) so
@@ -121,6 +137,8 @@ class RepetitionGuardMiddleware(AgentMiddleware):
         self._min_repeats = 5 if min_repeats is None else min_repeats
         self._dominant_ratio = 0.5 if dominant_ratio is None else dominant_ratio
         self._distinct_max = 0.25 if distinct_max is None else distinct_max
+        # Times the model is asked again after a degenerate reply before the turn ends with the recovery note.
+        self._retries = 1 if retries is None else max(0, int(retries))
 
     # ── AgentMiddleware hooks ───────────────────────────────────────────────
 
@@ -129,30 +147,41 @@ class RepetitionGuardMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        return self._sanitize(handler(request))
+        response = handler(request)
+        for _ in range(self._retries):
+            retry = self._retry_request(request, response)
+            if retry is None:
+                break
+            response = handler(retry)
+        return self._sanitize(response)
 
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        return self._sanitize(await handler(request))
+        response = await handler(request)
+        for _ in range(self._retries):
+            retry = self._retry_request(request, response)
+            if retry is None:
+                break
+            response = await handler(retry)
+        return self._sanitize(response)
 
     # ── Private helpers ─────────────────────────────────────────────────────
 
-    def _sanitize(self, response: ModelResponse) -> ModelResponse:
+    def _degenerate(self, response: ModelResponse) -> AIMessage | None:
+        """The response's final message when it is a degenerate, tool-call-free repetition, else None."""
         result = list(getattr(response, "result", None) or [])
         if not result:
-            return response
-
+            return None
         last = result[-1]
         if not isinstance(last, AIMessage):
-            return response
+            return None
         # A model that emitted a usable tool call is making progress; only the
         # final-answer (no tool calls) case is in scope here.
         if getattr(last, "tool_calls", None):
-            return response
-
+            return None
         text = self._content_to_text(last.content)
         if not is_degenerate_repetition(
             text,
@@ -161,7 +190,26 @@ class RepetitionGuardMiddleware(AgentMiddleware):
             dominant_ratio=self._dominant_ratio,
             distinct_max=self._distinct_max,
         ):
+            return None
+        return last
+
+    def _retry_request(self, request: ModelRequest, response: ModelResponse) -> ModelRequest | None:
+        """The request to ask the model again with, when ``response`` is degenerate; None otherwise (or when the
+        request cannot be copied)."""
+        if self._degenerate(response) is None or not hasattr(request, "override"):
+            return None
+        logger.warning("RepetitionGuard: degenerate reply dropped; asking the model again.")
+        try:
+            return request.override(messages=[*list(request.messages), HumanMessage(content=_RETRY_MSG)])
+        except Exception:  # pragma: no cover — defensive: fall back to ending the turn
+            return None
+
+    def _sanitize(self, response: ModelResponse) -> ModelResponse:
+        last = self._degenerate(response)
+        if last is None:
             return response
+        result = list(response.result)
+        text = self._content_to_text(last.content)
 
         logger.warning(
             "RepetitionGuard: discarded a degenerate repetition (%d chars, no "

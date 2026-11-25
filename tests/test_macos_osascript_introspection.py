@@ -205,6 +205,44 @@ def test_resolve_app_path_finds_existing_bundle(tmp_path, monkeypatch):
     assert resolved == str(fake_app)
 
 
+def test_resolve_app_path_searches_core_services(monkeypatch):
+    """Finder and System Events live in /System/Library/CoreServices, not
+    /Applications (found on the MacArena VM: inspect_app_dictionary("Finder")
+    said Finder was not installed)."""
+    from backend.builtin_mcps.macos_osascript import _helpers
+
+    seen: list[str] = []
+
+    def exists(self):
+        seen.append(str(self))
+        return str(self) == "/System/Library/CoreServices/Finder.app"
+
+    monkeypatch.setattr(_helpers.Path, "exists", exists)
+    assert _helpers.resolve_app_path("Finder") == "/System/Library/CoreServices/Finder.app"
+
+
+def test_dump_ax_tree_does_not_coerce_the_tree_to_text(monkeypatch):
+    """``entire contents ... as text`` fails (-1700) on any window with an
+    outline or list (Finder, found on the MacArena VM); osascript prints the
+    uncoerced list as readable element paths."""
+    import asyncio
+    from backend.builtin_mcps.macos_osascript import server
+
+    seen: dict = {}
+
+    async def fake_run(args, timeout):
+        seen["script"] = args[-1]
+        return {"ok": True, "stdout": "button 1 of window admin of application process Finder\n",
+                "stdout_truncated": False, "stderr": "", "timed_out": False, "duration_ms": 1}
+
+    monkeypatch.setattr(server, "_run_osascript_args", fake_run)
+    monkeypatch.setenv("OTTO_DESKTOP_LEASE_BY_HOST", "1")
+    out = asyncio.run(server.dump_ax_tree(app_name="Finder"))
+    assert out["ok"] and out["tree"].startswith("button 1 of window admin")
+    assert "return entire contents of window 1\n" in seen["script"]
+    assert "as text" not in seen["script"]
+
+
 def test_resolve_app_path_returns_none_for_missing(monkeypatch):
     from backend.builtin_mcps.macos_osascript import _helpers
 

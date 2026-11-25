@@ -875,6 +875,34 @@ class EmbeddingConfig(BaseModel):
         return v
 
 
+class ProceduralMemoryConfig(BaseModel):
+    """Procedural memory: learn from completed desktop / browser agent runs (``backend/procedural_memory``).
+
+    Off by default. When on, each delegated desktop or browser agent run is saved when it ends, admitted only once
+    a trusted label arrives, and offered back to those agents through ``recall_procedure``. Benchmark runs ignore
+    this section: they use the ``OTTO_PROCEDURE_*`` environment (a frozen read-only snapshot).
+    """
+
+    enabled: bool = False
+    # Offer recall_procedure to the desktop and browser agents (needs enabled).
+    serve: bool = True
+    # Minimum cosine similarity for an item to be returned; below it the tool answers "no similar procedure".
+    # Placeholder until the Phase 0 retrieval check sets it for the configured embedding model.
+    similarity_floor: float = Field(default=0.45, ge=0.0, le=1.0)
+    # Token cap on what one recall returns (one item by default).
+    max_tokens: int = 800
+    # The end-of-run judge admits runs only once calibration shows >= 0.90 precision on our own runs.
+    judge_success_trusted: bool = False
+    judge_failure_trusted: bool = False
+    # A failed run may contribute the segments its trace confirmed (never the one where it went wrong).
+    segments_from_failed_runs: bool = True
+    # One LLM call per admitted run for intents and lessons; off = deterministic intents, no lessons.
+    enrich_with_llm: bool = True
+    # Most runs kept in the app's store; 0 = no limit. Over it, saving a run removes the oldest: runs you
+    # excluded or that were retired first, then ones still waiting for review, and runs in use last.
+    max_saved_runs: int = Field(default=500, ge=0)
+
+
 class MemoryConfig(BaseModel):
     """Memory consolidation settings."""
 
@@ -1453,6 +1481,7 @@ class AppConfig(BaseModel):
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     openclaw: OpenClawConfig = Field(default_factory=OpenClawConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    procedural_memory: ProceduralMemoryConfig = Field(default_factory=ProceduralMemoryConfig)
     exo: ExoConfig = Field(default_factory=ExoConfig)
     omlx: OmlxConfig = Field(default_factory=OmlxConfig)
     activity: ActivityConfig = Field(default_factory=ActivityConfig)

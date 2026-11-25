@@ -117,6 +117,8 @@ dependencies = [
 
     # Semantic search (sqlite-vec + MLX embeddings — Apple Silicon only at runtime)
     "sqlite-vec>=0.1.0",
+    # Embedding model for semantic memory and procedural memory (all-MiniLM-L6-v2)
+    "sentence-transformers>=5.0",
     # Evaluation — stay on 3.x. 4.x pins click<8.4 and a 2.x backtrack
     # pulls LlamaIndex + instructor into the lock (and the freeze).
     "deepeval>=3.9.8,<4",

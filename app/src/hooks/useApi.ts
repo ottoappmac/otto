@@ -537,6 +537,33 @@ export const api = {
     ),
   deleteMemoryTopic: (filename: string) =>
     request<{ status: string }>(`/api/memory/topics/${encodeURIComponent(filename)}`, { method: "DELETE" }),
+  listProcedureEpisodes: (status?: string) =>
+    request<{ episodes: import("../types").ProcedureEpisode[]; counts: Record<string, number> }>(
+      `/api/procedures/episodes${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  getProcedureEpisode: (id: string) =>
+    request<import("../types").ProcedureEpisodeDetail>(`/api/procedures/episodes/${encodeURIComponent(id)}`),
+  answerProcedureEpisode: (episodeId: string, worked: boolean) =>
+    request<{ status: string }>(`/api/procedures/episodes/${encodeURIComponent(episodeId)}/feedback`, {
+      method: "POST",
+      body: JSON.stringify({ worked }),
+    }),
+  getProcedureSessionFeedback: (sessionId: string) =>
+    request<{
+      enabled: boolean;
+      ask: boolean;
+      answer: "success" | "failure" | null;
+      episodes: { id: string; task_text: string; apps: string[]; status: string; user_label: string | null }[];
+    }>(`/api/procedures/sessions/${encodeURIComponent(sessionId)}/feedback`),
+  sendProcedureSessionFeedback: (sessionId: string, worked: boolean) =>
+    request<{ updated: string[]; saved: number; still_pending: number }>(
+      `/api/procedures/sessions/${encodeURIComponent(sessionId)}/feedback`,
+      { method: "POST", body: JSON.stringify({ worked }) },
+    ),
+  excludeProcedureEpisode: (id: string) =>
+    request<{ ok: boolean }>(`/api/procedures/episodes/${encodeURIComponent(id)}/exclude`, { method: "POST" }),
+  deleteProcedureEpisode: (id: string) =>
+    request<{ ok: boolean }>(`/api/procedures/episodes/${encodeURIComponent(id)}`, { method: "DELETE" }),
   addMemoryCorrection: (filename: string, text: string) =>
     request<{ status: string; correction: string }>(
       `/api/memory/topics/${encodeURIComponent(filename)}/correction`,
