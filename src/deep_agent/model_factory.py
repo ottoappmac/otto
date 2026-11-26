@@ -331,10 +331,10 @@ def _is_reasoning_model_id(model_id: str) -> bool:
 #   1. Only accept ``temperature=1`` (any other value is rejected).
 #   2. Use ``max_completion_tokens`` instead of ``max_tokens`` — passing
 #      ``max_tokens`` returns HTTP 400 ``unsupported_parameter``.
-# This covers the GPT-5 family and the o-series reasoning models
+# This covers the GPT-5 and GPT-6 families and the o-series reasoning models
 # (o1, o2, o3, o4 and their dated/mini/preview variants).
 _MODERN_OPENAI_PREFIXES = (
-    "gpt-5",
+    "gpt-5", "gpt-6",
     "o1", "o2", "o3", "o4",
 )
 
