@@ -78,6 +78,9 @@ class CatalogRow:
     source: str = ""
     adapter_path: str = ""
     base_repo_id: str = ""
+    # Which engines can run it: "mlx" (Standard, in-process mlx_lm) and/or
+    # "omlx" (Turbo).  The catalog route filters on it per picker.
+    engines: list[str] = field(default_factory=lambda: ["mlx", "omlx"])
     # Filled by fetch_catalog() — never serialised into the curated source.
     downloads: int = 0
     last_modified: str = ""
@@ -313,7 +316,61 @@ CURATED: list[CatalogRow] = [
         n_layers=28, n_kv_heads=8, head_dim=128, max_position=32768,
         tier="starter",
     ),
+
+    # ─── Turbo (oMLX) only ─────────────────────────────────────────────
+    CatalogRow(
+        repo_id="mlx-community/Inkling-2-Mini-oQ4e-mtp",
+        family="inkling2",
+        display_name="Inkling 2 Mini — 26B-A3B (oQ4e, MTP)",
+        blurb="Thinking Machines' looped MoE with vision and native tool calls. Turbo only; needs oMLX 0.8.3+.",
+        # 16.8 GB on disk: 15.6 GB language model + vision, 0.6 GB DSpark draft.
+        weights_gb=15.7,
+        params_b=26.4,
+        quant="mixed",
+        role=["text", "tools", "vlm"],
+        capability_tags=["chat", "tools", "thinking", "vision"],
+        # 24 layers, the middle 12 run three times per token: 48 layer passes
+        # (an upper bound for the KV estimate; some are 1024-token sliding window).
+        n_layers=48, n_kv_heads=8, head_dim=128, max_position=1048576,
+        tier="power",
+        engines=["omlx"],
+    ),
 ]
+
+# config.json model types only Turbo (oMLX) can run: the Standard engine is
+# mlx_lm, which has no Inkling 2 model in a release yet.
+OMLX_ONLY_MODEL_TYPES: frozenset[str] = frozenset({"inkling2_loop"})
+
+
+def cached_model_type(repo_id: str) -> str | None:
+    """``model_type`` from *repo_id*'s config.json in the local HF cache, or None.
+
+    Reads the cache only (never downloads).
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        path = try_to_load_from_cache(repo_id, "config.json")
+        if not isinstance(path, str):
+            return None
+        with open(path, encoding="utf-8") as fh:
+            value = json.load(fh).get("model_type")
+        return str(value) if value else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def standard_engine_runs(repo_id: str) -> bool:
+    """False when the Standard (mlx_lm) engine can't load *repo_id*.
+
+    Checks the curated row's ``engines`` and, for a cached model, its
+    ``model_type``.  Unknown models count as runnable.
+    """
+    rid = (repo_id or "").strip()
+    for row in CURATED:
+        if row.repo_id == rid and "mlx" not in row.engines:
+            return False
+    return cached_model_type(rid) not in OMLX_ONLY_MODEL_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +399,7 @@ _FAMILY_HINTS: list[tuple[str, str]] = [
     (r"falcon", "falcon"),
     (r"internvl|intern[\s_-]?vl", "internvl"),
     (r"command[\s_-]?r", "cohere"),
+    (r"inkling", "inkling2"),
 ]
 
 # Repos that match these patterns are very likely not chat/LLMs (embedders,
@@ -454,6 +512,9 @@ def _infer_row_from_hub(
     family = _infer_family(lower)
     role, tags = _infer_role_tags(slug)
     tier = "starter" if weights_gb <= 4 else "balanced" if weights_gb <= 12 else "power"
+    # Only the name is known before download; the in-process guard in
+    # model_factory reads config.json once the model is cached.
+    engines = ["omlx"] if family == "inkling2" else ["mlx", "omlx"]
 
     return CatalogRow(
         repo_id=repo_id,
@@ -469,6 +530,7 @@ def _infer_row_from_hub(
         n_kv_heads=0,
         head_dim=0,
         tier=tier,
+        engines=engines,
         downloads=downloads,
         last_modified=last_modified,
     )

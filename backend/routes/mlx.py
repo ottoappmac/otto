@@ -180,6 +180,7 @@ async def mlx_catalog(
     comfortable_fraction: float = Query(0.5, ge=0.1, le=0.95),
     refresh: bool = Query(False, description="Force-refresh the live HF Hub overlay."),
     cache_dir: str | None = Query(None, description="Override hub cache for the probe."),
+    engine: str | None = Query(None, description="'mlx' (Standard) or 'omlx' (Turbo): only rows that engine runs."),
 ):
     """Return the curated MLX catalog scored against the local machine.
 
@@ -273,6 +274,9 @@ async def mlx_catalog(
         comfortable_fraction=float(comfortable_fraction),
         cached_map=cached_map,
     )
+
+    if engine:
+        scored = [r for r in scored if engine in (r.get("engines") or ["mlx", "omlx"])]
 
     counts = {"comfortable": 0, "tight": 0, "over": 0, "unknown": 0}
     for row in scored:

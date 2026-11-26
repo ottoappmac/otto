@@ -520,6 +520,7 @@ def _build_mlx_chat(
     """
     from chat_models.mlx import ChatMLXText
 
+    _refuse_omlx_only_model(model_id)
     prompt_cache_max_tokens = Environment.get_mlx_prompt_cache_max_tokens()
 
     if adapter_path:
@@ -868,6 +869,11 @@ def create_llm(provider: str) -> BaseChatModel:
                 "preserve_thinking": True,
             }
         }
+        # Some templates think regardless of ``enable_thinking`` (Inkling 2
+        # thinks at every reasoning_effort); oMLX's request-level
+        # ``thinking_budget: 0`` is what actually turns it off for them.
+        if not thinking and _cached_model_type(model_name) in _THINKING_BUDGET_MODEL_TYPES:
+            extra_body["thinking_budget"] = 0
         # Cap generation length.  Without max_tokens the server falls back
         # to sampling.max_tokens (32768 by default), letting a model that
         # fails to emit a stop token run away to the full cap (a single
@@ -1117,6 +1123,43 @@ def _cached_config_path(model_id: str) -> Optional[str]:
         if isinstance(path, str):
             return path
     return None
+
+
+# Model types whose chat template ignores ``enable_thinking=false``.  oMLX
+# turns their thinking off only with a request-level ``thinking_budget: 0``
+# (checked against oMLX 0.8.3: ``enable_thinking``, ``reasoning_effort`` and a
+# ``thinking_budget`` inside ``chat_template_kwargs`` all still think).
+_THINKING_BUDGET_MODEL_TYPES: frozenset[str] = frozenset({"inkling2_loop"})
+
+
+def _refuse_omlx_only_model(model_id: str) -> None:
+    """Raise a clear error for a model the Standard (mlx_lm) engine can't run.
+
+    Without this, mlx_lm fails deep inside ``load`` with an unsupported
+    ``model_type`` error that doesn't say Turbo would work.
+    """
+    from backend.mlx_catalog import OMLX_ONLY_MODEL_TYPES
+
+    model_type = _cached_model_type(model_id)
+    if model_type in OMLX_ONLY_MODEL_TYPES:
+        raise ValueError(
+            f"{model_id} (model_type '{model_type}') runs only on Turbo (oMLX), not on "
+            "Standard MLX. Switch the LLM provider to Turbo in Settings → LLM and "
+            "pick it there (needs oMLX 0.8.3 or newer)."
+        )
+
+
+def _cached_model_type(model_id: str) -> Optional[str]:
+    """``model_type`` from *model_id*'s cached ``config.json``, or None (never downloads)."""
+    try:
+        path = _cached_config_path(model_id)
+        if path is None:
+            return None
+        with open(path, encoding="utf-8") as fh:
+            value = json.load(fh).get("model_type")
+        return str(value) if value else None
+    except Exception:
+        return None
 
 
 def _config_declares_vision(model_id: str) -> bool:
