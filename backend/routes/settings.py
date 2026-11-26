@@ -216,6 +216,48 @@ async def _resolve_bedrock_creds(req: TestConnectionRequest) -> dict:
     return {}
 
 
+def _req_secret_paths(req: TestConnectionRequest) -> dict[str, str]:
+    """Map each secret field on *req* to the AppConfig path it mirrors."""
+    paths = {
+        "aws_access_key_id": "llm.anthropic.aws_access_key_id",
+        "aws_secret_access_key": "llm.anthropic.aws_secret_access_key",
+        "hf_token": "llm.mlx.hf_token",
+    }
+    if req.provider == "anthropic":
+        paths["api_key"] = "llm.anthropic.api_key"
+    elif req.provider == "openai":
+        paths["api_key"] = (
+            "llm.openai.azure_api_key"
+            if req.openai_model_provider == "azure"
+            else "llm.openai.api_key"
+        )
+    elif req.provider == "google":
+        paths["api_key"] = "llm.google.api_key"
+    return paths
+
+
+async def _resolve_placeholder_secrets(req: TestConnectionRequest) -> None:
+    """Swap ``••••`` placeholders on *req* for the saved (vault) values.
+
+    ``GET /settings`` masks stored secrets, so after an app restart the
+    form sends the placeholder back for any key the user didn't retype.
+    Passing it through verbatim puts non-ASCII bytes into an HTTP header
+    ("'ascii' codec can't encode characters in position 0-3").
+    """
+    paths = _req_secret_paths(req)
+    pending = [
+        (field, path)
+        for field, path in paths.items()
+        if (getattr(req, field) or "").strip() == _REDACTED_PLACEHOLDER
+    ]
+    if not pending:
+        return
+    cfg = await AppConfig.aload()
+    for field, path in pending:
+        saved = _model_get_path(cfg, path)
+        setattr(req, field, saved if isinstance(saved, str) else "")
+
+
 def _is_bedrock(req: TestConnectionRequest) -> bool:
     """The frontend may send either "bedrock" or "anthropic_bedrock"
     depending on which code path saved the setting last; treat both as
@@ -226,6 +268,7 @@ def _is_bedrock(req: TestConnectionRequest) -> bool:
 @router.post("/settings/test-connection")
 async def test_llm_connection(req: TestConnectionRequest):
     try:
+        await _resolve_placeholder_secrets(req)
         if req.provider == "mlx":
             model_id = (req.hf_llm_model_id or "").strip()
             if not model_id:
@@ -446,6 +489,7 @@ async def test_llm_connection(req: TestConnectionRequest):
 async def list_available_models(req: TestConnectionRequest):
     """Return available model IDs for the configured provider + credentials."""
     try:
+        await _resolve_placeholder_secrets(req)
         if req.provider == "mlx":
             mid = (req.hf_llm_model_id or "").strip()
             if not mid:
