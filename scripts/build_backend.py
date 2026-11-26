@@ -100,6 +100,10 @@ def _async_http_args() -> list[str]:
     return [
         "--collect-all", "httpx",
         "--collect-all", "httpcore",
+        # openai 3, anthropic 2 and google-genai 3 use httpx2 instead of
+        # httpx.  Its transports load by name, so collect it whole.
+        "--collect-all", "httpx2",
+        "--collect-all", "httpcore2",
         "--collect-all", "anyio",
         "--hidden-import", "aiosqlite",
         "--hidden-import", "multipart",

@@ -38,8 +38,11 @@ def _media_resolution_enum(types, media_resolution: str):
 
 def _client(api_key: str):
     from google import genai
+    from google.genai import types
 
-    return genai.Client(api_key=api_key)
+    # google-genai 3 defaults to the v1 API; video metadata (fps, offsets),
+    # media_resolution and preview models are served on v1beta.
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version="v1beta"))
 
 
 def _guess_mime(path: str | Path) -> str:

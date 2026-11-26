@@ -62,7 +62,10 @@ class LiveWatchSession:
             await self.on_event({"type": "error", "message": f"Gemini SDK unavailable: {exc}"})
             return
 
-        client = genai.Client(api_key=self.api_key)
+        # google-genai 3 defaults to v1, which doesn't serve the Live API.
+        client = genai.Client(
+            api_key=self.api_key, http_options=types.HttpOptions(api_version="v1beta"),
+        )
         config = {
             "response_modalities": ["TEXT"],
             "system_instruction": self.prompt,

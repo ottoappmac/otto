@@ -26,7 +26,7 @@ dependencies = [
 
     # LangChain ecosystem
     "langchain>=0.3.0",
-    "langchain-core>=0.3.0",
+    "langchain-core>=1.8.4",
     "langchain-community>=0.3.0",
     # langchain_classic.chains.base.Chain — used by playwright_navigator.py
     "langchain-classic>=1.0.0",
@@ -35,8 +35,8 @@ dependencies = [
     "langchain-aws>=0.2.0",
     "langchain-openai>=0.3.0",
     # Google Gemini — native video understanding provider + Live API SDK
-    "langchain-google-genai>=2.0.0",
-    "google-genai>=1.0.0",
+    "langchain-google-genai>=4.5.3",
+    "google-genai>=3.3.0",
     "langgraph>=0.2.0",
     "langgraph-checkpoint-sqlite>=2.0.0",
     "deepagents>=0.4.5",
@@ -110,7 +110,7 @@ dependencies = [
     "grandalf",
 
     # Anthropic SDK
-    "anthropic>=0.40.0",
+    "anthropic>=2.14.0",
 
     # Research tools (web/doc researcher)
     "ddgs==9.14.1",  # pinned: 9.16 disables yandex; CI ignores uv.lock
