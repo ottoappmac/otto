@@ -59,6 +59,9 @@ export interface ModelChooserProps {
   selectedAdapterPath?: string;
   /** Distilled-tab engine copy: Standard can attach LoRA; Turbo cannot. */
   distillEngine?: "mlx" | "omlx";
+  /** Engine the picked model will run on; the catalog shows only models it
+   *  can run.  Defaults to ``distillEngine``. */
+  engine?: "mlx" | "omlx";
   /** Called when the user clicks "Unload" to free GPU memory. */
   onUnload?: () => void;
   /** Whether an unload is in progress. */
@@ -444,11 +447,13 @@ export default function ModelChooser({
   selectedDistillId,
   selectedAdapterPath,
   distillEngine = "mlx",
+  engine,
   onUnload,
   unloading,
   unloadMsg,
 }: ModelChooserProps) {
   const [tab, setTab] = useState<ChooserTab>(distillEngine === "omlx" ? "distilled" : "library");
+  const catalogEngine = engine ?? distillEngine;
 
   const useDistilled = useCallback(
     (adapter: DistillAdapter) => {
@@ -523,7 +528,7 @@ export default function ModelChooser({
       setLoading(true);
       setError(null);
       try {
-        const r = await api.mlxCatalog({ refresh: force });
+        const r = await api.mlxCatalog({ refresh: force, engine: catalogEngine });
         setCaps(r.capabilities);
         setRows(r.models);
         setCounts(r.counts);
@@ -535,7 +540,7 @@ export default function ModelChooser({
         setLoading(false);
       }
     },
-    [],
+    [catalogEngine],
   );
 
   useEffect(() => {
@@ -562,7 +567,7 @@ export default function ModelChooser({
     if (!enriching) return;
     const id = setInterval(async () => {
       try {
-        const r = await api.mlxCatalog({});
+        const r = await api.mlxCatalog({ engine: catalogEngine });
         const nowEnriching = r.enriching ?? false;
         setEnriching(nowEnriching);
         if (!nowEnriching && enrichingRef.current) {
@@ -577,7 +582,7 @@ export default function ModelChooser({
       }
     }, 4000);
     return () => clearInterval(id);
-  }, [enriching]);
+  }, [enriching, catalogEngine]);
 
   // ─── Sync with backend job list ─────────────────────────────────
   // The download workers live in the backend, so navigating away

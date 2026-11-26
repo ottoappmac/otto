@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 
 from backend.distillation import DEFAULT_STUDENT_MODEL_ID, DEFAULT_TEACHER_MODEL_ID
-from backend.mlx_catalog import CURATED, CatalogRow, score_row
+from backend.mlx_catalog import CURATED, CatalogRow, score_row, standard_engine_runs
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,14 @@ def validate_pair(
         )
     if privacy_lock and _looks_cloud(teacher_id):
         raise ModelPairError("Privacy lock forbids a cloud teacher")
+    # The student is trained with mlx_lm.lora; a model only oMLX can run
+    # can't be one.  (As a teacher it only supplies traces, which is fine.)
+    if not standard_engine_runs(student_id):
+        raise ModelPairError(
+            f"{student_id} can't be a Distill student: LoRA training uses mlx_lm, "
+            "which can't load this model yet (it runs only on Turbo/oMLX). "
+            "Pick a Qwen, Llama or other Standard MLX model as the student."
+        )
 
     teacher_row = catalog_row(teacher_id)
     student_row = catalog_row(student_id)

@@ -854,6 +854,7 @@ function LocalModelScreen({
       )}
 
       <ModelChooser
+        engine="mlx"
         selectedRepoId={picked}
         hfToken={settings.llm.mlx.hf_token}
         cacheDir={settings.llm.mlx.hf_hub_cache}
@@ -1870,6 +1871,7 @@ function OmlxSetupScreen({
             )}
 
             <ModelChooser
+              engine="omlx"
               selectedRepoId={settings.omlx?.model_name ?? ""}
               hfToken={settings.llm.mlx.hf_token}
               cacheDir={settings.llm.mlx.hf_hub_cache}
