@@ -495,9 +495,13 @@ def _offered(agent_name):
         """done"""
         return "ok"
 
+    from deep_agent.deepagents_compat import with_legacy_defaults
+
+    # Same defaults otto's real graph build applies (todo list + base prompt).
+    prompt, middleware = with_legacy_defaults("SYS", [MacarenaGuardMiddleware(agent_name), Rec()])
     agent = create_deep_agent(
-        model=Fake(messages=iter([AIMessage(content="hi")])), tools=[press_control, vm_done], system_prompt="SYS",
-        middleware=[MacarenaGuardMiddleware(agent_name), Rec()],
+        model=Fake(messages=iter([AIMessage(content="hi")])), tools=[press_control, vm_done], system_prompt=prompt,
+        middleware=middleware,
         backend=FilesystemBackend(root_dir=tempfile.mkdtemp(), virtual_mode=True))
     agent.invoke({"messages": [("user", "x")]})
     return seen
@@ -515,7 +519,9 @@ def test_native_agent_is_offered_only_desktop_and_finish_tools():
 def test_other_agents_keep_every_tool():
     seen = _offered("some-other-agent")
     assert {"write_todos", "ls", "read_file", "write_file", "glob", "press_control"} <= set(seen["tools"])
-    assert "Following Conventions" in seen["prompt"]
+    # deepagents 0.7 no longer injects filesystem guidance prose; otto keeps
+    # the 0.5 base prompt (see deep_agent.deepagents_compat).
+    assert "You are a deep agent" in seen["prompt"]
 
 
 def test_standard_track_agent_is_offered_only_vm_tools():

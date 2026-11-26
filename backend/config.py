@@ -1543,6 +1543,18 @@ class AppConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _migrate_google_chat_provider(self) -> "AppConfig":
+        """Gemini is no longer offered as the main chat provider.
+
+        It's only used for video understanding (its env vars are set
+        whenever a Google key exists, independent of ``llm.provider``), so
+        a saved ``provider="google"`` falls back to Anthropic.
+        """
+        if self.llm.provider == "google":
+            self.llm.provider = "anthropic"
+        return self
+
+    @model_validator(mode="after")
     def _migrate_wake_model(self) -> "AppConfig":
         """Migrate legacy openWakeWord model names to the bundled hey_otto.
 

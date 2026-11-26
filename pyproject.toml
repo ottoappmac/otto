@@ -39,7 +39,7 @@ dependencies = [
     "google-genai>=3.3.0",
     "langgraph>=0.2.0",
     "langgraph-checkpoint-sqlite>=2.0.0",
-    "deepagents>=0.4.5",
+    "deepagents>=0.7.41,<0.8",
 
     # MLX local inference (Apple Silicon)
     # mlx 0.32.5 ships macOS 14+ wheels only (no macOS 13).

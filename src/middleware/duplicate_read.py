@@ -26,7 +26,7 @@ from langgraph.types import Command
 UNCHANGED_NOTE = "Unchanged since your earlier read; the content is above."
 
 _READ_TOOLS = frozenset({"read_file"})
-_WRITE_TOOLS = frozenset({"write_file", "edit_file", "edit"})
+_WRITE_TOOLS = frozenset({"write_file", "edit_file", "edit", "delete"})
 
 
 def maybe_for_provider(provider: str | None) -> "DuplicateReadMiddleware | None":

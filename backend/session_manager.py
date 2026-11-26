@@ -342,6 +342,42 @@ def _make_backend(
                 self._track_project_write(file_path, before)
             return result
 
+        def delete(self, file_path: str) -> Any:
+            # deepagents 0.7 added a recursive ``delete`` tool.  Give it the
+            # same Plan/Ask read-only and protected-path guards as write/edit,
+            # record it for workspace undo, and refuse folders: a recursive
+            # delete could remove protected paths inside them.
+            from deepagents.backends.protocol import DeleteResult
+            blocked = self._readonly_error(file_path)
+            if blocked:
+                return DeleteResult(error=blocked)
+            protected = self._protected_error(file_path)
+            if protected:
+                return DeleteResult(error=protected)
+            before: bytes | None = None
+            try:
+                full = self._resolve_path(file_path if str(file_path).startswith("/") else "/" + str(file_path))
+                path = Path(full)
+                if path.is_dir():
+                    return DeleteResult(
+                        error=f"{file_path} is a folder. Only files can be deleted; delete them one at a time.",
+                    )
+                if path.is_file():
+                    before = path.read_bytes()
+                    if project_root is not None and session_id:
+                        from backend.workspace_git import capture_preimage
+                        capture_preimage(session_id, Path(project_root), path.resolve())
+            except (OSError, ValueError) as exc:
+                return DeleteResult(error=str(exc))
+            try:
+                result = super().delete(file_path)
+            except ValueError as exc:
+                logger.warning("[session_backend] delete blocked: %s", exc)
+                return DeleteResult(error=str(exc))
+            if not getattr(result, "error", None):
+                self._track_project_write(file_path, before)
+            return result
+
         def _to_virtual_path(self, path: Path) -> str:
             # Lexical conversion: when iterating a symlinked dir, we want
             # ``/links/foo/bar.txt`` not ``/Users/.../bar.txt``.  The
@@ -4087,6 +4123,9 @@ class SessionManager:
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("Subagent concurrency cap: could not apply — %s", exc)
 
+        from deep_agent.deepagents_compat import with_legacy_defaults
+
+        system_prompt, extra_middleware = with_legacy_defaults(system_prompt, extra_middleware)
         graph = await asyncio.to_thread(
             create_deep_agent,
             model=graph_llm,

@@ -239,9 +239,12 @@ class DeepAgent(CallbackMixin):
             else None
         )
 
+        from deep_agent.deepagents_compat import with_legacy_defaults
+
+        system_prompt, middleware = with_legacy_defaults(self._system_prompt, middleware)
         self._graph = create_deep_agent(
             model=self._orchestrator_llm,
-            system_prompt=self._system_prompt,
+            system_prompt=system_prompt,
             tools=self._tool_set.deep_agent_tools,
             subagents=self._subagents,
             middleware=middleware,
