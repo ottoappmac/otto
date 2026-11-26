@@ -114,9 +114,12 @@ def _processed_tokens(cache):
         elif layer.keys is None:
             out.append([])
         else:
+            # mlx_lm >= 0.32: ``state`` is the whole step-padded buffer, so
+            # cut it to the ``offset`` tokens actually processed.
             keys = layer.state[0]
             if isinstance(layer, QuantizedKVCache):
                 keys = mx.dequantize(*keys, group_size=layer.group_size, bits=layer.bits)
+            keys = keys[..., : layer.offset, :]
             out.append([round(v) for v in keys[0, 0, :, 0].tolist()])
     return out
 

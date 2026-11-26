@@ -42,13 +42,20 @@ dependencies = [
     "deepagents>=0.4.5",
 
     # MLX local inference (Apple Silicon)
-    "mlx>=0.32.2",
-    "mlx-lm>=0.31.2",
-    # 0.6+ requires transformers>=5.14, which breaks mlx-lm's
-    # AutoTokenizer.register("NewlineTokenizer", ...) string-key call.
-    "mlx-vlm>=0.4.4,<0.5",
-    "transformers>=5.0.0,<5.13.0",  # 5.13.0 broke mlx-lm's AutoTokenizer.register("NewlineTokenizer", ...) string-key call
-    # 1.16.3+ requires click>=8.4, which conflicts with deepeval 3.x (click<8.4).
+    # mlx 0.32.5 ships macOS 14+ wheels only (no macOS 13).
+    "mlx>=0.32.5",
+    # 0.32+ registers NewlineTokenizer by class, so it works on
+    # transformers >=5.13 (0.31 used a string key that 5.13 rejects).
+    "mlx-lm>=0.32.2",
+    # 0.8.1 is the first release with Inkling 2 Mini (inkling2_loop), its
+    # tool-call parser and the DSpark drafter.  Needs mlx>=0.32.4 and
+    # transformers>=5.14.  Also pulls mlx-audio, opencv-python, llguidance
+    # and datasets.
+    "mlx-vlm>=0.8.1,<0.9",
+    # 5.18+ requires huggingface-hub>=1.31, which requires click>=8.4.2 and
+    # conflicts with deepeval (3.x and 4.x both pin click<8.4).
+    "transformers>=5.14.0,<5.18",
+    # 1.16.3+ requires click>=8.4, which conflicts with deepeval (click<8.4).
     "huggingface-hub>=1.16.1,<1.16.3",
     # Optional accelerator for non-Xet repos.  Used in
     # ``backend/routes/mlx.py`` via ``HF_HUB_ENABLE_HF_TRANSFER=1`` for a

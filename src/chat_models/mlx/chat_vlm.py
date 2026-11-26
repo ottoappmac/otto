@@ -73,51 +73,6 @@ def loaded_mlx_vlms() -> list[str]:
     return list(_LOADED_VLMS.keys())
 
 
-# ── Library compatibility patches ─────────────────────────────────────────────
-
-def _patch_qwen3_vl_text_only() -> None:
-    """Patch mlx_vlm ≤0.4.0 Qwen3-VL to handle text-only (no-image) input.
-
-    ``Qwen3VLLanguageModel.__call__`` unconditionally slices ``visual_pos_masks``
-    when ``n_to_process`` is set, even though ``visual_pos_masks`` is ``None``
-    on text-only turns.  This raises::
-
-        TypeError: 'NoneType' object is not subscriptable
-
-    The fix adds the missing ``visual_pos_masks is not None`` guard.
-    Applied once at import time; safe to call multiple times (idempotent).
-    Remove when mlx_vlm ships a fix upstream.
-    """
-    try:
-        import mlx_vlm.models.qwen3_vl.language as _qvl
-    except ImportError:
-        return
-
-    cls = getattr(_qvl, "Qwen3VLLanguageModel", None) or getattr(_qvl, "LanguageModel", None)
-    if cls is None:
-        logger.warning("qwen3_vl text-only patch: could not find LanguageModel class, skipping")
-        return
-
-    if getattr(cls.__call__, "_patched_text_only", False):
-        return
-
-    _orig = cls.__call__
-
-    def _patched(self, *args, visual_pos_masks=None, **kwargs):
-        if visual_pos_masks is None:
-            # _orig reads n_to_process from kwargs and slices visual_pos_masks
-            # unconditionally — remove it so the slice is never attempted.
-            kwargs.pop("n_to_process", None)
-        return _orig(self, *args, visual_pos_masks=visual_pos_masks, **kwargs)
-
-    _patched._patched_text_only = True
-    cls.__call__ = _patched
-    logger.debug("Applied qwen3_vl text-only patch (mlx_vlm ≤0.4.0 workaround)")
-
-
-_patch_qwen3_vl_text_only()
-
-
 def _to_role_content(msg: BaseMessage) -> dict[str, str]:
     """Convert a LangChain message to the ``{"role": ..., "content": ...}`` dict
     that ``mlx_vlm.prompt_utils.apply_chat_template`` expects.

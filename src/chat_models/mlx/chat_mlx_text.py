@@ -229,7 +229,9 @@ def _clone_cache_layer(layer: Any) -> Any:
 
     state = tree_map(lambda x: mx.array(x) if isinstance(x, mx.array) else x, layer.state)
     mx.eval(state)
-    return type(layer).from_state(state, layer.meta_state)
+    # mlx_lm >= 0.32 folds the old ``meta_state`` scalars (offset, keep, ...)
+    # into ``state``, so ``from_state`` takes the state alone.
+    return type(layer).from_state(state)
 
 
 class ChatMLXText(BaseChatModel):
