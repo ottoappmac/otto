@@ -333,6 +333,27 @@ BUILTIN_MCPS: tuple[BuiltinMCP, ...] = (
         enabled=False,
     ),
     BuiltinMCP(
+        id="linkedin",
+        name="LinkedIn (your browser session)",
+        description=(
+            "Read LinkedIn as you: profiles, companies, job search and job "
+            "details, your feed, and your inbox, plus messaging and connection "
+            "requests behind an approval card. Runs the pinned third-party "
+            "mcp-server-linkedin package, which drives its own Chromium window "
+            "signed in as you; the session stays in this MCP's folder. "
+            "Automating LinkedIn is against its User Agreement and can get the "
+            "account restricted, so keep use light and read-mostly."
+        ),
+        source_dir_name="linkedin",
+        # mcp-server-linkedin 4.30 needs Python >=3.12.4; the lock in
+        # requirements.txt was resolved for that floor.
+        python=">=3.12.4,<3.13",
+        # Off by default: connecting spawns the process, and its first
+        # authenticated call opens a LinkedIn sign-in window. The user's
+        # own Start click on the Tools page should be what starts that.
+        enabled=False,
+    ),
+    BuiltinMCP(
         id="macarena-vm",
         name="MacArena VM",
         description=(
