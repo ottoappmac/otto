@@ -234,8 +234,9 @@ export const api = {
     request<MlxCapabilities>("/api/mlx/capabilities"),
   getMlxLiveStats: () =>
     request<MlxLiveStats>("/api/mlx/live-stats"),
-  mlxCatalog: (params?: { ctx_len?: number; kv_bits?: number | null; refresh?: boolean }) => {
+  mlxCatalog: (params?: { ctx_len?: number; kv_bits?: number | null; refresh?: boolean; engine?: "mlx" | "omlx" }) => {
     const sp = new URLSearchParams();
+    if (params?.engine) sp.set("engine", params.engine);
     if (params?.ctx_len) sp.set("ctx_len", String(params.ctx_len));
     if (params?.kv_bits != null) sp.set("kv_bits", String(params.kv_bits));
     if (params?.refresh) sp.set("refresh", "true");

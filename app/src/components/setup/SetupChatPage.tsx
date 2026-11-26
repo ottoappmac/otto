@@ -2326,6 +2326,7 @@ resolveLastAssistant(
                   <div className="w-full rounded-xl border border-th-border bg-th-surface p-3 space-y-3">
                     {msg.richModelPicker.type === "mlx" && (
                       <ModelChooser
+                        engine="mlx"
                         selectedRepoId={settings?.llm?.mlx?.hf_llm_model_id}
                         hfToken={settings?.llm?.mlx?.hf_token}
                         cacheDir={settings?.llm?.mlx?.hf_hub_cache}

@@ -837,6 +837,8 @@ export interface MlxCatalogRow {
   requires_token: boolean;
   tier: "starter" | "balanced" | "power";
   featured: boolean;
+  /** Engines that can run it: "mlx" (Standard) and/or "omlx" (Turbo). */
+  engines?: ("mlx" | "omlx")[];
   downloads: number;
   last_modified: string;
   // Score fields — only present when fetched via /api/mlx/catalog.

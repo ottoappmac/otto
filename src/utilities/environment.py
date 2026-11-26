@@ -530,7 +530,9 @@ class Environment:
         oMLX exposes no global admin toggle for thinking, so this is sent
         per request as ``chat_template_kwargs={"enable_thinking": <bool>}``
         by ``model_factory.create_llm``.  Only affects models whose chat
-        template supports a thinking switch (e.g. Qwen3)."""
+        template supports a thinking switch (e.g. Qwen3).  For templates
+        that ignore it (Inkling 2), "off" also sends ``thinking_budget: 0``
+        (see ``model_factory._THINKING_BUDGET_MODEL_TYPES``)."""
         val = os.getenv("OMLX_THINKING", cls.OMLX_THINKING)
         return str(val).lower() in ("true", "1", "yes")
 
