@@ -33,7 +33,7 @@ dependencies = [
     "langchain-cohere>=0.3.0",
     "langchain-anthropic>=0.3.0",
     "langchain-aws>=0.2.0",
-    "langchain-openai>=0.3.0",
+    "langchain-openai>=1.8.5",
     # Google Gemini — native video understanding provider + Live API SDK
     "langchain-google-genai>=4.5.3",
     "google-genai>=3.3.0",

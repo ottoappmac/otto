@@ -367,16 +367,14 @@ def _openai_token_kwargs(model_name: str, max_tokens: int) -> dict:
 
     Modern OpenAI models (GPT-5, o-series) require ``max_completion_tokens``
     and reject ``max_tokens`` with HTTP 400.  Older models still expect
-    ``max_tokens``.  We pass ``max_completion_tokens`` via ``model_kwargs``
-    so this works regardless of the installed ``langchain_openai`` version
-    (older releases don't expose ``max_completion_tokens`` as a constructor
-    parameter, but ``model_kwargs`` is forwarded straight to the OpenAI
-    SDK).
+    ``max_tokens``.  langchain-openai 1.x takes ``max_completion_tokens``
+    as a constructor field and sends it under that name; passing it in
+    ``model_kwargs`` works too but logs a warning on every client.
     """
     if max_tokens is None or max_tokens <= 0:
         return {}
     if _is_modern_openai_model(model_name):
-        return {"model_kwargs": {"max_completion_tokens": max_tokens}}
+        return {"max_completion_tokens": max_tokens}
     return {"max_tokens": max_tokens}
 
 

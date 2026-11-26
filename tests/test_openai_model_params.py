@@ -11,7 +11,7 @@ from deep_agent.model_factory import _is_modern_openai_model, _openai_temperatur
 def test_modern_models_use_default_temperature_and_completion_tokens(name):
     assert _is_modern_openai_model(name)
     assert _openai_temperature(name, 0.0) == 1.0
-    assert _openai_token_kwargs(name, 4096) == {"model_kwargs": {"max_completion_tokens": 4096}}
+    assert _openai_token_kwargs(name, 4096) == {"max_completion_tokens": 4096}
 
 
 @pytest.mark.parametrize("name", ["gpt-4o", "gpt-4.1", "gpt-4o-mini", "gpt-60x", ""])
