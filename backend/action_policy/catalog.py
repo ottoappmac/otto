@@ -319,6 +319,7 @@ _BARE_TOOLS: dict[str, str | None] = {
     "write_file": "workspace_write",
     "edit_file": "workspace_write",
     "edit": "workspace_write",
+    "delete": "workspace_write",
     "create_schedule": "persistence",
     "update_schedule": "persistence",
     "delete_schedule": "persistence",

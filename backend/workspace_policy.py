@@ -136,6 +136,8 @@ def protected_workspace_reason(rel: str) -> str | None:
     if not text or ".." in Path(text).parts:
         return None
     parts = Path(text).parts
+    if not parts:  # the project root itself (``"."``)
+        return None
     blocked_dirs = {".git": "Writes under .git are blocked.",
                     ".vscode": "Writes under .vscode are blocked.",
                     ".idea": "Writes under .idea are blocked."}

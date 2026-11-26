@@ -20,7 +20,7 @@ langchain-google-genai>=4.5.3  # Google Gemini — native video understanding pr
 google-genai>=3.3.0  # Gemini SDK (File API uploads + Live API realtime video)
 langgraph>=0.2.0
 langgraph-checkpoint-sqlite>=2.0.0
-deepagents
+deepagents>=0.7.41,<0.8
 
 # MLX local inference (Apple Silicon)
 mlx>=0.32.5  # macOS 14+ wheels only

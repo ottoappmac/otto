@@ -32,7 +32,7 @@ expensive content out of the prompt entirely — that is the answer to
 The tool is backend-agnostic: it works with ``StateBackend`` (ephemeral
 in-state files), ``FilesystemBackend``/``LocalShellBackend`` (on-disk
 session files), or any other ``BackendProtocol`` implementation, because
-it only relies on ``glob_info`` + ``download_files``.
+it only relies on ``glob`` + ``download_files``.
 """
 
 from __future__ import annotations
@@ -90,18 +90,18 @@ Examples:
 
 
 def _resolve_backend(backend: Any, runtime: ToolRuntime) -> Any:
-    """Resolve a backend instance from an instance or a runtime factory.
+    """Resolve a backend instance from an instance or a backend class.
 
-    Mirrors ``FilesystemMiddleware._get_backend``: ``StateBackend`` is a
-    class that must be instantiated with the runtime, while on-disk
-    backends are passed as ready instances.  When *backend* is ``None`` we
+    deepagents 0.7 backends take no runtime: ``StateBackend()`` reads the
+    graph state through the LangGraph config.  When *backend* is ``None`` we
     fall back to the in-state ``StateBackend`` (the deepagents default).
     """
     if backend is None:
         from deepagents.backends import StateBackend
 
-        backend = StateBackend
-    return backend(runtime) if callable(backend) else backend
+        return StateBackend()
+    # deepagents 0.7 dropped runtime factories; backends take no runtime.
+    return backend() if isinstance(backend, type) else backend
 
 
 def _list_candidate_paths(resolved_backend: Any, path: str, glob: str | None) -> list[str]:
@@ -112,9 +112,9 @@ def _list_candidate_paths(resolved_backend: Any, path: str, glob: str | None) ->
     """
     pattern = glob or "**/*"
     try:
-        infos = resolved_backend.glob_info(pattern, path=path)
+        infos = resolved_backend.glob(pattern, path=path).matches or []
     except Exception as exc:  # noqa: BLE001 - backends should not throw in tools
-        logger.debug("grep_large_results: glob_info failed for %s: %s", path, exc)
+        logger.warning("grep_large_results: glob failed for %s: %s", path, exc)
         infos = []
 
     paths = [fi.get("path", "") for fi in infos if fi.get("path")]
@@ -122,7 +122,7 @@ def _list_candidate_paths(resolved_backend: Any, path: str, glob: str | None) ->
         return paths
 
     # `path` might itself be an exact file (e.g. a single offloaded result).
-    # glob_info on a file returns nothing, so probe it directly.
+    # glob on a file returns nothing, so probe it directly.
     if glob is None:
         try:
             responses = resolved_backend.download_files([path])
