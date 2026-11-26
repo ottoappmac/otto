@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useNavigate, useParams } from "react-router-dom";
 import { Send, Square, ChevronUp, ChevronRight, FileText, FolderOpen, ExternalLink, CheckCircle2, Plus, X, Loader2, Calendar, Brain, Cpu, ArrowUpLeft, ArrowLeft, Folder, GitBranch, RefreshCw, MessageSquarePlus, Mic, MicOff } from "lucide-react";
-import { api } from "../hooks/useApi";
+import { api, apiErrorMessage } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { AgentGraph } from "../components/chat/AgentGraph";
 import { MessageBubble } from "../components/chat/MessageBubble";
@@ -1286,7 +1286,9 @@ export default function ChatPage() {
           if ((parseErr as Error & { privacyLock?: boolean }).privacyLock) throw parseErr;
         }
       }
-      throw err;
+      // Show the backend's message (e.g. "runs only on Turbo…") rather than
+      // a raw "API 400: {…}" string.
+      throw new Error(apiErrorMessage(err));
     }
     const sid = data.id;
     justCreatedRef.current = true;

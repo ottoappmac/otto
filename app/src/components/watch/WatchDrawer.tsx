@@ -16,7 +16,7 @@ import {
   Mic,
   Trash2,
 } from "lucide-react";
-import { api } from "../../hooks/useApi";
+import { api, apiErrorMessage } from "../../hooks/useApi";
 import { useWatch } from "../../hooks/useWatch";
 import { emitAskOtto } from "../../utils/askOttoBus";
 import { canSendAgentContext, emitAgentContext } from "../../utils/agentContextBus";
@@ -40,13 +40,13 @@ function openScreenSettings() {
     });
 }
 
-/** Privacy lock arrives as a 403 with a JSON body; everything else is raw. */
+/** Privacy lock gets its own message; anything else shows the backend's error text. */
 function describeSessionError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   if (msg.includes("403") && msg.includes("privacy_lock")) {
     return "Privacy lock is on, so a chat can't be started. Allow a provider in Settings → Privacy, or switch to a local model.";
   }
-  return `Could not start a chat: ${msg}`;
+  return `Could not start a chat: ${apiErrorMessage(e)}`;
 }
 
 interface WatchDrawerProps {

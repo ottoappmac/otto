@@ -20,6 +20,8 @@ from backend.decision_runtime import (
 )
 from backend.routes.mlx import _DEFAULT_ALLOW_PATTERNS
 
+_PYTHON = sys.executable  # before any test monkeypatches it to a fake bundle path
+
 
 def test_jev_download_keeps_the_chat_template() -> None:
     assert "*.jinja" in _DEFAULT_ALLOW_PATTERNS
@@ -86,6 +88,48 @@ def test_packaged_app_prefers_the_bundled_venv(tmp_path, monkeypatch) -> None:
     assert installed_ref() == "pinned"
     assert runtime_current(DecisionConfig(runtime_ref="pinned")) is True
     assert log_path() == app_data / "server.log"
+
+
+def _fake_bundle(tmp_path, monkeypatch) -> tuple[Path, Path]:
+    bundle = tmp_path / "OTTO.app" / "Contents" / "Resources" / "openjev"
+    py = bundle / "venv" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    exe = bundle.parent / "backend" / "otto-backend"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("", encoding="utf-8")
+    app_data = tmp_path / "appdata"
+    monkeypatch.setattr(sys, "executable", str(exe))
+    monkeypatch.setattr("backend.decision_runtime.runtime_dir", lambda: app_data)
+    return bundle, app_data
+
+
+def test_bundled_runtime_keeps_bytecode_out_of_the_signed_app(tmp_path, monkeypatch) -> None:
+    bundle, app_data = _fake_bundle(tmp_path, monkeypatch)
+    env = build_process_env(DecisionConfig(), Path("/tmp/snap"), api_key="k")
+    prefix = Path(env["PYTHONPYCACHEPREFIX"])
+    assert prefix == app_data / "pycache"
+    assert bundle.parent.parent not in prefix.parents
+
+
+def test_dev_runtime_leaves_bytecode_alone(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("backend.decision_runtime.bundled_runtime_dir", lambda: None)
+    monkeypatch.delenv("PYTHONPYCACHEPREFIX", raising=False)
+    env = build_process_env(DecisionConfig(), Path("/tmp/snap"), api_key="k")
+    assert "PYTHONPYCACHEPREFIX" not in env
+
+
+def test_pycache_prefix_really_stops_writes_into_the_bundle(tmp_path, monkeypatch) -> None:
+    bundle, app_data = _fake_bundle(tmp_path, monkeypatch)
+    site = bundle / "venv" / "lib" / "site-packages"
+    site.mkdir(parents=True)
+    (site / "probe_mod.py").write_text("X = 1\n", encoding="utf-8")
+    env = build_process_env(DecisionConfig(), Path("/tmp/snap"), api_key="k")
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    env["PYTHONPATH"] = str(site)
+    subprocess.run([_PYTHON, "-c", "import probe_mod"], check=True, env=env)
+    assert not list(bundle.rglob("*.pyc"))
+    assert list((app_data / "pycache").rglob("probe_mod*.pyc"))
 
 
 def test_local_api_key_stays_put_when_the_vault_is_empty(tmp_path, monkeypatch) -> None:
