@@ -872,8 +872,10 @@ def create_llm(provider: str) -> BaseChatModel:
         # Some templates think regardless of ``enable_thinking`` (Inkling 2
         # thinks at every reasoning_effort); oMLX's request-level
         # ``thinking_budget: 0`` is what actually turns it off for them.
-        if not thinking and _cached_model_type(model_name) in _THINKING_BUDGET_MODEL_TYPES:
+        model_type = _cached_model_type(model_name)
+        if not thinking and model_type in _THINKING_BUDGET_MODEL_TYPES:
             extra_body["thinking_budget"] = 0
+        temperature = _OMLX_TEMPERATURE_BY_MODEL_TYPE.get(model_type or "", 0.0)
         # Cap generation length.  Without max_tokens the server falls back
         # to sampling.max_tokens (32768 by default), letting a model that
         # fails to emit a stop token run away to the full cap (a single
@@ -882,15 +884,15 @@ def create_llm(provider: str) -> BaseChatModel:
         is_reasoning_model = _is_reasoning_model_id(model_name)
         logger.info(
             "oMLX LLM: requested=%s, resolved=%s, base=%s/v1, thinking=%s, "
-            "max_tokens=%s, reasoning_shim=%s",
-            model_name, resolved, base, thinking, omlx_max_tokens,
+            "temperature=%s, max_tokens=%s, reasoning_shim=%s",
+            model_name, resolved, base, thinking, temperature, omlx_max_tokens,
             is_reasoning_model,
         )
         client = _OMLXChat(
             base_url=f"{base.rstrip('/')}/v1",
             model=resolved,
             api_key="omlx-no-auth",
-            temperature=0.0,
+            temperature=temperature,
             timeout=600.0,
             max_tokens=omlx_max_tokens,
             # Discourage degenerate repetition (no sampler repetition_penalty
@@ -1130,6 +1132,11 @@ def _cached_config_path(model_id: str) -> Optional[str]:
 # (checked against oMLX 0.8.3: ``enable_thinking``, ``reasoning_effort`` and a
 # ``thinking_budget`` inside ``chat_template_kwargs`` all still think).
 _THINKING_BUDGET_MODEL_TYPES: frozenset[str] = frozenset({"inkling2_loop"})
+
+# oMLX sampling temperature by model type; everything else stays greedy (0.0).
+# Inkling 2's generation_config ships temperature 1.0, and the model is tuned
+# for it.
+_OMLX_TEMPERATURE_BY_MODEL_TYPE: dict[str, float] = {"inkling2_loop": 1.0}
 
 
 def _refuse_omlx_only_model(model_id: str) -> None:

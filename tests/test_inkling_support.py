@@ -41,6 +41,18 @@ def test_other_models_keep_enable_thinking_only(monkeypatch):
     assert "thinking_budget" not in llm.extra_body
 
 
+def test_inkling_samples_at_its_recommended_temperature(monkeypatch):
+    llm = _omlx_client(monkeypatch, model=INKLING, model_type="inkling2_loop", thinking=True)
+    assert llm.temperature == 1.0
+
+
+def test_other_omlx_models_stay_greedy(monkeypatch):
+    llm = _omlx_client(monkeypatch, model=QWEN, model_type="qwen3", thinking=True)
+    assert llm.temperature == 0.0
+    llm = _omlx_client(monkeypatch, model="not/cached", model_type=None, thinking=True)
+    assert llm.temperature == 0.0
+
+
 def test_inkling_uses_native_tool_calls_not_the_react_shim(monkeypatch):
     llm = _omlx_client(monkeypatch, model=INKLING, model_type="inkling2_loop", thinking=False)
     assert type(llm).__name__ == "_OMLXChat"
