@@ -1721,7 +1721,7 @@ export default function SettingsPage() {
                       { value: "frontier" as const, name: "Frontier",  tag: "Cloud API",   ring: "ring-sky-500/40",      bg: "bg-sky-500/10",     border: "border-sky-500/40",     tagCls: "bg-sky-500/20 border-sky-500/30 text-sky-400",            downloaded: 0 },
                     ]).map(({ value, name, tag, ring, bg, border, tagCls, downloaded }) => {
                       const current =
-                        settings.llm.provider === "anthropic" || settings.llm.provider === "openai" || settings.llm.provider === "google"
+                        settings.llm.provider === "anthropic" || settings.llm.provider === "openai"
                           ? "frontier"
                           : settings.llm.provider;
                       const selected = current === value;
@@ -1770,7 +1770,7 @@ export default function SettingsPage() {
                   )}
                 </div>
 
-                {(settings.llm.provider === "anthropic" || settings.llm.provider === "openai" || settings.llm.provider === "google") && (
+                {(settings.llm.provider === "anthropic" || settings.llm.provider === "openai") && (
                   <>
                     <SelectField
                       label="Frontier model source"
@@ -1783,7 +1783,6 @@ export default function SettingsPage() {
                       options={[
                         { value: "anthropic", label: "Anthropic (API or Bedrock)" },
                         { value: "openai", label: "OpenAI (API or Azure)" },
-                        { value: "google", label: "Google Gemini (native video)" },
                       ]}
                     />
 
@@ -1840,29 +1839,6 @@ export default function SettingsPage() {
                       </div>
                     )}
 
-                    {settings.llm.provider === "google" && (
-                      <div className="space-y-2">
-                        <InputField
-                          label="Gemini model"
-                          value={settings.llm.google.model_name}
-                          onChange={(v) => updateGoogleField("model_name", v)}
-                          placeholder="gemini-flash-latest"
-                        />
-                        <p className="text-2xs text-th-text-muted leading-relaxed">
-                          Gemini is the only provider with native video understanding
-                          (files, YouTube URLs, custom frame rate). Configure the API key
-                          and video resolution under the{" "}
-                          <button
-                            type="button"
-                            onClick={() => setLlmSubTab("Frontier")}
-                            className="underline hover:text-th-text-primary"
-                          >
-                            Frontier
-                          </button>{" "}
-                          sub-tab.
-                        </p>
-                      </div>
-                    )}
                   </>
                 )}
 
@@ -2002,10 +1978,6 @@ export default function SettingsPage() {
                       if (o.model_provider === "openai" && !o.api_key) warnings.push("OpenAI API key is required — set it under Frontier → OpenAI.");
                       if (o.model_provider === "azure" && !o.azure_endpoint) warnings.push("Azure OpenAI endpoint is required — set it under Frontier → OpenAI.");
                       if (!o.model_name) warnings.push("Select or enter a model name.");
-                    } else if (settings.llm.provider === "google") {
-                      const g = settings.llm.google;
-                      if (!g.api_key) warnings.push("Gemini API key is required — set it under Frontier → Google Gemini.");
-                      if (!g.model_name) warnings.push("Enter a Gemini model name (e.g. gemini-flash-latest).");
                     } else {
                       const a = settings.llm.anthropic;
                       if (a.model_provider === "anthropic" && !a.api_key) warnings.push("Anthropic API key is required — set it under Frontier → Anthropic.");
