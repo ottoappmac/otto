@@ -88,6 +88,19 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+/** The backend's ``{"error": "..."}`` message from a failed request, else the raw text. */
+export function apiErrorMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  const at = text.indexOf("{");
+  if (at >= 0) {
+    try {
+      const body = JSON.parse(text.slice(at)) as { error?: unknown };
+      if (typeof body.error === "string" && body.error) return body.error;
+    } catch { /* not JSON */ }
+  }
+  return text;
+}
+
 export const api = {
   // Health
   health: () => request<{ status: string }>("/api/health"),

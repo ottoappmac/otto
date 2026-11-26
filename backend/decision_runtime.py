@@ -238,6 +238,12 @@ def build_process_env(
         "TRANSFORMERS_OFFLINE": "1",
         "HF_HUB_DISABLE_TELEMETRY": "1",
     })
+    if bundled_runtime_dir() is not None:
+        # The bundled venv sits inside the signed .app. Python's default
+        # __pycache__ writes land there and break the code seal (codesign and
+        # Gatekeeper then reject the app). Keep the cache, but outside the
+        # bundle, so later launches stay fast.
+        env["PYTHONPYCACHEPREFIX"] = str(runtime_dir() / "pycache")
     return env
 
 

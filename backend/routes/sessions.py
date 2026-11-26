@@ -117,6 +117,15 @@ async def api_create_session(req: SessionCreateRequest):
         except ImportError:
             pass
         logger.error("Session creation failed: %s\n%s", exc, traceback.format_exc())
+        # Model / provider setup problems (wrong engine for the model, weights
+        # not downloaded, server URL or model unset) raise ValueError or
+        # FileNotFoundError with a message written for the user, e.g. "runs
+        # only on Turbo (oMLX)… Switch the LLM provider…".  Show it.
+        if isinstance(exc, (ValueError, FileNotFoundError)) and str(exc).strip():
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc).strip(), "error_code": "model_setup"},
+            )
         return JSONResponse(
             status_code=500,
             content={"error": "Session creation failed. Check backend logs for details."},
