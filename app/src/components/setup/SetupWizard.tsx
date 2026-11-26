@@ -854,6 +854,7 @@ function LocalModelScreen({
       )}
 
       <ModelChooser
+        engine="mlx"
         selectedRepoId={picked}
         hfToken={settings.llm.mlx.hf_token}
         cacheDir={settings.llm.mlx.hf_hub_cache}
