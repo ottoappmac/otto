@@ -241,7 +241,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     provider: "anthropic",
     anthropic: { model_provider: "anthropic", api_key: "", model_name: "claude-sonnet-4-6", bedrock_region: "us-east-1", bedrock_auth_mode: "keys", aws_access_key_id: "", aws_secret_access_key: "", max_tokens: 8192, thinking_enabled: false, thinking_budget: 2048, tool_efficient: true },
     openai: { model_provider: "openai", api_key: "", azure_api_key: "", model_name: "gpt-4o", azure_endpoint: "", azure_api_version: "2024-12-01-preview", azure_deployment: "", max_tokens: 16384, temperature: 0.0 },
-    google: { api_key: "", model_name: "gemini-2.5-flash", media_resolution: "default", max_tokens: 16384, temperature: 0.0 },
+    google: { api_key: "", model_name: "gemini-flash-latest", media_resolution: "default", max_tokens: 16384, temperature: 0.0 },
     mlx: {
       hf_llm_model_id: "mlx-community/quantized-gemma-2b-it",
       hf_vlm_model_id: "",
@@ -1846,7 +1846,7 @@ export default function SettingsPage() {
                           label="Gemini model"
                           value={settings.llm.google.model_name}
                           onChange={(v) => updateGoogleField("model_name", v)}
-                          placeholder="gemini-2.5-flash"
+                          placeholder="gemini-flash-latest"
                         />
                         <p className="text-2xs text-th-text-muted leading-relaxed">
                           Gemini is the only provider with native video understanding
@@ -2005,7 +2005,7 @@ export default function SettingsPage() {
                     } else if (settings.llm.provider === "google") {
                       const g = settings.llm.google;
                       if (!g.api_key) warnings.push("Gemini API key is required — set it under Frontier → Google Gemini.");
-                      if (!g.model_name) warnings.push("Enter a Gemini model name (e.g. gemini-2.5-flash).");
+                      if (!g.model_name) warnings.push("Enter a Gemini model name (e.g. gemini-flash-latest).");
                     } else {
                       const a = settings.llm.anthropic;
                       if (a.model_provider === "anthropic" && !a.api_key) warnings.push("Anthropic API key is required — set it under Frontier → Anthropic.");
@@ -2240,7 +2240,7 @@ export default function SettingsPage() {
                   label="Model"
                   value={settings.llm.google.model_name}
                   onChange={(v) => updateGoogleField("model_name", v)}
-                  placeholder="gemini-2.5-flash"
+                  placeholder="gemini-flash-latest"
                 />
                 <SelectField
                   label="Video / image resolution"

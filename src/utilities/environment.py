@@ -112,7 +112,7 @@ class Environment:
     OPENAI_TEMPERATURE = "0.0"
     # Google Gemini (Generative Language API) — native video understanding
     GOOGLE_API_KEY = ""
-    GOOGLE_MODEL_NAME = "gemini-2.5-flash"
+    GOOGLE_MODEL_NAME = "gemini-flash-latest"
     GOOGLE_MEDIA_RESOLUTION = "default"  # "default" | "low"
     GOOGLE_MAX_TOKENS = "16384"
     GOOGLE_TEMPERATURE = "0.0"
@@ -658,8 +658,10 @@ class Environment:
 
     @classmethod
     def get_google_model_name(cls) -> str:
-        """Get Gemini model name (e.g. gemini-2.5-flash, gemini-2.5-pro)."""
-        return os.getenv("GOOGLE_MODEL_NAME", cls.GOOGLE_MODEL_NAME) or cls.GOOGLE_MODEL_NAME
+        """Get Gemini model name (e.g. gemini-flash-latest). Retired defaults map to the current one."""
+        from backend.gemini_models import current_gemini_model
+
+        return current_gemini_model(os.getenv("GOOGLE_MODEL_NAME", cls.GOOGLE_MODEL_NAME))
 
     @classmethod
     def get_google_media_resolution(cls) -> str:

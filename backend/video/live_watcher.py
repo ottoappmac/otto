@@ -16,11 +16,13 @@ import base64
 import logging
 from typing import Awaitable, Callable
 
+from backend.gemini_models import DEFAULT_GEMINI_LIVE_MODEL, current_gemini_live_model
+
 logger = logging.getLogger(__name__)
 
 # Gemini Live model.  Distinct from the chat model — must be a *-live-*
-# variant.  Kept as a module constant so it's easy to bump.
-DEFAULT_LIVE_MODEL = "gemini-2.0-flash-live-001"
+# variant.  The name lives in backend.gemini_models.
+DEFAULT_LIVE_MODEL = DEFAULT_GEMINI_LIVE_MODEL
 
 EventCb = Callable[[dict], Awaitable[None]]
 
@@ -42,7 +44,7 @@ class LiveWatchSession:
     ) -> None:
         self.api_key = api_key
         self.prompt = prompt or "Watch my screen and describe what I'm doing. Point out anything notable, and warn me about errors."
-        self.model = model or DEFAULT_LIVE_MODEL
+        self.model = current_gemini_live_model(model)
         # Gemini Live accepts at most 1 frame per second.
         self.fps = max(0.1, min(1.0, float(fps)))
         self.max_side = int(max_side)

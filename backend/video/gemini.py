@@ -20,13 +20,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from backend.gemini_models import DEFAULT_GEMINI_MODEL
+
 logger = logging.getLogger(__name__)
 
 # Inline data is capped by the API at ~20 MB per request; above this we
 # must use the File API.
 _INLINE_MAX_BYTES = 18 * 1024 * 1024
 
-_DEFAULT_MODEL = "gemini-2.5-flash"
+_DEFAULT_MODEL = DEFAULT_GEMINI_MODEL
+_VIDEO_TIMEOUT_MS = 10 * 60 * 1000
 
 
 def _media_resolution_enum(types, media_resolution: str):
@@ -42,7 +45,13 @@ def _client(api_key: str):
 
     # google-genai 3 defaults to the v1 API; video metadata (fps, offsets),
     # media_resolution and preview models are served on v1beta.
-    return genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version="v1beta"))
+    # A video request can take minutes, so the timeout is long, but it is not
+    # unlimited. Retry a busy (503) or timed-out (504) request once.
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(
+        api_version="v1beta",
+        timeout=_VIDEO_TIMEOUT_MS,
+        retry_options=types.HttpRetryOptions(attempts=2, http_status_codes=[429, 500, 503, 504]),
+    ))
 
 
 def _guess_mime(path: str | Path) -> str:

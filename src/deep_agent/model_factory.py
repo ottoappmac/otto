@@ -642,6 +642,8 @@ def create_llm(provider: str) -> BaseChatModel:
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
+        from backend.gemini_models import GEMINI_CHAT_MAX_RETRIES, GEMINI_CHAT_TIMEOUT_S
+
         model_name = Environment.get_google_model_name()
         api_key = Environment.get_google_api_key()
         max_tokens = Environment.get_google_max_tokens()
@@ -656,6 +658,10 @@ def create_llm(provider: str) -> BaseChatModel:
             temperature=Environment.get_google_temperature(),
             max_output_tokens=max_tokens,
             google_api_key=api_key,
+            # langchain's defaults are no timeout and 6 retries. When Gemini
+            # is busy (503) that reads as a chat that hangs for minutes.
+            timeout=GEMINI_CHAT_TIMEOUT_S,
+            max_retries=GEMINI_CHAT_MAX_RETRIES,
         )
 
     if provider == "mlx":

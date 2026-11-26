@@ -39,7 +39,7 @@ _REFERENCE_FREE_METRICS = ("answer_relevancy", "toxicity", "bias", "g_eval")
 # candidate for LLM diagnosis.
 _TRANSIENT_ERROR_CODES = frozenset({
     "mcp_connection", "llm_connection", "llm_rate_limit",
-    "llm_auth", "llm_overloaded", "connection", "timeout",
+    "llm_auth", "llm_overloaded", "connection", "timeout", "llm_model_not_found",
 })
 
 
@@ -65,8 +65,10 @@ def classify_error_code(error_text: str) -> str:
         return "llm_rate_limit"
     if "authentication" in low or "could not resolve authentication" in low:
         return "llm_auth"
-    if "overloaded" in low or "529" in low:
+    if "overloaded" in low or "529" in low or "high demand" in low or "503 unavailable" in low:
         return "llm_overloaded"
+    if "does not offer this gemini model" in low:
+        return "llm_model_not_found"
     if "apiconnectionerror" in low or "connection error" in low or "connection failed" in low:
         return "llm_connection"
     if "connecterror" in low:

@@ -18,6 +18,7 @@ from backend.config import (
     _dict_set_path,
     _model_get_path,
 )
+from backend.gemini_models import current_gemini_model, gemini_error_message
 from backend.mcp_manager import reset_circuit_breaker
 from backend.schemas import TestConnectionRequest, TestConnectionResponse
 from backend.state import mcp_mgr, session_mgr
@@ -387,11 +388,13 @@ async def test_llm_connection(req: TestConnectionRequest):
             from langchain_google_genai import ChatGoogleGenerativeAI
             from langchain_core.messages import HumanMessage
 
-            model_name_g = req.model_name or "gemini-2.5-flash"
+            model_name_g = current_gemini_model(req.model_name)
             llm = ChatGoogleGenerativeAI(
                 model=model_name_g,
                 google_api_key=api_key,
                 temperature=0.0,
+                timeout=30,
+                max_retries=1,
             )
             await llm.ainvoke([HumanMessage(content="Reply with OK")])
             return TestConnectionResponse(success=True, message="Connected successfully")
@@ -435,7 +438,8 @@ async def test_llm_connection(req: TestConnectionRequest):
             )
         return TestConnectionResponse(success=False, message=f"Unknown provider: {req.provider}")
     except Exception as exc:
-        return TestConnectionResponse(success=False, message=str(exc))
+        gemini = gemini_error_message(exc) if req.provider == "google" else None
+        return TestConnectionResponse(success=False, message=gemini[0] if gemini else str(exc))
 
 
 @router.post("/settings/list-models")

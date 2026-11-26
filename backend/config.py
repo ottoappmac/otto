@@ -24,6 +24,7 @@ import uuid as _uuid
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.credential_vault import CredentialVaultError, app_vault
+from backend.gemini_models import DEFAULT_GEMINI_MODEL, current_gemini_model
 from backend.mlx_hub_paths import resolve_hf_hub_cache_dir
 from backend.utils import platform_label
 
@@ -210,10 +211,16 @@ class GoogleConfig(BaseModel):
     """
 
     api_key: str = ""
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = DEFAULT_GEMINI_MODEL
     media_resolution: str = "default"  # "default" | "low"
     max_tokens: int = 16384
     temperature: float = 0.0
+
+    @field_validator("model_name", mode="before")
+    @classmethod
+    def _replace_retired_model(cls, value):
+        # Saved configs still name gemini-2.5-flash, which Google retired.
+        return current_gemini_model(value if isinstance(value, str) else None)
 
 
 class MlxBookmark(BaseModel):
