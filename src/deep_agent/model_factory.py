@@ -331,10 +331,10 @@ def _is_reasoning_model_id(model_id: str) -> bool:
 #   1. Only accept ``temperature=1`` (any other value is rejected).
 #   2. Use ``max_completion_tokens`` instead of ``max_tokens`` — passing
 #      ``max_tokens`` returns HTTP 400 ``unsupported_parameter``.
-# This covers the GPT-5 family and the o-series reasoning models
+# This covers the GPT-5 and GPT-6 families and the o-series reasoning models
 # (o1, o2, o3, o4 and their dated/mini/preview variants).
 _MODERN_OPENAI_PREFIXES = (
-    "gpt-5",
+    "gpt-5", "gpt-6",
     "o1", "o2", "o3", "o4",
 )
 
@@ -367,16 +367,14 @@ def _openai_token_kwargs(model_name: str, max_tokens: int) -> dict:
 
     Modern OpenAI models (GPT-5, o-series) require ``max_completion_tokens``
     and reject ``max_tokens`` with HTTP 400.  Older models still expect
-    ``max_tokens``.  We pass ``max_completion_tokens`` via ``model_kwargs``
-    so this works regardless of the installed ``langchain_openai`` version
-    (older releases don't expose ``max_completion_tokens`` as a constructor
-    parameter, but ``model_kwargs`` is forwarded straight to the OpenAI
-    SDK).
+    ``max_tokens``.  langchain-openai 1.x takes ``max_completion_tokens``
+    as a constructor field and sends it under that name; passing it in
+    ``model_kwargs`` works too but logs a warning on every client.
     """
     if max_tokens is None or max_tokens <= 0:
         return {}
     if _is_modern_openai_model(model_name):
-        return {"model_kwargs": {"max_completion_tokens": max_tokens}}
+        return {"max_completion_tokens": max_tokens}
     return {"max_tokens": max_tokens}
 
 
@@ -644,6 +642,8 @@ def create_llm(provider: str) -> BaseChatModel:
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
+        from backend.gemini_models import GEMINI_CHAT_MAX_RETRIES, GEMINI_CHAT_TIMEOUT_S
+
         model_name = Environment.get_google_model_name()
         api_key = Environment.get_google_api_key()
         max_tokens = Environment.get_google_max_tokens()
@@ -658,6 +658,10 @@ def create_llm(provider: str) -> BaseChatModel:
             temperature=Environment.get_google_temperature(),
             max_output_tokens=max_tokens,
             google_api_key=api_key,
+            # langchain's defaults are no timeout and 6 retries. When Gemini
+            # is busy (503) that reads as a chat that hangs for minutes.
+            timeout=GEMINI_CHAT_TIMEOUT_S,
+            max_retries=GEMINI_CHAT_MAX_RETRIES,
         )
 
     if provider == "mlx":

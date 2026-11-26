@@ -33,6 +33,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
+from backend.gemini_models import current_gemini_model
 from backend.utils import is_resolved_path_allowed, remap_to_virtual_path
 from backend.video import ingest
 
@@ -206,7 +207,7 @@ async def _run_gemini(config: Any, prompt: str, source: str, is_youtube: bool,
     text = await asyncio.to_thread(
         gemini.understand_video_sync,
         api_key=g.api_key,
-        model=g.model_name or "gemini-2.5-flash",
+        model=current_gemini_model(g.model_name),
         prompt=prompt,
         source=source,
         is_youtube=is_youtube,

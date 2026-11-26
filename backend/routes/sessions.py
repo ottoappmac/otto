@@ -1082,6 +1082,12 @@ def _friendly_error(exc: Exception) -> tuple[str, str]:
                 )
         return (f"Lost connection to the LLM provider: {msg}", "llm_connection")
 
+    from backend.gemini_models import gemini_error_message
+
+    gemini = gemini_error_message(exc)
+    if gemini is not None:
+        return gemini
+
     if "RateLimitError" in exc_type or "rate_limit" in msg.lower() or "429" in msg:
         return ("LLM rate limit exceeded. The request will be retried automatically, or try again shortly.", "llm_rate_limit")
 

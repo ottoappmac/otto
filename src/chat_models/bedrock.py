@@ -2,9 +2,9 @@
 import logging
 from typing import Literal, Optional
 
-import httpx
+import httpx2
 from anthropic import AsyncAnthropicBedrock
-from anthropic.lib.bedrock._auth import get_auth_headers
+from anthropic.lib.aws._auth import get_auth_headers
 from typing_extensions import override
 
 logger = logging.getLogger(__name__)
@@ -41,13 +41,13 @@ class AnthropicBedrockClient(AsyncAnthropicBedrock):
         super().__init__(**kwargs)
 
     @override
-    async def _prepare_request(self, request: httpx.Request) -> None:
+    async def _prepare_request(self, request: httpx2.Request) -> None:
         if self.default_headers and self.auth_mode == "custom":
             for key, value in self.default_headers.items():
                 request.headers[key] = f"{value}"
             request.headers["Content-Type"] = "application/json"
         else:
-            data = request.read().decode()
+            data = request.read()
 
             headers = get_auth_headers(
                 method=request.method,
@@ -59,5 +59,6 @@ class AnthropicBedrockClient(AsyncAnthropicBedrock):
                 region=self.aws_region or "us-east-1",
                 profile=self.aws_profile,
                 data=data,
+                service_name="bedrock",
             )
             request.headers.update(headers)
