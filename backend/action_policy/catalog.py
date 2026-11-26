@@ -62,8 +62,8 @@ CATEGORY_BLURB: dict[str, str] = {
     "desktop_control": "Mouse, keyboard, and launching apps.",
     "email_send": "Sending mail or creating a draft that can be sent.",
     "mail_read": "Listing or opening mail, including the inbox.",
-    "message_send": "iMessage, Slack, Discord, and similar sends.",
-    "message_read": "Listing chats or reading message history.",
+    "message_send": "iMessage, Slack, Discord, LinkedIn, and similar sends.",
+    "message_read": "Listing chats or reading message history, including LinkedIn.",
     "destructive": "Deleting mail, events, reminders, or notes.",
     "persistence": "Schedules and triggers, which run with nobody watching.",
     "mcp_authoring": "Creating, connecting, or registering tool servers.",
@@ -115,6 +115,7 @@ KNOWN_SERVER_IDS = MACOS_SERVER_IDS | frozenset({
     "edgar-sec",
     "cad-tools",
     "macarena-vm",
+    "linkedin",
     "playwright-mcp",
     "agent-eval-service",
     "claude-eval-hook",
@@ -134,6 +135,15 @@ UNSANDBOXED_SERVER_IDS = MACOS_SERVER_IDS | frozenset({
     # per-MCP profile (no outbound network) would block. It touches no file or app on this
     # machine; the bridge it talks to runs the actions in a separate macOS VM.
     "macarena-vm",
+    # linkedin runs a Chromium window (Patchright). Under the built-in profile its
+    # Node driver cannot stat the denied Application Support/Otto parent, and
+    # Chromium then needs mach bootstrap check-in, WindowServer for the sign-in
+    # window, and Crashpad writes under the real ~/Library: opening all of that
+    # would leave little of the profile. Chromium sandboxes its own renderers, and
+    # this matches Otto's Playwright browser, which is not seatbelt-wrapped either.
+    # The package is pinned and hash-locked (backend/builtin_mcps/linkedin) and its
+    # remote tool catalog and update check are forced off in server.py.
+    "linkedin",
 })
 
 
@@ -238,6 +248,31 @@ _read(
     "edgar-sec",
     "search_filings", "get_company_submissions", "search_company_by_ticker",
     "get_company_facts", "get_filing_document", "get_xbrl_frames",
+)
+
+# Third-party mcp-server-linkedin, pinned in backend/builtin_mcps/linkedin.
+# Anything that writes to LinkedIn as the user, or reads their private
+# messages, goes through a card. tests/test_linkedin_mcp.py holds the
+# pinned release's full tool list, so a bump that adds a tool fails there.
+_cat(
+    "linkedin", "message_send",
+    "send_message", "reply_to_conversation", "connect_with_person",
+)
+_cat(
+    "linkedin", "message_read",
+    "get_inbox", "get_conversation", "search_conversations",
+)
+_cat("linkedin", "destructive", "archive_conversation", "dismiss_job")
+# Clicks Next through Easy Apply on prefilled values (never Submit), then
+# discards the draft: still drives the page, so ask.
+_cat("linkedin", "browser_automation", "get_easy_apply_form")
+_read(
+    "linkedin",
+    "get_person_profile", "search_people", "get_sidebar_profiles",
+    "get_my_profile", "get_company_profile", "get_company_posts",
+    "search_companies", "get_company_employees", "get_job_details",
+    "get_job_apply_url", "search_jobs", "get_saved_jobs", "get_feed",
+    "search_posts", "get_session_status", "close_session",
 )
 
 _cat("cad-tools", "shell", "cad_run", "cad_render", "cad_compare", "cad_autoplace", "answer_checkpoint", "cad_export")
